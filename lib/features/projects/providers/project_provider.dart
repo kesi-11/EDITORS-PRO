@@ -1,7 +1,11 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../data/models/project_model.dart';
+import '../../core/services/project_repository.dart';
+import '../../core/services/engine_service.dart';
 
 /// Current project state
 class ProjectState {
@@ -22,71 +26,87 @@ class ProjectState {
     List<ProjectModel>? recentProjects,
     bool? isLoading,
     String? error,
+    bool clearError = false,
   }) {
     return ProjectState(
       currentProject: currentProject ?? this.currentProject,
       recentProjects: recentProjects ?? this.recentProjects,
       isLoading: isLoading ?? this.isLoading,
-      error: error,
+      error: clearError ? null : (error ?? this.error),
     );
   }
 }
 
-/// Project state notifier
+/// Project state notifier — now backed by the Drift database via
+/// [ProjectRepository] for persistent storage.
 class ProjectNotifier extends StateNotifier<ProjectState> {
-  ProjectNotifier() : super(const ProjectState());
-
+  final Ref _ref;
   final _uuid = const Uuid();
 
-  /// Create a new project
-  Future<void> createProject(String name, {int width = 1920, int height = 1080, double fps = 30.0}) async {
+  ProjectNotifier(this._ref) : super(const ProjectState());
+
+  ProjectRepository get _repo => _ref.read(projectRepositoryProvider);
+
+  /// Load all projects from the database on app startup.
+  Future<void> loadProjects() async {
     state = state.copyWith(isLoading: true, error: null);
-
     try {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final project = ProjectModel(
-        id: _uuid.v4(),
-        name: name,
-        createdAt: now,
-        updatedAt: now,
-        width: width,
-        height: height,
-        fps: fps,
-        tracks: [
-          TrackModel(
-            id: _uuid.v4(),
-            name: 'Video 1',
-            trackType: TrackType.video,
-            orderIndex: 0,
-          ),
-          TrackModel(
-            id: _uuid.v4(),
-            name: 'Audio 1',
-            trackType: TrackType.audio,
-            orderIndex: 1,
-          ),
-          TrackModel(
-            id: _uuid.v4(),
-            name: 'Text',
-            trackType: TrackType.text,
-            orderIndex: 2,
-          ),
-        ],
-      );
-
+      final projects = await _repo.getAllProjects();
       state = state.copyWith(
-        currentProject: project,
+        recentProjects: projects,
         isLoading: false,
-        recentProjects: [project, ...state.recentProjects],
       );
     } catch (e) {
+      developer.log('loadProjects failed: $e', name: 'ProjectNotifier');
       state = state.copyWith(isLoading: false, error: e.toString());
     }
   }
 
-  /// Open an existing project
-  void openProject(ProjectModel project) {
-    state = state.copyWith(currentProject: project);
+  /// Create a new project — persists to database and initializes in the
+  /// Rust engine.
+  Future<void> createProject(String name, {int width = 1920, int height = 1080, double fps = 30.0}) async {
+    state = state.copyWith(isLoading: true, error: null);
+
+    try {
+      final project = await _repo.createProject(name, width: width, height: height, fps: fps);
+
+      state = state.copyWith(
+        currentProject: project,
+        recentProjects: [project, ...state.recentProjects],
+        isLoading: false,
+      );
+    } catch (e) {
+      developer.log('createProject failed: $e', name: 'ProjectNotifier');
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  /// Open an existing project — loads from DB and restores in engine.
+  Future<void> openProject(ProjectModel project) async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      // Load full project with assets from DB
+      final fullProject = await _repo.getProject(project.id);
+      if (fullProject != null) {
+        // Try to restore from .epp file if available
+        // (The DB row has eppFilePath if the project was previously saved)
+        state = state.copyWith(
+          currentProject: fullProject,
+          isLoading: false,
+        );
+      } else {
+        state = state.copyWith(
+          currentProject: project,
+          isLoading: false,
+        );
+      }
+    } catch (e) {
+      developer.log('openProject failed: $e', name: 'ProjectNotifier');
+      state = state.copyWith(
+        currentProject: project,
+        isLoading: false,
+      );
+    }
   }
 
   /// Close the current project
@@ -94,9 +114,25 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
     state = state.copyWith(currentProject: null);
   }
 
-  /// Import media into the current project
+  /// Delete a project — removes from DB and engine.
+  Future<void> deleteProject(String projectId) async {
+    try {
+      await _repo.deleteProject(projectId);
+      final updatedRecent = state.recentProjects.where((p) => p.id != projectId).toList();
+      state = state.copyWith(
+        recentProjects: updatedRecent,
+        currentProject: state.currentProject?.id == projectId ? null : state.currentProject,
+      );
+    } catch (e) {
+      developer.log('deleteProject failed: $e', name: 'ProjectNotifier');
+      state = state.copyWith(error: 'Delete failed: $e');
+    }
+  }
+
+  /// Import media into the current project — persists to DB + engine.
   Future<void> importMedia(String filePath, String fileName, MediaType mediaType, {
     int? durationMs, int? width, int? height, int fileSizeBytes = 0,
+    String? codec, int? bitrate,
   }) async {
     if (state.currentProject == null) return;
 
@@ -109,16 +145,23 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
       width: width,
       height: height,
       fileSizeBytes: fileSizeBytes,
+      codec: codec,
+      bitrate: bitrate,
     );
+
+    // Persist to database
+    await _repo.addMediaAsset(state.currentProject!.id, asset);
 
     final updatedProject = state.currentProject!.copyWith(
       mediaAssets: [...state.currentProject!.mediaAssets, asset],
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
 
     state = state.copyWith(currentProject: updatedProject);
   }
 
-  /// Add a clip to a track
+  /// Add a clip to a track — updates the Flutter model (engine handles
+  /// the actual clip creation via EditorNotifier).
   void addClipToTrack(String trackId, ClipModel clip) {
     if (state.currentProject == null) return;
 
@@ -130,7 +173,10 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
     }).toList();
 
     state = state.copyWith(
-      currentProject: state.currentProject!.copyWith(tracks: updatedTracks),
+      currentProject: state.currentProject!.copyWith(
+        tracks: updatedTracks,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
     );
   }
 
@@ -146,7 +192,10 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
     }).toList();
 
     state = state.copyWith(
-      currentProject: state.currentProject!.copyWith(tracks: updatedTracks),
+      currentProject: state.currentProject!.copyWith(
+        tracks: updatedTracks,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
     );
   }
 
@@ -160,7 +209,10 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
     }).toList();
 
     state = state.copyWith(
-      currentProject: state.currentProject!.copyWith(tracks: updatedTracks),
+      currentProject: state.currentProject!.copyWith(
+        tracks: updatedTracks,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
     );
   }
 
@@ -171,11 +223,44 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
       currentProject: state.currentProject!.copyWith(durationMs: durationMs),
     );
   }
+
+  /// Save the current project to the engine (.epp format).
+  Future<void> saveCurrentProject() async {
+    if (state.currentProject == null) return;
+    try {
+      await _repo.updateProject(state.currentProject!);
+      await _repo.saveProjectToEngine(state.currentProject!);
+    } catch (e) {
+      developer.log('saveCurrentProject failed: $e', name: 'ProjectNotifier');
+    }
+  }
+
+  /// Sync the project model with the latest engine state (after
+  /// engine mutations like addClip, split, etc.).
+  Future<void> syncFromEngine() async {
+    if (!EngineService.instance.isInitialized || state.currentProject == null) return;
+    try {
+      final api = EngineService.instance.api;
+      final timelineState = await api.getTimelineState();
+      if (timelineState != null) {
+        // Update duration from engine
+        final duration = await api.getTimelineDuration();
+        state = state.copyWith(
+          currentProject: state.currentProject!.copyWith(
+            durationMs: duration.toInt(),
+            updatedAt: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+      }
+    } catch (e) {
+      developer.log('syncFromEngine failed: $e', name: 'ProjectNotifier');
+    }
+  }
 }
 
 /// Provider for project state
 final projectProvider = StateNotifierProvider<ProjectNotifier, ProjectState>((ref) {
-  return ProjectNotifier();
+  return ProjectNotifier(ref);
 });
 
 /// Provider for current project

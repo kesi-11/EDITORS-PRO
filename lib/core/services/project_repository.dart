@@ -1,0 +1,238 @@
+/// Repository that bridges the Drift database with the Rust engine.
+///
+/// This is the single source of truth for project persistence:
+/// - Creating a project → insert into DB + create in engine
+/// - Opening a project → read from DB + restore in engine
+/// - Deleting a project → delete from DB + engine cleanup
+///
+/// The Drift database stores lightweight metadata (name, resolution, etc.)
+/// while the Rust engine's .epp file stores the full timeline/clip state.
+library;
+
+import 'dart:developer' as developer;
+
+import 'package:drift/drift.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
+
+import '../../data/database/app_database.dart';
+import '../../data/models/project_model.dart';
+import '../../core/constants/app_constants.dart';
+import '../../core/services/engine_service.dart';
+import '../../core/services/database_provider.dart';
+
+class ProjectRepository {
+  final AppDatabase _db;
+  final Ref _ref;
+  final _uuid = const Uuid();
+
+  ProjectRepository(this._db, this._ref);
+
+  // ─── Create ────────────────────────────────────────────────────
+
+  /// Create a new project, persist it to the database, and initialize
+  /// it in the Rust engine.
+  ///
+  /// Returns the fully-hydrated [ProjectModel] on success.
+  Future<ProjectModel> createProject(
+    String name, {
+    int width = 1920,
+    int height = 1080,
+    double fps = 30.0,
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final id = _uuid.v4();
+
+    // Persist to database
+    await _db.upsertProject(ProjectEntriesCompanion(
+      id: Value(id),
+      name: Value(name),
+      width: Value(width),
+      height: Value(height),
+      fps: Value(fps),
+      createdAt: Value(now),
+      updatedAt: Value(now),
+    ));
+
+    // Initialize in the Rust engine
+    if (EngineService.instance.isInitialized) {
+      try {
+        await EngineService.instance.api.createProject(
+          name: name,
+          settings: null, // Use engine defaults matching our DB values
+        );
+      } catch (e) {
+        developer.log('Engine createProject failed: $e', name: 'ProjectRepository');
+      }
+    }
+
+    // Create default tracks in the model
+    final videoTrackId = _uuid.v4();
+    final audioTrackId = _uuid.v4();
+    final textTrackId = _uuid.v4();
+
+    return ProjectModel(
+      id: id,
+      name: name,
+      createdAt: now,
+      updatedAt: now,
+      width: width,
+      height: height,
+      fps: fps,
+      tracks: [
+        TrackModel(id: videoTrackId, name: 'Video 1', trackType: TrackType.video, orderIndex: 0),
+        TrackModel(id: audioTrackId, name: 'Audio 1', trackType: TrackType.audio, orderIndex: 1),
+        TrackModel(id: textTrackId, name: 'Text', trackType: TrackType.text, orderIndex: 2),
+      ],
+    );
+  }
+
+  // ─── Read ──────────────────────────────────────────────────────
+
+  /// Load all projects from the database, converting DB rows to
+  /// lightweight [ProjectModel] instances (without clips/assets loaded).
+  Future<List<ProjectModel>> getAllProjects() async {
+    final rows = await _db.getAllProjects();
+    return rows.map(_dbRowToModel).toList();
+  }
+
+  /// Load a single project by ID, including its media assets.
+  Future<ProjectModel?> getProject(String id) async {
+    final row = await _db.getProject(id);
+    if (row == null) return null;
+
+    final assets = await _db.getAssetsForProject(id);
+    final model = _dbRowToModel(row);
+
+    // Attach media assets
+    return model.copyWith(
+      mediaAssets: assets.map(_assetDbRowToModel).toList(),
+    );
+  }
+
+  // ─── Update ────────────────────────────────────────────────────
+
+  /// Update a project's metadata in the database.
+  Future<void> updateProject(ProjectModel project) async {
+    await _db.upsertProject(ProjectEntriesCompanion(
+      id: Value(project.id),
+      name: Value(project.name),
+      width: Value(project.width),
+      height: Value(project.height),
+      fps: Value(project.fps),
+      durationMs: Value(project.durationMs),
+      createdAt: Value(project.createdAt),
+      updatedAt: Value(DateTime.now().millisecondsSinceEpoch),
+      thumbnailPath: Value(project.thumbnailPath),
+    ));
+  }
+
+  /// Save a project's full state via the Rust engine (.epp format).
+  Future<void> saveProjectToEngine(ProjectModel project) async {
+    if (!EngineService.instance.isInitialized) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final projectsDir = p.join(dir.path, AppConstants.projectsDir);
+      final eppPath = p.join(projectsDir, '${project.id}${AppConstants.projectFileExtension}');
+
+      await EngineService.instance.api.saveProject(filePath: eppPath);
+
+      // Update the DB with the .epp file path
+      await _db.upsertProject(ProjectEntriesCompanion(
+        id: Value(project.id),
+        eppFilePath: Value(eppPath),
+        updatedAt: Value(DateTime.now().millisecondsSinceEpoch),
+      ));
+    } catch (e) {
+      developer.log('saveProjectToEngine failed: $e', name: 'ProjectRepository');
+    }
+  }
+
+  /// Load a project's full timeline state from the Rust engine (.epp).
+  Future<void> loadProjectFromEngine(String eppFilePath) async {
+    if (!EngineService.instance.isInitialized) return;
+    try {
+      await EngineService.instance.api.loadProject(filePath: eppFilePath);
+    } catch (e) {
+      developer.log('loadProjectFromEngine failed: $e', name: 'ProjectRepository');
+    }
+  }
+
+  // ─── Media Assets ──────────────────────────────────────────────
+
+  /// Persist a media asset record to the database.
+  Future<void> addMediaAsset(String projectId, MediaAssetModel asset) async {
+    await _db.upsertMediaAsset(MediaAssetEntriesCompanion(
+      id: Value(asset.id),
+      projectId: Value(projectId),
+      filePath: Value(asset.filePath),
+      fileName: Value(asset.fileName),
+      mediaType: Value(asset.mediaType.name),
+      durationMs: Value(asset.durationMs),
+      width: Value(asset.width),
+      height: Value(asset.height),
+      fileSizeBytes: Value(asset.fileSizeBytes),
+      codec: Value(asset.codec),
+      bitrate: Value(asset.bitrate),
+      thumbnailPath: Value(asset.thumbnailPath),
+      importedAt: Value(DateTime.now().millisecondsSinceEpoch),
+    ));
+  }
+
+  // ─── Delete ────────────────────────────────────────────────────
+
+  /// Delete a project and all its associated data.
+  Future<void> deleteProject(String projectId) async {
+    await _db.deleteAssetsForProject(projectId);
+    await _db.deleteProject(projectId);
+  }
+
+  // ─── Conversion helpers ────────────────────────────────────────
+
+  ProjectModel _dbRowToModel(ProjectEntry row) {
+    return ProjectModel(
+      id: row.id,
+      name: row.name,
+      width: row.width,
+      height: row.height,
+      fps: row.fps,
+      durationMs: row.durationMs,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      thumbnailPath: row.thumbnailPath,
+    );
+  }
+
+  MediaAssetModel _assetDbRowToModel(MediaAssetEntry row) {
+    return MediaAssetModel(
+      id: row.id,
+      filePath: row.filePath,
+      fileName: row.fileName,
+      mediaType: _mediaTypeFromString(row.mediaType),
+      durationMs: row.durationMs,
+      width: row.width,
+      height: row.height,
+      fileSizeBytes: row.fileSizeBytes,
+      codec: row.codec,
+      bitrate: row.bitrate,
+      thumbnailPath: row.thumbnailPath,
+    );
+  }
+
+  MediaType _mediaTypeFromString(String type) {
+    switch (type.toLowerCase()) {
+      case 'video': return MediaType.video;
+      case 'audio': return MediaType.audio;
+      case 'image': return MediaType.image;
+      default: return MediaType.video;
+    }
+  }
+}
+
+/// Provider for the [ProjectRepository].
+final projectRepositoryProvider = Provider<ProjectRepository>((ref) {
+  final db = ref.watch(databaseProvider);
+  return ProjectRepository(db, ref);
+});

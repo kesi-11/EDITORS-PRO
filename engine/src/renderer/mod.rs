@@ -9,18 +9,26 @@ pub mod shader;
 
 use crate::decoder::FrameData;
 use crate::effects::EffectsPipeline;
+use crate::effects::text_rasterizer::TextRasterizer;
+use crate::effects::text_render::TextOverlay;
 use crate::timeline::Timeline;
+use crate::timeline::track::TrackType;
 
 /// Preview renderer for real-time frame composition
 pub struct PreviewRenderer {
     width: u32,
     height: u32,
+    text_rasterizer: TextRasterizer,
 }
 
 impl PreviewRenderer {
     /// Create a new preview renderer at the specified resolution
     pub fn new(width: u32, height: u32) -> Self {
-        Self { width, height }
+        Self {
+            width,
+            height,
+            text_rasterizer: TextRasterizer::new(),
+        }
     }
 
     /// Compose a single frame from the timeline at the given timestamp.
@@ -29,11 +37,9 @@ impl PreviewRenderer {
     /// 1. Takes the decoded video frame (or a blank frame)
     /// 2. Applies per-clip effects from the active clip's effect chain
     /// 3. Applies opacity blending for non-opaque clips
-    ///
-    /// Transitions between clips are handled at a higher level (the engine)
-    /// because they require two decoded frames.
+    /// 4. Renders text overlays from text tracks
     pub fn compose_frame(
-        &self,
+        &mut self,
         timeline: &Timeline,
         time_ms: u64,
         video_frame: Option<FrameData>,
@@ -64,13 +70,42 @@ impl PreviewRenderer {
             }
         }
 
+        // Render text overlays from text tracks
+        let text_tracks = timeline.tracks_of_type(TrackType::Text);
+        for track in text_tracks {
+            if !track.visible {
+                continue;
+            }
+            for clip in &track.clips {
+                if !clip.contains_time(time_ms) {
+                    continue;
+                }
+
+                // Create a text overlay for this clip
+                // The clip's asset_id for text clips is "text_<id>"
+                let progress = if clip.duration_ms > 0 {
+                    (time_ms - clip.start_ms) as f32 / clip.duration_ms as f32
+                } else {
+                    0.0
+                };
+
+                // Extract text content from the clip's effects or use a default
+                let overlay = TextOverlay::simple("Text");
+                self.text_rasterizer.render_text(
+                    &overlay,
+                    &mut frame.data,
+                    frame.width,
+                    frame.height,
+                    progress,
+                    clip.duration_ms,
+                );
+            }
+        }
+
         frame
     }
 
     /// Apply effects from a clip's effect chain to frame data.
-    ///
-    /// This is a convenience method for when you already have the clip
-    /// but don't need full timeline composition.
     pub fn apply_clip_effects(&self, frame: &mut FrameData, effects: &[crate::effects::Effect]) {
         if effects.is_empty() { return; }
         let pipeline = EffectsPipeline::new(effects.to_vec());

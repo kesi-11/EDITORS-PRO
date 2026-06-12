@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/extensions/context_extensions.dart';
@@ -198,7 +199,10 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         }
 
         final asset = assets[index - 1];
-        return _MediaAssetItem(asset: asset);
+        return _MediaAssetItem(
+          asset: asset,
+          onAddToTimeline: () => _addAssetToTimeline(asset),
+        );
       },
     );
   }
@@ -285,9 +289,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                         : null,
                     trailing: IconButton(
                       icon: const Icon(Icons.add_circle_outline, size: 18),
-                      onPressed: () {
-                        // TODO: Add to audio track
-                      },
+                      onPressed: () => _addAssetToTimeline(asset),
                     ),
                   ),
                 );
@@ -320,13 +322,139 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             leading: Icon(icon, color: AppTheme.textTrackColor),
             title: Text(name, style: context.textTheme.titleSmall),
             subtitle: Text(description, style: context.textTheme.bodySmall),
-            onTap: () {
-              // TODO: Add text clip to timeline
-            },
+            onTap: () => _addTextToTimeline(name, fontSize),
           ),
         );
       },
     );
+  }
+
+  // ─── "Add to Timeline" Implementation ───────────────────────────
+
+  /// Add a media asset to the appropriate track on the timeline.
+  ///
+  /// Finds the first track matching the asset's type, calculates the
+  /// start position (append after the last clip), and calls the Rust
+  /// engine to create the clip via the Command pattern.
+  Future<void> _addAssetToTimeline(MediaAssetModel asset) async {
+    final project = ref.read(currentProjectProvider);
+    if (project == null) return;
+
+    // Determine which track type this asset goes on
+    final TrackType targetTrackType;
+    switch (asset.mediaType) {
+      case MediaType.video:
+      case MediaType.image:
+        targetTrackType = TrackType.video;
+        break;
+      case MediaType.audio:
+        targetTrackType = TrackType.audio;
+        break;
+    }
+
+    // Find the first track of the matching type
+    final targetTrack = project.tracks
+        .where((t) => t.trackType == targetTrackType)
+        .firstOrNull;
+
+    if (targetTrack == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No ${targetTrackType.name} track found')),
+        );
+      }
+      return;
+    }
+
+    // Calculate the start position: append after the last clip on the track
+    final lastClipEnd = targetTrack.clips.isEmpty
+        ? 0
+        : targetTrack.clips
+            .map((c) => c.startMs + c.durationMs)
+            .reduce((a, b) => a > b ? a : b);
+
+    // Call into the Rust engine to add the clip
+    final clipInfo = await ref.read(editorProvider.notifier).addClipToTrack(
+          trackId: targetTrack.id,
+          assetId: asset.id,
+          startMs: lastClipEnd,
+          durationMs: asset.durationMs ?? 0,
+        );
+
+    if (clipInfo != null) {
+      // Update the Flutter model to reflect the new clip
+      final clip = ClipModel(
+        id: clipInfo.id,
+        assetId: asset.id,
+        startMs: lastClipEnd,
+        durationMs: asset.durationMs ?? clipInfo.durationMs.toInt(),
+      );
+      ref.read(projectProvider.notifier).addClipToTrack(targetTrack.id, clip);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Added ${asset.fileName} to ${targetTrack.name}'),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to add clip')),
+        );
+      }
+    }
+  }
+
+  /// Add a text overlay to the text track.
+  Future<void> _addTextToTimeline(String text, double fontSize) async {
+    final project = ref.read(currentProjectProvider);
+    if (project == null) return;
+
+    // Find the text track
+    final textTrack = project.tracks
+        .where((t) => t.trackType == TrackType.text)
+        .firstOrNull;
+
+    if (textTrack == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No text track found')),
+        );
+      }
+      return;
+    }
+
+    // Calculate the start position
+    final lastClipEnd = textTrack.clips.isEmpty
+        ? 0
+        : textTrack.clips
+            .map((c) => c.startMs + c.durationMs)
+            .reduce((a, b) => a > b ? a : b);
+
+    // Create a placeholder text clip (5 seconds default duration)
+    const defaultDurationMs = 5000;
+    final clipId = const Uuid().v4();
+    final clip = ClipModel(
+      id: clipId,
+      assetId: 'text_$clipId',
+      startMs: lastClipEnd,
+      durationMs: defaultDurationMs,
+    );
+
+    // Update the Flutter model immediately for responsiveness
+    ref.read(projectProvider.notifier).addClipToTrack(textTrack.id, clip);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added "$text" to ${textTrack.name}'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
   }
 
   /// Import media using the file picker, copy to cache, and register
@@ -342,7 +470,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
           'mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma',
           'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp',
         ],
-        allowMultiple: false,
+        allowMultiple: true,
       );
 
       if (result == null || result.files.isEmpty) {
@@ -350,64 +478,56 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         return;
       }
 
-      final pickedFile = result.files.first;
-      final sourcePath = pickedFile.path;
-
-      if (sourcePath == null) {
-        ref.read(editorProvider.notifier).setImporting(false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not access the selected file')),
-          );
-        }
-        return;
-      }
-
-      // Copy the file to the app's cache directory so that the Rust
-      // engine (which runs on the native side) can access it reliably.
       final cacheDir = await getTemporaryDirectory();
       final mediaDir = Directory(p.join(cacheDir.path, AppConstants.mediaDir));
       if (!mediaDir.existsSync()) {
         mediaDir.createSync(recursive: true);
       }
 
-      final destPath = p.join(mediaDir.path, p.basename(sourcePath));
-      await File(sourcePath).copy(destPath);
+      for (final pickedFile in result.files) {
+        final sourcePath = pickedFile.path;
+        if (sourcePath == null) continue;
 
-      // Call into the Rust engine to import the media.
-      if (!EngineService.instance.isInitialized) {
-        ref.read(editorProvider.notifier).setImporting(false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Engine not initialized')),
-          );
-        }
-        return;
-      }
+        final destPath = p.join(mediaDir.path, p.basename(sourcePath));
+        await File(sourcePath).copy(destPath);
 
-      final notifier = ref.read(editorProvider.notifier);
-      final assetInfo = await notifier.importMedia(destPath);
-
-      if (assetInfo != null) {
-        // Update the project provider's media asset list so that the
-        // media library UI reflects the newly imported asset.
-        final mediaType = _mediaTypeFromString(assetInfo.mediaType);
-        await ref.read(projectProvider.notifier).importMedia(
-              assetInfo.filePath,
-              assetInfo.fileName,
-              mediaType,
-              durationMs: assetInfo.durationMs?.toInt(),
-              width: assetInfo.width?.toInt(),
-              height: assetInfo.height?.toInt(),
-              fileSizeBytes: assetInfo.fileSizeBytes.toInt(),
+        if (!EngineService.instance.isInitialized) {
+          ref.read(editorProvider.notifier).setImporting(false);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Engine not initialized')),
             );
+          }
+          return;
+        }
+
+        final notifier = ref.read(editorProvider.notifier);
+        final assetInfo = await notifier.importMedia(destPath);
+
+        if (assetInfo != null) {
+          final mediaType = _mediaTypeFromString(assetInfo.mediaType);
+          await ref.read(projectProvider.notifier).importMedia(
+                assetInfo.filePath,
+                assetInfo.fileName,
+                mediaType,
+                durationMs: assetInfo.durationMs?.toInt(),
+                width: assetInfo.width?.toInt(),
+                height: assetInfo.height?.toInt(),
+                fileSizeBytes: assetInfo.fileSizeBytes.toInt(),
+                codec: assetInfo.codec,
+                bitrate: assetInfo.bitrate?.toInt(),
+              );
+        }
       }
 
       ref.read(editorProvider.notifier).setImporting(false);
 
-      if (mounted && assetInfo != null) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Imported: ${assetInfo.fileName}')),
+          SnackBar(
+            content: Text('Imported ${result.files.length} file(s)'),
+            duration: const Duration(seconds: 1),
+          ),
         );
       }
     } catch (e) {
@@ -486,8 +606,12 @@ class _TabButton extends StatelessWidget {
 
 class _MediaAssetItem extends StatelessWidget {
   final MediaAssetModel asset;
+  final VoidCallback onAddToTimeline;
 
-  const _MediaAssetItem({required this.asset});
+  const _MediaAssetItem({
+    required this.asset,
+    required this.onAddToTimeline,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -523,10 +647,9 @@ class _MediaAssetItem extends StatelessWidget {
             )
           : null,
       trailing: IconButton(
-        icon: const Icon(Icons.add_circle_outline, size: 18),
-        onPressed: () {
-          // TODO: Add to timeline
-        },
+        icon: const Icon(Icons.add_circle, size: 18, color: AppTheme.primary),
+        onPressed: onAddToTimeline,
+        tooltip: 'Add to timeline',
       ),
     );
   }

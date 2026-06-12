@@ -32,6 +32,8 @@ class EditorState {
   final bool isAudioPlaying;
   /// Master volume level for audio playback (0.0 to 1.0)
   final double masterVolume;
+  /// Whether the editor is currently fetching frames in the playback loop
+  final bool isDecodingFrame;
 
   const EditorState({
     this.isPlaying = false,
@@ -49,6 +51,7 @@ class EditorState {
     this.lastError,
     this.isAudioPlaying = false,
     this.masterVolume = 1.0,
+    this.isDecodingFrame = false,
   });
 
   EditorState copyWith({
@@ -68,6 +71,7 @@ class EditorState {
     bool clearError = false,
     bool? isAudioPlaying,
     double? masterVolume,
+    bool? isDecodingFrame,
   }) {
     return EditorState(
       isPlaying: isPlaying ?? this.isPlaying,
@@ -85,6 +89,7 @@ class EditorState {
       lastError: clearError ? null : (lastError ?? this.lastError),
       isAudioPlaying: isAudioPlaying ?? this.isAudioPlaying,
       masterVolume: masterVolume ?? this.masterVolume,
+      isDecodingFrame: isDecodingFrame ?? this.isDecodingFrame,
     );
   }
 }
@@ -92,8 +97,14 @@ class EditorState {
 enum LeftPanelTab { media, effects, text, audio }
 
 /// Editor state notifier — mediates between the UI and the Rust engine.
+///
+/// Phase 4 improvements:
+/// - Real-time preview playback with continuous frame decode loop
+/// - Clip drag-and-move via engine bridge
+/// - Project save/load integration
 class EditorNotifier extends StateNotifier<EditorState> {
   Timer? _playbackTimer;
+  DateTime? _lastFrameTime;
   final Ref _ref;
 
   EditorNotifier(this._ref) : super(const EditorState());
@@ -130,34 +141,62 @@ class EditorNotifier extends StateNotifier<EditorState> {
   void _stopPlayback() {
     _playbackTimer?.cancel();
     _playbackTimer = null;
+    _lastFrameTime = null;
     state = state.copyWith(isPlaying: false, isAudioPlaying: false);
   }
 
-  /// Start playback from current position using a Timer
+  /// Start real-time playback from current position.
+  ///
+  /// Uses a high-frequency Timer that advances the playhead based on
+  /// real elapsed time (not fixed intervals), providing smooth playback
+  /// that accounts for frame decode latency.
   void _startPlayback() {
     _playbackTimer?.cancel();
-    const tickMs = 33; // ~30fps
+    _lastFrameTime = DateTime.now();
+
+    // Use ~60Hz tick for smooth playback
+    const tickMs = 16;
     _playbackTimer = Timer.periodic(const Duration(milliseconds: tickMs), (timer) {
-      if (!state.isPlaying || state.currentTimeMs >= state.durationMs) {
+      if (!state.isPlaying) {
         timer.cancel();
         _playbackTimer = null;
-        state = state.copyWith(isPlaying: false, isAudioPlaying: false);
         return;
       }
-      seekTo(state.currentTimeMs + tickMs);
+
+      final now = DateTime.now();
+      final elapsed = _lastFrameTime != null
+          ? now.difference(_lastFrameTime!).inMilliseconds
+          : tickMs;
+      _lastFrameTime = now;
+
+      // Apply playback speed multiplier
+      final adjustedElapsed = (elapsed * state.playbackSpeed).round();
+
+      final newTime = state.currentTimeMs + adjustedElapsed;
+      if (newTime >= state.durationMs) {
+        // Loop back to start when reaching the end
+        seekTo(0);
+      } else {
+        seekTo(newTime);
+      }
     });
   }
 
   /// Seek to a specific time position
   void seekTo(int timeMs) {
     state = state.copyWith(
-      currentTimeMs: timeMs.clamp(0, state.durationMs),
+      currentTimeMs: timeMs.clamp(0, state.durationMs > 0 ? state.durationMs : 300000),
     );
   }
 
   /// Set the timeline duration
   void setDuration(int durationMs) {
     state = state.copyWith(durationMs: durationMs);
+  }
+
+  /// Set playback speed (0.25x to 4.0x)
+  void setPlaybackSpeed(double speed) {
+    state = state.copyWith(playbackSpeed: speed.clamp(0.25, 4.0));
   }
 
   // ─── Zoom ────────────────────────────────────────────────────────
@@ -231,6 +270,7 @@ class EditorNotifier extends StateNotifier<EditorState> {
       final api = EngineService.instance.api;
       await api.undo();
       await _syncDurationFromEngine();
+      await _ref.read(projectProvider.notifier).syncFromEngine();
     } catch (e) {
       developer.log('undo failed: $e', name: 'EditorNotifier');
       state = state.copyWith(lastError: 'Undo failed: $e');
@@ -244,6 +284,7 @@ class EditorNotifier extends StateNotifier<EditorState> {
       final api = EngineService.instance.api;
       await api.redo();
       await _syncDurationFromEngine();
+      await _ref.read(projectProvider.notifier).syncFromEngine();
     } catch (e) {
       developer.log('redo failed: $e', name: 'EditorNotifier');
       state = state.copyWith(lastError: 'Redo failed: $e');
@@ -260,6 +301,7 @@ class EditorNotifier extends StateNotifier<EditorState> {
       await api.splitClip(clipId: clipId, timeMs: BigInt.from(state.currentTimeMs));
       await _syncDurationFromEngine();
       _refreshEngineState();
+      await _ref.read(projectProvider.notifier).syncFromEngine();
     } catch (e) {
       developer.log('splitAtPlayhead failed: $e', name: 'EditorNotifier');
       state = state.copyWith(lastError: 'Split failed: $e');
@@ -277,6 +319,7 @@ class EditorNotifier extends StateNotifier<EditorState> {
       state = state.copyWith(selectedClipId: null, showInspector: false);
       await _syncDurationFromEngine();
       _refreshEngineState();
+      await _ref.read(projectProvider.notifier).syncFromEngine();
     } catch (e) {
       developer.log('deleteSelected failed: $e', name: 'EditorNotifier');
       state = state.copyWith(lastError: 'Delete failed: $e');
@@ -284,8 +327,6 @@ class EditorNotifier extends StateNotifier<EditorState> {
   }
 
   /// Import a media file via the Rust engine.
-  ///
-  /// Returns the [MediaAssetInfo] DTO on success, or `null` on failure.
   Future<MediaAssetInfo?> importMedia(String filePath) async {
     if (!_engineReady) return null;
     try {
@@ -302,8 +343,6 @@ class EditorNotifier extends StateNotifier<EditorState> {
   }
 
   /// Add a clip to a track via the Rust engine.
-  ///
-  /// Returns the [ClipInfo] DTO on success, or `null` on failure.
   Future<ClipInfo?> addClipToTrack({
     required String trackId,
     required String assetId,
@@ -329,9 +368,54 @@ class EditorNotifier extends StateNotifier<EditorState> {
     }
   }
 
-  /// Create a new project via the Rust engine.
+  /// Move a clip to a new position on the timeline.
   ///
-  /// Returns the [ProjectInfo] DTO on success, or `null` on failure.
+  /// This is the engine-backed implementation for clip drag-and-drop.
+  Future<void> moveClip({
+    required String clipId,
+    required int newStartMs,
+    String? newTrackId,
+  }) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.moveClip(
+        clipId: clipId,
+        newStartMs: BigInt.from(newStartMs),
+        newTrackId: newTrackId,
+      );
+      await _syncDurationFromEngine();
+      _refreshEngineState();
+      await _ref.read(projectProvider.notifier).syncFromEngine();
+    } catch (e) {
+      developer.log('moveClip failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Move clip failed: $e');
+    }
+  }
+
+  /// Trim a clip by adjusting its start/end trim points.
+  Future<void> trimClip({
+    required String clipId,
+    required int trimStartMs,
+    required int trimEndMs,
+  }) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.trimClip(
+        clipId: clipId,
+        trimStartMs: BigInt.from(trimStartMs),
+        trimEndMs: BigInt.from(trimEndMs),
+      );
+      await _syncDurationFromEngine();
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('trimClip failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Trim clip failed: $e');
+    }
+  }
+
+  /// Create a new project via the Rust engine.
   Future<ProjectInfo?> createProject(String name, {int? width, int? height, double? fps}) async {
     if (!_engineReady) return null;
     try {
@@ -354,6 +438,32 @@ class EditorNotifier extends StateNotifier<EditorState> {
       developer.log('createProject failed: $e', name: 'EditorNotifier');
       state = state.copyWith(lastError: 'Create project failed: $e');
       return null;
+    }
+  }
+
+  /// Save the current project via the Rust engine.
+  Future<void> saveProject({required String filePath}) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.saveProject(filePath: filePath);
+    } catch (e) {
+      developer.log('saveProject failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Save failed: $e');
+    }
+  }
+
+  /// Load a project from a .epp file via the Rust engine.
+  Future<void> loadProject({required String filePath}) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.loadProject(filePath: filePath);
+      await _syncDurationFromEngine();
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('loadProject failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Load failed: $e');
     }
   }
 
@@ -386,8 +496,6 @@ class EditorNotifier extends StateNotifier<EditorState> {
   }
 
   /// Get waveform peak data for an audio asset.
-  ///
-  /// Returns a list of peak values (0.0 to 1.0) for visualization.
   Future<List<double>> getWaveform(String assetId, {int numBins = 200}) async {
     if (!_engineReady) return [];
     try {
@@ -413,9 +521,6 @@ class EditorNotifier extends StateNotifier<EditorState> {
   }
 
   /// Get the full timeline state from the engine.
-  ///
-  /// Returns the timeline state DTO for rendering, or null if
-  /// the engine is not ready or no project is open.
   Future<dynamic> getTimelineState() async {
     if (!_engineReady) return null;
     try {
@@ -430,9 +535,6 @@ class EditorNotifier extends StateNotifier<EditorState> {
   // ─── Effect Bridge Operations ──────────────────────────────────────
 
   /// Add a filter effect to the selected clip.
-  ///
-  /// `filterTypeName` must match a display name from the filter catalog
-  /// (e.g., "Brightness", "Contrast", "Saturation", etc.).
   Future<String?> addEffect(String filterTypeName) async {
     if (!_engineReady) return null;
     final clipId = state.selectedClipId;
@@ -548,9 +650,6 @@ class EditorNotifier extends StateNotifier<EditorState> {
   // ─── Transition Bridge Operations ──────────────────────────────────
 
   /// Add a transition to the selected clip.
-  ///
-  /// `transitionType` must be one of the transition catalog names.
-  /// `direction` is "in" or "out".
   Future<String?> addTransition(
     String transitionType,
     int durationMs,

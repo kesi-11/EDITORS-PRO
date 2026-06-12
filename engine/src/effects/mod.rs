@@ -14,6 +14,7 @@
 
 pub mod filters;
 pub mod text_render;
+pub mod text_rasterizer;
 pub mod transitions;
 
 use serde::{Deserialize, Serialize};

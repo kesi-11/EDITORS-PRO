@@ -43,6 +43,9 @@ image = "0.25"
 # cpal = "0.15"
 # rubato = "0.15"
 
+# Font rendering for text overlays
+fontdue = "0.9"
+
 # File compression for .epp format
 zip = "2.2"
 

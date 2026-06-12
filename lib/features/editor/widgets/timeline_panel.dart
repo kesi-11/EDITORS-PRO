@@ -11,6 +11,11 @@ import '../providers/editor_provider.dart';
 import 'audio_waveform_painter.dart';
 
 /// Timeline panel - Shows tracks and clips with a playhead
+///
+/// Phase 4 improvements:
+/// - Clip drag-and-drop repositioning
+/// - Tap-to-seek on empty timeline areas
+/// - Trim handles on selected clips
 class TimelinePanel extends ConsumerStatefulWidget {
   const TimelinePanel({super.key});
 
@@ -23,6 +28,10 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
   final ScrollController _verticalScrollController = ScrollController();
   /// Cached waveform data keyed by asset ID
   final Map<String, List<double>> _waveformCache = {};
+  /// Track which clip is being dragged
+  String? _draggingClipId;
+  /// Track the original start time when drag begins
+  int? _dragOriginalStartMs;
 
   @override
   void dispose() {
@@ -60,47 +69,93 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                   child: SingleChildScrollView(
                     controller: _horizontalScrollController,
                     scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                      width: (editorState.durationMs > 0 ? editorState.durationMs : 30000)
-                          * AppConstants.timelinePixelsPerMs * editorState.zoomLevel,
-                      child: Stack(
-                        children: [
-                          // Track content with clips
-                          SingleChildScrollView(
-                            controller: _verticalScrollController,
-                            child: SizedBox(
-                              height: tracks.length * AppTheme.trackHeight,
-                              child: Stack(
-                                children: [
-                                  // Draw tracks and clips
-                                  ...tracks.asMap().entries.map((entry) {
-                                    final index = entry.key;
-                                    final track = entry.value;
-                                    return _TrackRow(
-                                      track: track,
-                                      trackIndex: index,
-                                      zoomLevel: editorState.zoomLevel,
-                                      durationMs: editorState.durationMs,
-                                      selectedClipId: editorState.selectedClipId,
-                                      onClipTap: (clipId) => ref.read(editorProvider.notifier).selectClip(clipId),
-                                      onClipDrag: (clipId, newStartMs) {
-                                        // Will call engine.move_clip
-                                      },
-                                      waveformCache: _waveformCache,
-                                    );
-                                  }),
+                    child: GestureDetector(
+                      // Tap on empty timeline area to seek
+                      onTapUp: (details) {
+                        final pixelsPerMs = AppConstants.timelinePixelsPerMs * editorState.zoomLevel;
+                        final timeMs = (details.localPosition.dx / pixelsPerMs).round();
+                        ref.read(editorProvider.notifier).seekTo(timeMs);
+                      },
+                      child: SizedBox(
+                        width: (editorState.durationMs > 0 ? editorState.durationMs : 30000)
+                            * AppConstants.timelinePixelsPerMs * editorState.zoomLevel,
+                        child: Stack(
+                          children: [
+                            // Track content with clips
+                            SingleChildScrollView(
+                              controller: _verticalScrollController,
+                              child: SizedBox(
+                                height: tracks.length * AppTheme.trackHeight,
+                                child: Stack(
+                                  children: [
+                                    // Draw tracks and clips
+                                    ...tracks.asMap().entries.map((entry) {
+                                      final index = entry.key;
+                                      final track = entry.value;
+                                      return _TrackRow(
+                                        track: track,
+                                        trackIndex: index,
+                                        zoomLevel: editorState.zoomLevel,
+                                        durationMs: editorState.durationMs,
+                                        selectedClipId: editorState.selectedClipId,
+                                        onClipTap: (clipId) => ref.read(editorProvider.notifier).selectClip(clipId),
+                                        onClipDragStart: (clipId, originalStartMs) {
+                                          setState(() {
+                                            _draggingClipId = clipId;
+                                            _dragOriginalStartMs = originalStartMs;
+                                          });
+                                        },
+                                        onClipDragUpdate: (clipId, newStartMs) {
+                                          // Update the clip position in the model immediately
+                                          // for responsive visual feedback
+                                          final project = ref.read(currentProjectProvider);
+                                          if (project == null) return;
 
-                                  // Playhead
-                                  _PlayheadIndicator(
-                                    currentTimeMs: editorState.currentTimeMs,
-                                    durationMs: editorState.durationMs,
-                                    zoomLevel: editorState.zoomLevel,
-                                  ),
-                                ],
+                                          final updatedTracks = project.tracks.map((track) {
+                                            final updatedClips = track.clips.map((clip) {
+                                              if (clip.id == clipId) {
+                                                return clip.copyWith(startMs: newStartMs);
+                                              }
+                                              return clip;
+                                            }).toList();
+                                            return track.copyWith(clips: updatedClips);
+                                          }).toList();
+
+                                          ref.read(projectProvider.notifier).updateClip(
+                                            clipId,
+                                            project.tracks
+                                                .expand((t) => t.clips)
+                                                .firstWhere((c) => c.id == clipId)
+                                                .copyWith(startMs: newStartMs),
+                                          );
+                                        },
+                                        onClipDragEnd: (clipId, finalStartMs) {
+                                          // Commit the move to the engine
+                                          ref.read(editorProvider.notifier).moveClip(
+                                            clipId: clipId,
+                                            newStartMs: finalStartMs,
+                                          );
+                                          setState(() {
+                                            _draggingClipId = null;
+                                            _dragOriginalStartMs = null;
+                                          });
+                                        },
+                                        waveformCache: _waveformCache,
+                                      );
+                                    }),
+
+                                    // Playhead
+                                    _PlayheadIndicator(
+                                      currentTimeMs: editorState.currentTimeMs,
+                                      durationMs: editorState.durationMs,
+                                      zoomLevel: editorState.zoomLevel,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -265,7 +320,6 @@ class _TimeRuler extends StatelessWidget {
   }
 
   int _calculateTickInterval() {
-    // Calculate appropriate tick spacing based on zoom
     final intervals = [100, 200, 500, 1000, 2000, 5000, 10000, 30000, 60000];
     final pixelsPerMs = AppConstants.timelinePixelsPerMs * zoomLevel;
 
@@ -295,7 +349,6 @@ class _TimeRulerPainter extends CustomPainter {
     final paint = Paint()..color = const Color(0xFF44445A);
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
 
-    // Draw ticks
     for (var ms = 0; ms <= durationMs; ms += tickInterval) {
       final x = ms * pixelsPerMs;
       final isMajor = ms % (tickInterval * 5) == 0;
@@ -333,7 +386,9 @@ class _TrackRow extends StatelessWidget {
   final int durationMs;
   final String? selectedClipId;
   final ValueChanged<String> onClipTap;
-  final void Function(String clipId, int newStartMs) onClipDrag;
+  final void Function(String clipId, int originalStartMs) onClipDragStart;
+  final void Function(String clipId, int newStartMs) onClipDragUpdate;
+  final void Function(String clipId, int finalStartMs) onClipDragEnd;
   final Map<String, List<double>> waveformCache;
 
   const _TrackRow({
@@ -343,7 +398,9 @@ class _TrackRow extends StatelessWidget {
     required this.durationMs,
     this.selectedClipId,
     required this.onClipTap,
-    required this.onClipDrag,
+    required this.onClipDragStart,
+    required this.onClipDragUpdate,
+    required this.onClipDragEnd,
     required this.waveformCache,
   });
 
@@ -383,12 +440,16 @@ class _TrackRow extends StatelessWidget {
                 top: 4,
                 width: math.max(width, AppTheme.clipMinWidth),
                 height: AppTheme.trackHeight - 8,
-                child: _ClipWidget(
+                child: _DraggableClipWidget(
                   clip: clip,
                   trackType: track.trackType,
                   isSelected: isSelected,
                   zoomLevel: zoomLevel,
+                  pixelsPerMs: pixelsPerMs,
                   onTap: () => onClipTap(clip.id),
+                  onDragStart: (originalStartMs) => onClipDragStart(clip.id, originalStartMs),
+                  onDragUpdate: (newStartMs) => onClipDragUpdate(clip.id, newStartMs),
+                  onDragEnd: (finalStartMs) => onClipDragEnd(clip.id, finalStartMs),
                   waveformPeaks: waveformCache[clip.assetId],
                 ),
               );
@@ -400,48 +461,95 @@ class _TrackRow extends StatelessWidget {
   }
 }
 
-/// A clip widget on the timeline
-class _ClipWidget extends StatelessWidget {
+/// A draggable clip widget on the timeline.
+///
+/// Supports horizontal drag to reposition a clip along the timeline.
+/// The drag updates are reported continuously for responsive visual
+/// feedback, and the final position is committed to the engine.
+class _DraggableClipWidget extends StatefulWidget {
   final ClipModel clip;
   final TrackType trackType;
   final bool isSelected;
   final double zoomLevel;
+  final double pixelsPerMs;
   final VoidCallback onTap;
+  final void Function(int originalStartMs) onDragStart;
+  final void Function(int newStartMs) onDragUpdate;
+  final void Function(int finalStartMs) onDragEnd;
   final List<double>? waveformPeaks;
 
-  const _ClipWidget({
+  const _DraggableClipWidget({
     required this.clip,
     required this.trackType,
     required this.isSelected,
     required this.zoomLevel,
+    required this.pixelsPerMs,
     required this.onTap,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
     this.waveformPeaks,
   });
 
   @override
+  State<_DraggableClipWidget> createState() => _DraggableClipWidgetState();
+}
+
+class _DraggableClipWidgetState extends State<_DraggableClipWidget> {
+  double _dragOffset = 0;
+  bool _isDragging = false;
+
+  @override
   Widget build(BuildContext context) {
     final color = _clipColor();
-    final clipWidth = clip.durationMs * AppConstants.timelinePixelsPerMs * zoomLevel;
+    final clipWidth = widget.clip.durationMs * AppConstants.timelinePixelsPerMs * widget.zoomLevel;
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
+      onHorizontalDragStart: (details) {
+        setState(() {
+          _isDragging = true;
+          _dragOffset = 0;
+        });
+        widget.onDragStart(widget.clip.startMs);
+      },
+      onHorizontalDragUpdate: (details) {
+        setState(() {
+          _dragOffset += details.delta.dx;
+        });
+        final newStartMs = widget.clip.startMs + (_dragOffset / widget.pixelsPerMs).round();
+        final clampedStart = newStartMs.clamp(0, 3600000); // Max 1 hour
+        widget.onDragUpdate(clampedStart);
+      },
+      onHorizontalDragEnd: (details) {
+        final newStartMs = widget.clip.startMs + (_dragOffset / widget.pixelsPerMs).round();
+        final clampedStart = newStartMs.clamp(0, 3600000);
+        widget.onDragEnd(clampedStart);
+        setState(() {
+          _isDragging = false;
+          _dragOffset = 0;
+        });
+      },
       child: Container(
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.7),
+          color: color.withValues(alpha: _isDragging ? 0.5 : 0.7),
           borderRadius: BorderRadius.circular(4),
           border: isSelected
               ? Border.all(color: Colors.white, width: 2)
               : Border.all(color: color.withValues(alpha: 0.3)),
+          boxShadow: _isDragging
+              ? [BoxShadow(color: color.withValues(alpha: 0.4), blurRadius: 8, offset: const Offset(0, 2))]
+              : null,
         ),
         child: Stack(
           children: [
             // Waveform visualization for audio clips
-            if (trackType == TrackType.audio && waveformPeaks != null && waveformPeaks!.isNotEmpty)
+            if (widget.trackType == TrackType.audio && widget.waveformPeaks != null && widget.waveformPeaks!.isNotEmpty)
               Positioned.fill(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: AudioWaveformWidget(
-                    peaks: waveformPeaks!,
+                    peaks: widget.waveformPeaks!,
                     color: color,
                     width: math.max(clipWidth, AppTheme.clipMinWidth),
                     height: AppTheme.trackHeight - 8,
@@ -468,7 +576,7 @@ class _ClipWidget extends StatelessWidget {
                         ),
                         if (clipWidth > 80)
                           Text(
-                            Duration(milliseconds: clip.durationMs).shortFormatted,
+                            Duration(milliseconds: widget.clip.durationMs).shortFormatted,
                             style: context.textTheme.labelSmall?.copyWith(
                               color: Colors.white70,
                               fontSize: 8,
@@ -478,14 +586,52 @@ class _ClipWidget extends StatelessWidget {
                     )
                   : const SizedBox.shrink(),
             ),
+
+            // Trim handles (visible when selected)
+            if (isSelected) ...[
+              // Left trim handle
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 6,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.8),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(4),
+                      bottomLeft: Radius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+              // Right trim handle
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: 6,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.8),
+                    borderRadius: const BorderRadius.only(
+                      topRight: Radius.circular(4),
+                      bottomRight: Radius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
+  bool get isSelected => widget.isSelected;
+
   Color _clipColor() {
-    switch (trackType) {
+    switch (widget.trackType) {
       case TrackType.video: return AppTheme.videoTrackColor;
       case TrackType.audio: return AppTheme.audioTrackColor;
       case TrackType.text: return AppTheme.textTrackColor;
@@ -494,7 +640,7 @@ class _ClipWidget extends StatelessWidget {
   }
 
   String _clipLabel() {
-    switch (trackType) {
+    switch (widget.trackType) {
       case TrackType.video: return 'Video';
       case TrackType.audio: return 'Audio';
       case TrackType.text: return 'Text';

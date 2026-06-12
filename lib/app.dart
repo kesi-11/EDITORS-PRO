@@ -6,6 +6,7 @@ import 'core/theme/app_theme.dart';
 import 'features/projects/presentation/project_home_screen.dart';
 import 'features/editor/presentation/editor_screen.dart';
 import 'features/export/presentation/export_screen.dart';
+import 'features/settings/settings_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -32,6 +33,11 @@ final routerProvider = Provider<GoRouter>((ref) {
           final projectId = state.pathParameters['projectId'] ?? '';
           return ExportScreen(projectId: projectId);
         },
+      ),
+      GoRoute(
+        path: '/settings',
+        name: 'settings',
+        builder: (context, state) => const SettingsScreen(),
       ),
     ],
   );

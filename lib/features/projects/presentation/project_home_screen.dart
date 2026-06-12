@@ -23,6 +23,10 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // Load persisted projects on startup
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(projectProvider.notifier).loadProjects();
+    });
   }
 
   @override
@@ -114,9 +118,7 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
           const Spacer(),
           // Settings button
           IconButton(
-            onPressed: () {
-              // TODO: Settings screen
-            },
+            onPressed: () => context.go('/settings'),
             icon: const Icon(Icons.settings_outlined),
             style: IconButton.styleFrom(
               backgroundColor: AppTheme.surfaceVariant,
@@ -143,13 +145,13 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
         final project = state.recentProjects[index];
         return _ProjectCard(
           project: project,
-          onTap: () {
-            ref.read(projectProvider.notifier).openProject(project);
-            context.go('/editor/${project.id}');
+          onTap: () async {
+            await ref.read(projectProvider.notifier).openProject(project);
+            if (context.mounted) {
+              context.go('/editor/${project.id}');
+            }
           },
-          onDelete: () {
-            // TODO: Delete project with confirmation
-          },
+          onDelete: () => _showDeleteConfirmation(context, project),
         ).animate().slideX(
           begin: 0.1,
           duration: 300.ms,
@@ -200,10 +202,10 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
 
   Widget _buildTemplates(BuildContext context) {
     final templates = [
-      ('Social Vertical', '9:16 for TikTok & Reels', Icons.phone_android, AppTheme.accent),
-      ('Social Square', '1:1 for Instagram', Icons.crop_square, AppTheme.secondary),
-      ('YouTube', '16:9 standard', Icons.play_circle, AppTheme.primary),
-      ('Cinematic', '21:9 widescreen', Icons.theaters, AppTheme.warning),
+      ('Social Vertical', '9:16 for TikTok & Reels', Icons.phone_android, AppTheme.accent, 1080, 1920),
+      ('Social Square', '1:1 for Instagram', Icons.crop_square, AppTheme.secondary, 1080, 1080),
+      ('YouTube', '16:9 standard', Icons.play_circle, AppTheme.primary, 1920, 1080),
+      ('Cinematic', '21:9 widescreen', Icons.theaters, AppTheme.warning, 2560, 1080),
     ];
 
     return GridView.builder(
@@ -216,13 +218,13 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
       ),
       itemCount: templates.length,
       itemBuilder: (context, index) {
-        final (name, description, icon, color) = templates[index];
+        final (name, description, icon, color, width, height) = templates[index];
         return _TemplateCard(
           name: name,
           description: description,
           icon: icon,
           color: color,
-          onTap: () => _createProjectFromTemplate(context, name),
+          onTap: () => _createProjectFromTemplate(context, name, width: width, height: height),
         ).animate().scale(
           duration: 300.ms,
           delay: (index * 80).ms,
@@ -283,16 +285,43 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
     );
   }
 
-  void _createProjectFromTemplate(BuildContext context, String templateName) {
-    _createProject(templateName);
+  void _createProjectFromTemplate(BuildContext context, String templateName, {int width = 1920, int height = 1080}) {
+    _createProject(templateName, width: width, height: height);
   }
 
-  void _createProject(String name) {
-    ref.read(projectProvider.notifier).createProject(name);
+  void _createProject(String name, {int width = 1920, int height = 1080}) {
+    ref.read(projectProvider.notifier).createProject(name, width: width, height: height);
     final project = ref.read(projectProvider).currentProject;
     if (project != null) {
       context.go('/editor/${project.id}');
     }
+  }
+
+  void _showDeleteConfirmation(BuildContext context, ProjectModel project) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete "${project.name}"?'),
+        content: const Text(
+          'This will permanently delete the project and all its media. '
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            onPressed: () {
+              Navigator.pop(ctx);
+              ref.read(projectProvider.notifier).deleteProject(project.id);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

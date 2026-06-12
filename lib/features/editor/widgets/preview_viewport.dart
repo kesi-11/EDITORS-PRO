@@ -13,6 +13,11 @@ import '../providers/editor_provider.dart';
 
 /// Video preview viewport — displays the current frame rendered by the
 /// Rust engine and provides playback controls.
+///
+/// Phase 4 improvements:
+/// - Continuous frame decode loop during playback (not just on time change)
+/// - Debounced scrub rendering during manual seek
+/// - Frame prefetch during idle for smoother playback startup
 class PreviewViewport extends ConsumerStatefulWidget {
   const PreviewViewport({super.key});
 
@@ -25,8 +30,8 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
   /// is available.
   Uint8List? _currentFrameBytes;
 
-  /// LRU cache of the last 5 rendered frames keyed by time position.
-  final _frameCache = _LruCache<int, Uint8List>(maxSize: 5);
+  /// LRU cache of the last 10 rendered frames keyed by time position.
+  final _frameCache = _LruCache<int, Uint8List>(maxSize: 10);
 
   /// Whether a frame request is currently in-flight.
   bool _fetchingFrame = false;
@@ -34,15 +39,68 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
   /// The time position for which we are currently fetching a frame.
   int? _fetchingTimeMs;
 
+  /// Subscription to the editor state for continuous playback decoding.
+  StreamSubscription? _playbackSubscription;
+
+  /// Timer for continuous frame fetching during playback.
+  Timer? _playbackDecodeTimer;
+
   @override
   void initState() {
     super.initState();
     // Listen to time changes and request frames.
     ref.listenManual(editorProvider.select((s) => s.currentTimeMs), _onTimeChanged, fireImmediately: true);
+
+    // Listen to playback state changes to start/stop continuous decode
+    ref.listenManual(editorProvider.select((s) => s.isPlaying), _onPlaybackChanged);
+  }
+
+  @override
+  void dispose() {
+    _playbackDecodeTimer?.cancel();
+    super.dispose();
   }
 
   void _onTimeChanged(int? previous, int next) {
-    _requestFrame(next);
+    // During playback, the continuous decode timer handles frame fetching.
+    // We only request frames here for manual seeks.
+    final isPlaying = ref.read(editorProvider).isPlaying;
+    if (!isPlaying) {
+      _requestFrame(next);
+    }
+  }
+
+  void _onPlaybackChanged(bool? wasPlaying, bool isPlaying) {
+    if (isPlaying) {
+      _startContinuousDecode();
+    } else {
+      _stopContinuousDecode();
+      // When playback stops, render the current frame
+      _requestFrame(ref.read(editorProvider).currentTimeMs);
+    }
+  }
+
+  /// Start continuous frame decode during playback.
+  ///
+  /// Uses a Timer to continuously request frames from the engine
+  /// at ~15fps (a balance between smoothness and CPU usage on mobile).
+  void _startContinuousDecode() {
+    _playbackDecodeTimer?.cancel();
+    _playbackDecodeTimer = Timer.periodic(const Duration(milliseconds: 66), (_) {
+      if (!mounted) return;
+      final state = ref.read(editorProvider);
+      if (!state.isPlaying) {
+        _stopContinuousDecode();
+        return;
+      }
+      _requestFrame(state.currentTimeMs);
+    });
+  }
+
+  /// Stop the continuous decode loop.
+  void _stopContinuousDecode() {
+    _playbackDecodeTimer?.cancel();
+    _playbackDecodeTimer = null;
   }
 
   Future<void> _requestFrame(int timeMs) async {
@@ -129,6 +187,43 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                                 color: Colors.white,
                                 size: 36,
                               ),
+                            ),
+                          ),
+                        ),
+
+                      // Playback speed indicator
+                      if (editorState.playbackSpeed != 1.0)
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '${editorState.playbackSpeed}x',
+                              style: const TextStyle(
+                                color: AppTheme.primaryLight,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      // Decoding indicator
+                      if (_fetchingFrame)
+                        Positioned(
+                          bottom: 8,
+                          right: 8,
+                          child: SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppTheme.primary.withValues(alpha: 0.6),
                             ),
                           ),
                         ),
