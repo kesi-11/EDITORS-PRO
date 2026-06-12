@@ -2,12 +2,23 @@
 //!
 //! Manages the application of visual effects including filters,
 //! transitions, and text overlays to timeline frames.
+//!
+//! ## Architecture
+//!
+//! - `filters` — Pixel-level filter functions using rayon for parallel processing
+//! - `transitions` — Clip-to-clip transition blending with spatial effects
+//! - `text_render` — Text overlay rendering (model only, rasterization in Phase 6)
+//!
+//! The `EffectsPipeline` applies a chain of effects to a frame in order,
+//! respecting each effect's `enabled` flag and `order` field.
 
 pub mod filters;
 pub mod text_render;
 pub mod transitions;
 
 use serde::{Deserialize, Serialize};
+
+pub use transitions::{Transition, TransitionType};
 
 /// Types of visual effects supported by the engine
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -28,6 +39,39 @@ pub struct Effect {
     pub enabled: bool,
     pub order: u32,
     pub parameters: Vec<EffectParameter>,
+}
+
+impl Effect {
+    /// Create a new effect with the given name and type
+    pub fn new(name: &str, effect_type: EffectType, parameters: Vec<EffectParameter>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            effect_type,
+            enabled: true,
+            order: 0,
+            parameters,
+        }
+    }
+
+    /// Toggle the enabled state of this effect
+    pub fn toggle_enabled(&mut self) {
+        self.enabled = !self.enabled;
+    }
+
+    /// Set a parameter value by name
+    pub fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), String> {
+        let param = self.parameters.iter_mut()
+            .find(|p| p.name == name)
+            .ok_or_else(|| format!("Parameter '{}' not found", name))?;
+        param.set_value(value);
+        Ok(())
+    }
+
+    /// Get a parameter value by name
+    pub fn get_parameter(&self, name: &str) -> Option<f32> {
+        self.parameters.iter().find(|p| p.name == name).map(|p| p.value)
+    }
 }
 
 /// A single parameter for an effect
@@ -65,12 +109,23 @@ impl EffectParameter {
 }
 
 /// Pipeline that applies effects in order to frame data
+///
+/// The pipeline processes effects sequentially in `order` field order.
+/// Only enabled effects are applied. For filter effects, each filter's
+/// `apply_to_frame()` method is called with the effect's parameters.
 pub struct EffectsPipeline {
     effects: Vec<Effect>,
 }
 
 impl EffectsPipeline {
-    pub fn new() -> Self {
+    pub fn new(effects: Vec<Effect>) -> Self {
+        let mut sorted = effects;
+        sorted.sort_by_key(|e| e.order);
+        Self { effects: sorted }
+    }
+
+    /// Create an empty pipeline
+    pub fn empty() -> Self {
         Self { effects: Vec::new() }
     }
 
@@ -94,28 +149,47 @@ impl EffectsPipeline {
         self.effects.iter().filter(|e| e.enabled).collect()
     }
 
-    /// Apply all enabled effects to frame data (CPU fallback for MVP)
+    /// Get the number of effects in the pipeline
+    pub fn len(&self) -> usize {
+        self.effects.len()
+    }
+
+    /// Check if the pipeline is empty
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
+
+    /// Apply all enabled filter effects to RGBA frame data.
+    ///
+    /// This method iterates through enabled effects of type `Filter`
+    /// and applies each one using the `FilterType::apply_to_frame()`
+    /// method, which uses rayon for parallel pixel processing.
+    ///
+    /// Non-filter effects (transitions, text overlays, chroma key)
+    /// are handled separately and are NOT applied by this method.
     pub fn apply(&self, frame_data: &mut [u8], width: u32, height: u32) {
         for effect in self.enabled_effects() {
             match effect.effect_type {
                 EffectType::Filter => {
-                    for param in &effect.parameters {
-                        crate::renderer::shader::ShaderManager::apply_cpu_effect(
-                            frame_data, &param.name, param.value,
-                        );
+                    // Look up the filter type by name
+                    if let Some(filter_type) = filters::FilterType::all_filters().iter()
+                        .find(|ft| ft.display_name() == effect.name)
+                    {
+                        filter_type.apply_to_frame(frame_data, width, height, &effect.parameters);
+                    } else {
+                        log::warn!("Unknown filter effect: {}", effect.name);
                     }
                 }
                 EffectType::TextOverlay => {
-                    // Text overlay is handled separately in the renderer
+                    // Text overlay rendering is handled in the renderer
                     log::debug!("Text overlay effect: {} (handled in renderer)", effect.name);
                 }
                 EffectType::Transition => {
-                    // Transitions are handled during clip transitions
+                    // Transitions are handled during clip transition detection
                     log::debug!("Transition effect: {} (handled during transitions)", effect.name);
                 }
                 EffectType::ChromaKey => {
-                    // Phase 4: Chroma key implementation
-                    log::debug!("Chroma key effect: {} (Phase 4)", effect.name);
+                    log::debug!("Chroma key effect: {} (future phase)", effect.name);
                 }
             }
         }
@@ -129,5 +203,55 @@ impl EffectsPipeline {
     /// Clear all effects
     pub fn clear(&mut self) {
         self.effects.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_effect_parameter_clamping() {
+        let param = EffectParameter::new("test", "Test", 0.5, 0.0, 1.0, 0.01);
+        assert_eq!(param.value, 0.5);
+
+        let mut param = param;
+        param.set_value(1.5);
+        assert_eq!(param.value, 1.0, "Should clamp to max");
+
+        param.set_value(-0.5);
+        assert_eq!(param.value, 0.0, "Should clamp to min");
+    }
+
+    #[test]
+    fn test_effect_toggle() {
+        let mut effect = Effect::new("Brightness", EffectType::Filter, vec![]);
+        assert!(effect.enabled);
+        effect.toggle_enabled();
+        assert!(!effect.enabled);
+        effect.toggle_enabled();
+        assert!(effect.enabled);
+    }
+
+    #[test]
+    fn test_pipeline_ordering() {
+        let e1 = Effect { id: "1".into(), name: "Brightness".into(), effect_type: EffectType::Filter, enabled: true, order: 2, parameters: vec![] };
+        let e2 = Effect { id: "2".into(), name: "Contrast".into(), effect_type: EffectType::Filter, enabled: true, order: 1, parameters: vec![] };
+        let pipeline = EffectsPipeline::new(vec![e1, e2]);
+        let enabled = pipeline.enabled_effects();
+        assert_eq!(enabled[0].name, "Contrast");
+        assert_eq!(enabled[1].name, "Brightness");
+    }
+
+    #[test]
+    fn test_pipeline_apply_brightness() {
+        let brightness_effect = filters::FilterType::Brightness.to_effect();
+        let pipeline = EffectsPipeline::new(vec![brightness_effect]);
+
+        let mut frame = vec![128u8; 100 * 100 * 4]; // Gray frame
+        pipeline.apply(&mut frame, 100, 100);
+
+        // After brightness +0.0 (default), no change
+        assert_eq!(frame[0], 128);
     }
 }

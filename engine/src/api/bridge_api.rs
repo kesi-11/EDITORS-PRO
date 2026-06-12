@@ -11,8 +11,9 @@
 use std::sync::Mutex;
 
 use super::{
-    ClipInfo, EditorsProEngine, MediaAssetInfo, ProjectInfo, TrackInfo,
-    TimelineState,
+    ClipInfo, EditorsProEngine, EffectInfo, EffectParameterInfo, FilterPresetInfo,
+    FilterTypeInfo, MediaAssetInfo, ProjectInfo, TrackInfo, TimelineState,
+    TransitionInfo, TransitionTypeInfo,
 };
 use crate::audio::ducking::DuckingConfig;
 use crate::export_engine::{ExportProgress, ExportResult, ExportSettings, ExportStage, OutputFormat, VideoCodec};
@@ -539,6 +540,115 @@ impl EditorsProEngineApi {
             duration_ms: info.duration_ms,
             codec_name: info.codec_name,
         })
+    }
+
+    // ─── Effect Operations ─────────────────────────────────────────────
+
+    /// Add a filter effect to a clip.
+    ///
+    /// `filter_type_name` must match one of the display names from
+    /// `get_filter_catalog()` (e.g., "Brightness", "Contrast", etc.).
+    /// Returns an `EffectInfo` DTO describing the newly added effect.
+    pub fn add_effect(&self, clip_id: String, filter_type_name: String) -> Result<EffectInfo, String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.add_effect(&clip_id, &filter_type_name)
+    }
+
+    /// Remove an effect from a clip by its effect ID.
+    pub fn remove_effect(&self, clip_id: String, effect_id: String) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.remove_effect(&clip_id, &effect_id)
+    }
+
+    /// Set a parameter value for an effect on a clip.
+    ///
+    /// The `param_name` must match the `name` field of the `EffectParameterInfo`
+    /// returned in the effect's parameter list (e.g., "brightness", "contrast").
+    pub fn set_effect_parameter(
+        &self,
+        clip_id: String,
+        effect_id: String,
+        param_name: String,
+        value: f32,
+    ) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.set_effect_parameter(&clip_id, &effect_id, &param_name, value)
+    }
+
+    /// Get the effects applied to a clip.
+    pub fn get_clip_effects(&self, clip_id: String) -> Result<Vec<EffectInfo>, String> {
+        let engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.get_clip_effects(&clip_id)
+    }
+
+    /// Toggle the enabled/disabled state of an effect on a clip.
+    pub fn toggle_effect(&self, clip_id: String, effect_id: String) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.toggle_effect(&clip_id, &effect_id)
+    }
+
+    /// Get the catalog of all available filter types.
+    ///
+    /// Returns a list of `FilterTypeInfo` objects describing each filter
+    /// and its default parameters. Use this to populate the effects panel UI.
+    pub fn get_filter_catalog(&self) -> Vec<FilterTypeInfo> {
+        match self.inner.lock() {
+            Ok(engine) => engine.get_filter_catalog(),
+            Err(_) => vec![],
+        }
+    }
+
+    /// Get the list of available filter presets.
+    pub fn get_filter_presets(&self) -> Vec<FilterPresetInfo> {
+        match self.inner.lock() {
+            Ok(engine) => engine.get_filter_presets(),
+            Err(_) => vec![],
+        }
+    }
+
+    /// Apply a filter preset to a clip (replaces all existing effects).
+    pub fn apply_filter_preset(&self, clip_id: String, preset_id: String) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.apply_filter_preset(&clip_id, &preset_id)
+    }
+
+    // ─── Transition Operations ─────────────────────────────────────────
+
+    /// Add a transition to a clip.
+    ///
+    /// `transition_type` must be one of: "Cut", "Fade", "Dissolve",
+    /// "WipeLeft", "WipeRight", "WipeUp", "WipeDown", "SlideLeft",
+    /// "SlideRight", "ZoomIn", "ZoomOut", "Spin".
+    /// `direction` must be "in" (start of clip) or "out" (end of clip).
+    pub fn add_transition(
+        &self,
+        clip_id: String,
+        transition_type: String,
+        duration_ms: u64,
+        direction: String,
+    ) -> Result<TransitionInfo, String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.add_transition(&clip_id, &transition_type, duration_ms, &direction)
+    }
+
+    /// Get the transition on a clip (in-point or out-point).
+    pub fn get_clip_transition(&self, clip_id: String, direction: String) -> Option<TransitionInfo> {
+        let engine = self.inner.lock().ok()?;
+        engine.get_clip_transition(&clip_id, &direction)
+    }
+
+    /// Remove a transition from a clip.
+    pub fn remove_transition(&self, clip_id: String, direction: String) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.remove_transition(&clip_id, &direction)
+    }
+
+    /// Get the catalog of all available transition types.
+    pub fn get_transition_catalog(&self) -> Vec<TransitionTypeInfo> {
+        match self.inner.lock() {
+            Ok(engine) => engine.get_transition_catalog(),
+            Err(_) => vec![],
+        }
     }
 }
 

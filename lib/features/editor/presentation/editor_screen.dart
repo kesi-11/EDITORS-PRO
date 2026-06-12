@@ -18,6 +18,8 @@ import '../widgets/preview_viewport.dart';
 import '../widgets/timeline_panel.dart';
 import '../widgets/editor_toolbar.dart';
 import '../widgets/inspector_panel.dart';
+import '../widgets/effect_catalog.dart';
+import '../widgets/transition_picker.dart';
 
 /// Main editor screen - the core editing experience
 class EditorScreen extends ConsumerStatefulWidget {
@@ -297,31 +299,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   }
 
   Widget _buildEffectsPanel(BuildContext context) {
-    final effects = [
-      ('Brightness', Icons.brightness_6, AppTheme.warning),
-      ('Contrast', Icons.contrast, AppTheme.primary),
-      ('Saturation', Icons.palette, AppTheme.secondary),
-      ('Blur', Icons.blur_on, AppTheme.info),
-      ('Sharpen', Icons.deblur, AppTheme.accent),
-      ('Grayscale', Icons.gradient, AppTheme.textSecondary),
-      ('Sepia', Icons.filter_vintage, AppTheme.warning),
-      ('Vignette', Icons.vignette, AppTheme.error),
-    ];
-
-    return GridView.builder(
-      padding: const EdgeInsets.all(8),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 1.3,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: effects.length,
-      itemBuilder: (context, index) {
-        final (name, icon, color) = effects[index];
-        return _EffectCard(name: name, icon: icon, color: color);
-      },
-    );
+    return const EffectCatalog();
   }
 
   Widget _buildTextPanel(BuildContext context) {
@@ -554,41 +532,4 @@ class _MediaAssetItem extends StatelessWidget {
   }
 }
 
-class _EffectCard extends StatelessWidget {
-  final String name;
-  final IconData icon;
-  final Color color;
-
-  const _EffectCard({
-    required this.name,
-    required this.icon,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-        onTap: () {
-          // TODO: Apply effect
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: color, size: 24),
-              const SizedBox(height: 8),
-              Text(
-                name,
-                style: context.textTheme.labelMedium,
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+// Note: _EffectCard replaced by EffectCatalog widget in effect_catalog.dart

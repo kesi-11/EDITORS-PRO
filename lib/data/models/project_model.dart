@@ -135,6 +135,9 @@ class ClipModel {
   final int trimEndMs;
   final double speed;
   final double opacity;
+  final List<EffectModel> effects;
+  final TransitionModel? transitionIn;
+  final TransitionModel? transitionOut;
 
   const ClipModel({
     required this.id,
@@ -145,6 +148,9 @@ class ClipModel {
     this.trimEndMs = 0,
     this.speed = 1.0,
     this.opacity = 1.0,
+    this.effects = const [],
+    this.transitionIn,
+    this.transitionOut,
   });
 
   ClipModel copyWith({
@@ -156,6 +162,9 @@ class ClipModel {
     int? trimEndMs,
     double? speed,
     double? opacity,
+    List<EffectModel>? effects,
+    TransitionModel? transitionIn,
+    TransitionModel? transitionOut,
   }) {
     return ClipModel(
       id: id ?? this.id,
@@ -166,8 +175,68 @@ class ClipModel {
       trimEndMs: trimEndMs ?? this.trimEndMs,
       speed: speed ?? this.speed,
       opacity: opacity ?? this.opacity,
+      effects: effects ?? this.effects,
+      transitionIn: transitionIn ?? this.transitionIn,
+      transitionOut: transitionOut ?? this.transitionOut,
     );
   }
+}
+
+/// Effect model for clip effects
+class EffectModel {
+  final String id;
+  final String name;
+  final String effectType;
+  final bool enabled;
+  final int order;
+  final List<EffectParameterModel> parameters;
+
+  const EffectModel({
+    required this.id,
+    required this.name,
+    required this.effectType,
+    this.enabled = true,
+    this.order = 0,
+    this.parameters = const [],
+  });
+}
+
+/// Effect parameter model
+class EffectParameterModel {
+  final String name;
+  final String displayName;
+  final double value;
+  final double minValue;
+  final double maxValue;
+  final double defaultValue;
+  final double step;
+
+  const EffectParameterModel({
+    required this.name,
+    required this.displayName,
+    required this.value,
+    required this.minValue,
+    required this.maxValue,
+    required this.defaultValue,
+    required this.step,
+  });
+}
+
+/// Transition model for clip transitions
+class TransitionModel {
+  final String id;
+  final String transitionType;
+  final int durationMs;
+  final String fromClipId;
+  final String toClipId;
+
+  const TransitionModel({
+    required this.id,
+    required this.transitionType,
+    required this.durationMs,
+    required this.fromClipId,
+    required this.toClipId,
+  });
 }
 
 /// Media asset data model

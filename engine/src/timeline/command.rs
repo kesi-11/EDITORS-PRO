@@ -469,6 +469,243 @@ impl Command for ToggleTrackVisibilityCommand {
     }
 }
 
+/// Command to add an effect to a clip
+#[derive(Debug, Clone)]
+pub struct AddEffectCommand {
+    pub clip_id: String,
+    pub effect: Option<crate::effects::Effect>,
+    pub effect_id: String,
+}
+
+impl AddEffectCommand {
+    pub fn new(clip_id: String, effect: crate::effects::Effect) -> Self {
+        let effect_id = effect.id.clone();
+        Self {
+            clip_id,
+            effect: Some(effect),
+            effect_id,
+        }
+    }
+}
+
+impl Command for AddEffectCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let effect = self.effect.take().ok_or("No effect to add")?;
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        clip.add_effect(effect);
+        Ok(CommandResult {
+            success: true,
+            message: "Effect added".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        self.effect = clip.remove_effect(&self.effect_id);
+        Ok(CommandResult {
+            success: true,
+            message: "Effect addition undone".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Add effect".to_string()
+    }
+}
+
+/// Command to remove an effect from a clip
+#[derive(Debug, Clone)]
+pub struct RemoveEffectCommand {
+    pub clip_id: String,
+    pub effect_id: String,
+    pub removed_effect: Option<crate::effects::Effect>,
+}
+
+impl RemoveEffectCommand {
+    pub fn new(clip_id: String, effect_id: String) -> Self {
+        Self {
+            clip_id,
+            effect_id,
+            removed_effect: None,
+        }
+    }
+}
+
+impl Command for RemoveEffectCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        self.removed_effect = clip.remove_effect(&self.effect_id);
+        if self.removed_effect.is_none() {
+            return Err(format!("Effect {} not found on clip {}", self.effect_id, self.clip_id));
+        }
+        Ok(CommandResult {
+            success: true,
+            message: "Effect removed".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let effect = self.removed_effect.take().ok_or("No effect to restore")?;
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        clip.add_effect(effect);
+        Ok(CommandResult {
+            success: true,
+            message: "Effect removal undone".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Remove effect".to_string()
+    }
+}
+
+/// Command to set an effect parameter value
+#[derive(Debug, Clone)]
+pub struct SetEffectParameterCommand {
+    pub clip_id: String,
+    pub effect_id: String,
+    pub param_name: String,
+    pub new_value: f32,
+    pub old_value: Option<f32>,
+}
+
+impl SetEffectParameterCommand {
+    pub fn new(clip_id: String, effect_id: String, param_name: String, new_value: f32) -> Self {
+        Self {
+            clip_id,
+            effect_id,
+            param_name,
+            new_value,
+            old_value: None,
+        }
+    }
+}
+
+impl Command for SetEffectParameterCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        // Store the old value for undo
+        let effect = clip.effects.iter()
+            .find(|e| e.id == self.effect_id)
+            .ok_or_else(|| format!("Effect {} not found", self.effect_id))?;
+        self.old_value = effect.get_parameter(&self.param_name);
+
+        clip.set_effect_parameter(&self.effect_id, &self.param_name, self.new_value)?;
+
+        Ok(CommandResult {
+            success: true,
+            message: format!("Parameter {} set to {:.2}", self.param_name, self.new_value),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let old_value = self.old_value.ok_or("No old value stored")?;
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        clip.set_effect_parameter(&self.effect_id, &self.param_name, old_value)?;
+        Ok(CommandResult {
+            success: true,
+            message: "Parameter change undone".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Set effect parameter".to_string()
+    }
+}
+
+/// Command to add a transition to a clip
+#[derive(Debug, Clone)]
+pub struct AddTransitionCommand {
+    pub clip_id: String,
+    pub transition: Option<crate::effects::Transition>,
+    pub transition_type: String, // "in" or "out"
+    pub old_transition: Option<crate::effects::Transition>,
+}
+
+impl AddTransitionCommand {
+    pub fn new_in(clip_id: String, transition: crate::effects::Transition) -> Self {
+        Self {
+            clip_id,
+            transition: Some(transition),
+            transition_type: "in".to_string(),
+            old_transition: None,
+        }
+    }
+
+    pub fn new_out(clip_id: String, transition: crate::effects::Transition) -> Self {
+        Self {
+            clip_id,
+            transition: Some(transition),
+            transition_type: "out".to_string(),
+            old_transition: None,
+        }
+    }
+}
+
+impl Command for AddTransitionCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let transition = self.transition.take().ok_or("No transition to add")?;
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        match self.transition_type.as_str() {
+            "in" => {
+                self.old_transition = clip.transition_in.take();
+                clip.set_transition_in(transition);
+            }
+            "out" => {
+                self.old_transition = clip.transition_out.take();
+                clip.set_transition_out(transition);
+            }
+            _ => return Err("Invalid transition type, must be 'in' or 'out'".to_string()),
+        }
+
+        Ok(CommandResult {
+            success: true,
+            message: format!("Transition in added to clip {}", self.clip_id),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        match self.transition_type.as_str() {
+            "in" => {
+                clip.transition_in = self.old_transition.take();
+            }
+            "out" => {
+                clip.transition_out = self.old_transition.take();
+            }
+            _ => return Err("Invalid transition type".to_string()),
+        }
+
+        Ok(CommandResult {
+            success: true,
+            message: "Transition addition undone".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Add transition".to_string()
+    }
+}
+
 /// Command history manager for undo/redo
 #[derive(Debug)]
 pub struct CommandHistory {

@@ -2,11 +2,13 @@
 //!
 //! The renderer takes a timeline state and a timestamp, then composites
 //! all visible tracks (video, text, effects) into a single frame for display.
+//! Clip effects are applied per-clip before compositing.
 
 pub mod gpu;
 pub mod shader;
 
 use crate::decoder::FrameData;
+use crate::effects::EffectsPipeline;
 use crate::timeline::Timeline;
 
 /// Preview renderer for real-time frame composition
@@ -21,10 +23,15 @@ impl PreviewRenderer {
         Self { width, height }
     }
 
-    /// Compose a single frame from the timeline at the given timestamp
+    /// Compose a single frame from the timeline at the given timestamp.
     ///
-    /// For MVP: Returns the video frame at the timestamp.
-    /// Future: Will composite all visible tracks (video + text + effects).
+    /// This method:
+    /// 1. Takes the decoded video frame (or a blank frame)
+    /// 2. Applies per-clip effects from the active clip's effect chain
+    /// 3. Applies opacity blending for non-opaque clips
+    ///
+    /// Transitions between clips are handled at a higher level (the engine)
+    /// because they require two decoded frames.
     pub fn compose_frame(
         &self,
         timeline: &Timeline,
@@ -37,22 +44,37 @@ impl PreviewRenderer {
         // Get all clips active at this timestamp
         let active_clips = timeline.get_clips_at_time(time_ms);
 
-        // Apply opacity to clips that are not fully opaque
+        // Apply per-clip effects and opacity
         for (_track, clip) in &active_clips {
+            // Apply effects from the clip's effect chain
+            if !clip.effects.is_empty() {
+                let pipeline = EffectsPipeline::new(clip.effects.clone());
+                pipeline.apply(&mut frame.data, frame.width, frame.height);
+            }
+
+            // Apply opacity blending
             if clip.opacity < 1.0 {
-                // Simple opacity blending - for MVP, just adjust alpha channel
-                let alpha = (clip.opacity * 255.0) as u8;
-                // In a real implementation, we'd blend with the frame below
-                // For now, set alpha on the frame data
+                let alpha = clip.opacity;
                 for chunk in frame.data.chunks_exact_mut(4) {
-                    chunk[3] = alpha;
+                    chunk[0] = (chunk[0] as f32 * alpha) as u8;
+                    chunk[1] = (chunk[1] as f32 * alpha) as u8;
+                    chunk[2] = (chunk[2] as f32 * alpha) as u8;
+                    chunk[3] = (chunk[3] as f32 * alpha) as u8;
                 }
             }
         }
 
-        // For MVP: Just return the video frame as-is
-        // Phase 3+ will add text overlay compositing and effect application
         frame
+    }
+
+    /// Apply effects from a clip's effect chain to frame data.
+    ///
+    /// This is a convenience method for when you already have the clip
+    /// but don't need full timeline composition.
+    pub fn apply_clip_effects(&self, frame: &mut FrameData, effects: &[crate::effects::Effect]) {
+        if effects.is_empty() { return; }
+        let pipeline = EffectsPipeline::new(effects.to_vec());
+        pipeline.apply(&mut frame.data, frame.width, frame.height);
     }
 
     /// Resize a frame to the target dimensions

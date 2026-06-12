@@ -26,7 +26,8 @@ use crate::audio::ducking::DuckingConfig;
 use crate::audio::mixer::{AudioBuffer, AudioMixer, TrackAudioSource, VolumeEnvelope};
 use crate::audio::waveform::WaveformData;
 use crate::timeline::command::{
-    AddClipCommand, Command, CommandHistory, MoveClipCommand, RemoveClipCommand,
+    AddClipCommand, AddEffectCommand, AddTransitionCommand, Command, CommandHistory,
+    MoveClipCommand, RemoveClipCommand, RemoveEffectCommand, SetEffectParameterCommand,
     SetTrackVolumeCommand, SplitClipCommand, ToggleTrackVisibilityCommand, TrimClipCommand,
 };
 use crate::timeline::track::TrackType;
@@ -522,6 +523,234 @@ impl EditorsProEngine {
         }
     }
 
+    // ─── Effect Operations ──────────────────────────────────────────────
+
+    /// Add a filter effect to a clip
+    pub fn add_effect(&mut self, clip_id: &str, filter_type_name: &str) -> Result<EffectInfo, String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+
+        // Parse the filter type
+        let filter_type = crate::effects::filters::FilterType::all_filters().iter()
+            .find(|ft| ft.display_name().eq_ignore_ascii_case(filter_type_name))
+            .ok_or_else(|| format!("Unknown filter type: {}", filter_type_name))?
+            .clone();
+
+        // Create the effect
+        let mut effect = filter_type.to_effect();
+        // Assign the next order number
+        let clip = project.timeline().find_clip(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+        effect.order = clip.effects.len() as u32;
+
+        let effect_info = EffectInfo::from_effect(&effect);
+
+        let command = AddEffectCommand::new(clip_id.to_string(), effect);
+        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+
+        log::info!("Added {} effect to clip {}", filter_type_name, clip_id);
+        Ok(effect_info)
+    }
+
+    /// Remove an effect from a clip
+    pub fn remove_effect(&mut self, clip_id: &str, effect_id: &str) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let command = RemoveEffectCommand::new(clip_id.to_string(), effect_id.to_string());
+        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        log::info!("Removed effect {} from clip {}", effect_id, clip_id);
+        Ok(())
+    }
+
+    /// Set a parameter value for an effect on a clip
+    pub fn set_effect_parameter(
+        &mut self,
+        clip_id: &str,
+        effect_id: &str,
+        param_name: &str,
+        value: f32,
+    ) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let command = SetEffectParameterCommand::new(
+            clip_id.to_string(),
+            effect_id.to_string(),
+            param_name.to_string(),
+            value,
+        );
+        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        Ok(())
+    }
+
+    /// Get the effects applied to a clip
+    pub fn get_clip_effects(&self, clip_id: &str) -> Result<Vec<EffectInfo>, String> {
+        let project = self.project.as_ref().ok_or("No project open")?;
+        let clip = project.timeline().find_clip(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+        Ok(clip.effects.iter().map(EffectInfo::from_effect).collect())
+    }
+
+    /// Toggle the enabled state of an effect on a clip
+    pub fn toggle_effect(&mut self, clip_id: &str, effect_id: &str) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let clip = project.timeline_mut().find_clip_mut(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+        let effect = clip.effects.iter_mut()
+            .find(|e| e.id == effect_id)
+            .ok_or_else(|| format!("Effect {} not found", effect_id))?;
+        effect.toggle_enabled();
+        log::info!("Toggled effect {} on clip {}", effect_id, clip_id);
+        Ok(())
+    }
+
+    /// Get the available filter catalog
+    pub fn get_filter_catalog(&self) -> Vec<FilterTypeInfo> {
+        crate::effects::filters::FilterType::all_filters().iter().map(|ft| {
+            FilterTypeInfo {
+                name: ft.display_name().to_string(),
+                icon: ft.icon().to_string(),
+                parameters: ft.default_parameters().iter().map(|p| {
+                    EffectParameterInfo {
+                        name: p.name.clone(),
+                        display_name: p.display_name.clone(),
+                        value: p.value,
+                        min_value: p.min_value,
+                        max_value: p.max_value,
+                        default_value: p.default_value,
+                        step: p.step,
+                    }
+                }).collect(),
+            }
+        }).collect()
+    }
+
+    /// Get the available filter presets
+    pub fn get_filter_presets(&self) -> Vec<FilterPresetInfo> {
+        crate::effects::filters::FilterPreset::built_in_presets().iter().map(|p| {
+            FilterPresetInfo {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                description: p.description.clone(),
+            }
+        }).collect()
+    }
+
+    /// Apply a filter preset to a clip (replaces all existing effects)
+    pub fn apply_filter_preset(&mut self, clip_id: &str, preset_id: &str) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+
+        let preset = crate::effects::filters::FilterPreset::built_in_presets().iter()
+            .find(|p| p.id == preset_id)
+            .ok_or_else(|| format!("Preset {} not found", preset_id))?;
+
+        let effects = preset.to_effects();
+
+        // Remove all existing effects first
+        let clip = project.timeline_mut().find_clip_mut(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+        clip.effects.clear();
+
+        // Add the preset effects
+        for effect in effects {
+            let command = AddEffectCommand::new(clip_id.to_string(), effect);
+            self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        }
+
+        log::info!("Applied preset {} to clip {}", preset_id, clip_id);
+        Ok(())
+    }
+
+    // ─── Transition Operations ─────────────────────────────────────────
+
+    /// Add a transition between two clips
+    ///
+    /// `transition_type` must be one of: "Cut", "Fade", "Dissolve",
+    /// "WipeLeft", "WipeRight", "WipeUp", "WipeDown", "SlideLeft",
+    /// "SlideRight", "ZoomIn", "ZoomOut", "Spin"
+    pub fn add_transition(
+        &mut self,
+        clip_id: &str,
+        transition_type: &str,
+        duration_ms: u64,
+        direction: &str, // "in" or "out"
+    ) -> Result<TransitionInfo, String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+
+        let tt = crate::effects::transitions::TransitionType::from_str_lossy(transition_type)
+            .ok_or_else(|| format!("Unknown transition type: {}", transition_type))?;
+
+        // Find the neighboring clip for the transition
+        let clip = project.timeline().find_clip(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+
+        let neighbor_id = if direction == "in" {
+            // Find the clip that ends before this clip starts
+            project.timeline().tracks.iter()
+                .flat_map(|t| t.clips.iter())
+                .filter(|c| c.end_ms() <= clip.start_ms)
+                .max_by_key(|c| c.end_ms())
+                .map(|c| c.id.clone())
+                .unwrap_or_default()
+        } else {
+            // Find the clip that starts after this clip ends
+            project.timeline().tracks.iter()
+                .flat_map(|t| t.clips.iter())
+                .filter(|c| c.start_ms >= clip.end_ms())
+                .min_by_key(|c| c.start_ms)
+                .map(|c| c.id.clone())
+                .unwrap_or_default()
+        };
+
+        let transition = crate::effects::Transition::new(tt, duration_ms, clip_id, &neighbor_id);
+        let info = TransitionInfo::from_transition(&transition);
+
+        let command = if direction == "in" {
+            AddTransitionCommand::new_in(clip_id.to_string(), transition)
+        } else {
+            AddTransitionCommand::new_out(clip_id.to_string(), transition)
+        };
+        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+
+        log::info!("Added {} transition to clip {} ({})", transition_type, clip_id, direction);
+        Ok(info)
+    }
+
+    /// Get the transition on a clip (in-point or out-point)
+    pub fn get_clip_transition(&self, clip_id: &str, direction: &str) -> Option<TransitionInfo> {
+        let project = self.project.as_ref()?;
+        let clip = project.timeline().find_clip(clip_id)?;
+        let transition = if direction == "in" {
+            clip.transition_in.as_ref()
+        } else {
+            clip.transition_out.as_ref()
+        };
+        transition.map(TransitionInfo::from_transition)
+    }
+
+    /// Remove a transition from a clip
+    pub fn remove_transition(&mut self, clip_id: &str, direction: &str) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let clip = project.timeline_mut().find_clip_mut(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+
+        if direction == "in" {
+            clip.transition_in = None;
+        } else {
+            clip.transition_out = None;
+        }
+
+        log::info!("Removed {} transition from clip {}", direction, clip_id);
+        Ok(())
+    }
+
+    /// Get the available transition types
+    pub fn get_transition_catalog(&self) -> Vec<TransitionTypeInfo> {
+        crate::effects::transitions::TransitionType::all_transitions().iter().map(|tt| {
+            TransitionTypeInfo {
+                name: tt.display_name().to_string(),
+                icon: tt.icon().to_string(),
+                default_duration_ms: tt.default_duration_ms(),
+            }
+        }).collect()
+    }
+
     // ─── Audio Operations ─────────────────────────────────────────────
 
     /// Set the volume level for a track
@@ -768,6 +997,9 @@ impl EditorsProEngine {
                 trim_end_ms: c.trim_end_ms,
                 speed: c.speed,
                 opacity: c.opacity,
+                effects: c.effects.iter().map(EffectInfo::from_effect).collect(),
+                transition_in: c.transition_in.as_ref().map(TransitionInfo::from_transition),
+                transition_out: c.transition_out.as_ref().map(TransitionInfo::from_transition),
             }).collect();
 
             TrackStateDto {
@@ -906,6 +1138,9 @@ pub struct ClipInfo {
     pub trim_end_ms: u64,
     pub speed: f32,
     pub opacity: f32,
+    pub effects_count: usize,
+    pub has_transition_in: bool,
+    pub has_transition_out: bool,
 }
 
 impl ClipInfo {
@@ -919,6 +1154,9 @@ impl ClipInfo {
             trim_end_ms: clip.trim_end_ms,
             speed: clip.speed,
             opacity: clip.opacity,
+            effects_count: clip.effects.len(),
+            has_transition_in: clip.transition_in.is_some(),
+            has_transition_out: clip.transition_out.is_some(),
         }
     }
 }
@@ -957,4 +1195,97 @@ pub struct ClipStateDto {
     pub trim_end_ms: u64,
     pub speed: f32,
     pub opacity: f32,
+    pub effects: Vec<EffectInfo>,
+    pub transition_in: Option<TransitionInfo>,
+    pub transition_out: Option<TransitionInfo>,
+}
+
+/// Effect info DTO for bridge transfer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectInfo {
+    pub id: String,
+    pub name: String,
+    pub effect_type: String,
+    pub enabled: bool,
+    pub order: u32,
+    pub parameters: Vec<EffectParameterInfo>,
+}
+
+impl EffectInfo {
+    fn from_effect(effect: &crate::effects::Effect) -> Self {
+        Self {
+            id: effect.id.clone(),
+            name: effect.name.clone(),
+            effect_type: format!("{:?}", effect.effect_type),
+            enabled: effect.enabled,
+            order: effect.order,
+            parameters: effect.parameters.iter().map(|p| EffectParameterInfo {
+                name: p.name.clone(),
+                display_name: p.display_name.clone(),
+                value: p.value,
+                min_value: p.min_value,
+                max_value: p.max_value,
+                default_value: p.default_value,
+                step: p.step,
+            }).collect(),
+        }
+    }
+}
+
+/// Effect parameter info DTO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectParameterInfo {
+    pub name: String,
+    pub display_name: String,
+    pub value: f32,
+    pub min_value: f32,
+    pub max_value: f32,
+    pub default_value: f32,
+    pub step: f32,
+}
+
+/// Filter type info DTO for the filter catalog
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilterTypeInfo {
+    pub name: String,
+    pub icon: String,
+    pub parameters: Vec<EffectParameterInfo>,
+}
+
+/// Filter preset info DTO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilterPresetInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// Transition info DTO for bridge transfer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionInfo {
+    pub id: String,
+    pub transition_type: String,
+    pub duration_ms: u64,
+    pub from_clip_id: String,
+    pub to_clip_id: String,
+}
+
+impl TransitionInfo {
+    fn from_transition(transition: &crate::effects::Transition) -> Self {
+        Self {
+            id: transition.id.clone(),
+            transition_type: format!("{:?}", transition.transition_type),
+            duration_ms: transition.duration_ms,
+            from_clip_id: transition.from_clip_id.clone(),
+            to_clip_id: transition.to_clip_id.clone(),
+        }
+    }
+}
+
+/// Transition type info DTO for the transition catalog
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionTypeInfo {
+    pub name: String,
+    pub icon: String,
+    pub default_duration_ms: u64,
 }

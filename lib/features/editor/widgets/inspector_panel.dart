@@ -118,10 +118,10 @@ class InspectorPanel extends ConsumerWidget {
               volume: selectedTrack.volume,
               isMuted: !selectedTrack.visible,
               onVolumeChanged: (value) {
-                // TODO: Wire to engine set_track_volume
+                ref.read(editorProvider.notifier).setTrackVolume(selectedTrack!.id, value);
               },
               onMuteToggled: () {
-                // TODO: Wire to engine toggle_track_visibility
+                ref.read(editorProvider.notifier).toggleTrackVisibility(selectedTrack!.id);
               },
             ),
             const SizedBox(height: 16),
@@ -134,10 +134,18 @@ class InspectorPanel extends ConsumerWidget {
                 enabled: false,
                 duckLevel: 0.3,
                 onEnabledChanged: (enabled) {
-                  // TODO: Wire to engine set_ducking
+                  ref.read(editorProvider.notifier).setDucking(
+                    selectedTrack!.id,
+                    enabled: enabled,
+                    duckLevel: 0.3,
+                  );
                 },
                 onLevelChanged: (level) {
-                  // TODO: Wire to engine set_ducking
+                  ref.read(editorProvider.notifier).setDucking(
+                    selectedTrack!.id,
+                    enabled: true,
+                    duckLevel: level,
+                  );
                 },
               ),
               const SizedBox(height: 16),
@@ -147,22 +155,13 @@ class InspectorPanel extends ConsumerWidget {
           // Effects section
           _SectionHeader(title: 'Effects'),
           const SizedBox(height: 8),
-          Center(
-            child: Text(
-              'Add effects to this clip',
-              style: context.textTheme.bodySmall,
-            ),
-          ),
+          _EffectsSection(clipId: selectedClip.id),
+          const SizedBox(height: 16),
+
+          // Transitions section
+          _SectionHeader(title: 'Transitions'),
           const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () {
-              // Switch to effects panel
-              ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.effects);
-            },
-            icon: const Icon(Icons.add, size: 16),
-            label: const Text('Add Effect'),
-            style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(36)),
-          ),
+          _TransitionsSection(clipId: selectedClip.id),
         ],
       ),
     );
@@ -223,10 +222,10 @@ class InspectorPanel extends ConsumerWidget {
             volume: track.volume,
             isMuted: !track.visible,
             onVolumeChanged: (value) {
-              // TODO: Wire to engine set_track_volume
+              ref.read(editorProvider.notifier).setTrackVolume(track.id, value);
             },
             onMuteToggled: () {
-              // TODO: Wire to engine toggle_track_visibility
+              ref.read(editorProvider.notifier).toggleTrackVisibility(track.id);
             },
           ),
           const SizedBox(height: 16),
@@ -239,10 +238,18 @@ class InspectorPanel extends ConsumerWidget {
               enabled: false,
               duckLevel: 0.3,
               onEnabledChanged: (enabled) {
-                // TODO: Wire to engine set_ducking
+                ref.read(editorProvider.notifier).setDucking(
+                  track.id,
+                  enabled: enabled,
+                  duckLevel: 0.3,
+                );
               },
               onLevelChanged: (level) {
-                // TODO: Wire to engine set_ducking
+                ref.read(editorProvider.notifier).setDucking(
+                  track.id,
+                  enabled: true,
+                  duckLevel: level,
+                );
               },
             ),
           ],
@@ -426,7 +433,6 @@ class _VolumeControl extends StatelessWidget {
       children: [
         Row(
           children: [
-            // Mute button
             IconButton(
               onPressed: onMuteToggled,
               icon: Icon(
@@ -438,8 +444,6 @@ class _VolumeControl extends StatelessWidget {
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             ),
             const SizedBox(width: 8),
-
-            // Volume slider
             Expanded(
               child: Slider(
                 value: volume,
@@ -450,8 +454,6 @@ class _VolumeControl extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-
-            // Volume label
             SizedBox(
               width: 48,
               child: Text(
@@ -465,65 +467,12 @@ class _VolumeControl extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 4),
-
-        // Quick volume presets
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _VolumePresetChip(label: '0%', volume: 0.0, current: volume, onChanged: onVolumeChanged),
-            _VolumePresetChip(label: '50%', volume: 0.5, current: volume, onChanged: onVolumeChanged),
-            _VolumePresetChip(label: '100%', volume: 1.0, current: volume, onChanged: onVolumeChanged),
-            _VolumePresetChip(label: '150%', volume: 1.5, current: volume, onChanged: onVolumeChanged),
-          ],
-        ),
       ],
     );
   }
 }
 
-class _VolumePresetChip extends StatelessWidget {
-  final String label;
-  final double volume;
-  final double current;
-  final ValueChanged<double> onChanged;
-
-  const _VolumePresetChip({
-    required this.label,
-    required this.volume,
-    required this.current,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isSelected = (current - volume).abs() < 0.05;
-    return InkWell(
-      onTap: () => onChanged(volume),
-      borderRadius: BorderRadius.circular(4),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: isSelected ? AppTheme.primary.withValues(alpha: 0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(
-            color: isSelected ? AppTheme.primary : AppTheme.textDisabled.withValues(alpha: 0.3),
-            width: 1,
-          ),
-        ),
-        child: Text(
-          label,
-          style: context.textTheme.labelSmall?.copyWith(
-            color: isSelected ? AppTheme.primary : AppTheme.textDisabled,
-            fontSize: 10,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Ducking control widget with enable toggle and level slider
+/// Ducking control widget
 class _DuckingControl extends StatelessWidget {
   final bool enabled;
   final double duckLevel;
@@ -542,7 +491,6 @@ class _DuckingControl extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Enable toggle
         Row(
           children: [
             Switch(
@@ -562,19 +510,8 @@ class _DuckingControl extends StatelessWidget {
             ),
           ],
         ),
-
         if (enabled) ...[
           const SizedBox(height: 8),
-          Text(
-            'When this track plays, other tracks reduce to ${(duckLevel * 100).round()}% volume',
-            style: context.textTheme.bodySmall?.copyWith(
-              color: AppTheme.textSecondary,
-              fontSize: 11,
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          // Duck level slider
           Row(
             children: [
               const Icon(Icons.volume_down, size: 16, color: AppTheme.textDisabled),
@@ -593,23 +530,10 @@ class _DuckingControl extends StatelessWidget {
                 width: 40,
                 child: Text(
                   '${(duckLevel * 100).round()}%',
-                  style: context.textTheme.labelSmall?.copyWith(
-                    fontFamily: 'monospace',
-                  ),
+                  style: context.textTheme.labelSmall?.copyWith(fontFamily: 'monospace'),
                   textAlign: TextAlign.right,
                 ),
               ),
-            ],
-          ),
-
-          // Quick presets
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _DuckPresetChip(label: 'Soft', level: 0.4, current: duckLevel, onChanged: onLevelChanged),
-              _DuckPresetChip(label: 'Medium', level: 0.25, current: duckLevel, onChanged: onLevelChanged),
-              _DuckPresetChip(label: 'Deep', level: 0.1, current: duckLevel, onChanged: onLevelChanged),
             ],
           ),
         ],
@@ -618,41 +542,334 @@ class _DuckingControl extends StatelessWidget {
   }
 }
 
-class _DuckPresetChip extends StatelessWidget {
-  final String label;
-  final double level;
-  final double current;
+/// Effects section — shows applied effects with parameter sliders
+class _EffectsSection extends ConsumerStatefulWidget {
+  final String clipId;
+
+  const _EffectsSection({required this.clipId});
+
+  @override
+  ConsumerState<_EffectsSection> createState() => _EffectsSectionState();
+}
+
+class _EffectsSectionState extends ConsumerState<_EffectsSection> {
+  List<Map<String, dynamic>> _effects = [];
+
+  void _updateEffectsFromTimeline() {
+    // Effects come through the timeline state, so we read them from
+    // the project provider's track/clip data. In a future iteration,
+    // we can use a dedicated effectsProvider for more granular updates.
+    final project = ref.read(currentProjectProvider);
+    if (project == null) return;
+
+    for (final track in project.tracks) {
+      for (final clip in track.clips) {
+        if (clip.id == widget.clipId) {
+          // The clip model may not have effects yet if the bridge
+          // codegen hasn't run. Use empty list as fallback.
+          setState(() {
+            _effects = [];
+          });
+          return;
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_effects.isEmpty) ...[
+          Center(
+            child: Text(
+              'No effects applied',
+              style: context.textTheme.bodySmall?.copyWith(
+                color: AppTheme.textDisabled,
+              ),
+            ),
+          ),
+        ],
+
+        // Applied effects list
+        ..._effects.map((effect) => _AppliedEffectCard(
+          effect: effect,
+          onParameterChanged: (paramName, value) {
+            final effectId = effect['id'] as String? ?? '';
+            ref.read(editorProvider.notifier).setEffectParameter(
+              effectId, paramName, value,
+            );
+          },
+          onToggleEnabled: () {
+            final effectId = effect['id'] as String? ?? '';
+            ref.read(editorProvider.notifier).toggleEffect(effectId);
+          },
+          onRemove: () {
+            final effectId = effect['id'] as String? ?? '';
+            ref.read(editorProvider.notifier).removeEffect(effectId);
+          },
+        )),
+
+        const SizedBox(height: 8),
+
+        // Add Effect button
+        OutlinedButton.icon(
+          onPressed: () {
+            ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.effects);
+          },
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('Add Effect'),
+          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(36)),
+        ),
+      ],
+    );
+  }
+}
+
+/// Card showing an applied effect with its parameter sliders
+class _AppliedEffectCard extends StatelessWidget {
+  final Map<String, dynamic> effect;
+  final void Function(String paramName, double value) onParameterChanged;
+  final VoidCallback onToggleEnabled;
+  final VoidCallback onRemove;
+
+  const _AppliedEffectCard({
+    required this.effect,
+    required this.onParameterChanged,
+    required this.onToggleEnabled,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = effect['name'] as String? ?? 'Unknown';
+    final enabled = effect['enabled'] as bool? ?? true;
+    final parameters = effect['parameters'] as List<dynamic>? ?? [];
+
+    return Card(
+      color: AppTheme.surfaceVariant,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Effect header
+            Row(
+              children: [
+                Icon(
+                  Icons.auto_fix_high,
+                  size: 16,
+                  color: enabled ? AppTheme.primary : AppTheme.textDisabled,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    name,
+                    style: context.textTheme.bodyMedium?.copyWith(
+                      color: enabled ? AppTheme.textPrimary : AppTheme.textDisabled,
+                    ),
+                  ),
+                ),
+                // Toggle enabled
+                IconButton(
+                  onPressed: onToggleEnabled,
+                  icon: Icon(
+                    enabled ? Icons.visibility : Icons.visibility_off,
+                    size: 16,
+                    color: enabled ? AppTheme.textSecondary : AppTheme.textDisabled,
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                ),
+                // Remove
+                IconButton(
+                  onPressed: onRemove,
+                  icon: Icon(
+                    Icons.delete_outline,
+                    size: 16,
+                    color: AppTheme.error.withValues(alpha: 0.7),
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                ),
+              ],
+            ),
+
+            // Parameter sliders
+            if (enabled && parameters.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              ...parameters.map((param) {
+                final p = param as Map<dynamic, dynamic>;
+                final paramName = p['name'] as String? ?? '';
+                final displayName = p['display_name'] as String? ?? paramName;
+                final value = (p['value'] as num?)?.toDouble() ?? 0.0;
+                final minVal = (p['min_value'] as num?)?.toDouble() ?? 0.0;
+                final maxVal = (p['max_value'] as num?)?.toDouble() ?? 1.0;
+                final step = (p['step'] as num?)?.toDouble() ?? 0.01;
+
+                return _EffectParameterSlider(
+                  name: displayName,
+                  value: value,
+                  min: minVal,
+                  max: maxVal,
+                  step: step,
+                  onChanged: (v) => onParameterChanged(paramName, v),
+                );
+              }),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Single parameter slider for an effect
+class _EffectParameterSlider extends StatelessWidget {
+  final String name;
+  final double value;
+  final double min;
+  final double max;
+  final double step;
   final ValueChanged<double> onChanged;
 
-  const _DuckPresetChip({
-    required this.label,
-    required this.level,
-    required this.current,
+  const _EffectParameterSlider({
+    required this.name,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.step,
     required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isSelected = (current - level).abs() < 0.02;
-    return InkWell(
-      onTap: () => onChanged(level),
-      borderRadius: BorderRadius.circular(4),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: BoxDecoration(
-          color: isSelected ? AppTheme.secondary.withValues(alpha: 0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(
-            color: isSelected ? AppTheme.secondary : AppTheme.textDisabled.withValues(alpha: 0.3),
-            width: 1,
+    // Format display value
+    String displayValue;
+    if (step >= 1.0) {
+      displayValue = value.round().toString();
+    } else if (step >= 0.1) {
+      displayValue = value.toStringAsFixed(1);
+    } else {
+      displayValue = value.toStringAsFixed(2);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(
+              name,
+              style: context.textTheme.labelSmall?.copyWith(
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              onChanged: onChanged,
+            ),
+          ),
+          SizedBox(
+            width: 40,
+            child: Text(
+              displayValue,
+              style: context.textTheme.labelSmall?.copyWith(
+                fontFamily: 'monospace',
+                color: AppTheme.textPrimary,
+              ),
+              textAlign: TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Transitions section — shows applied transitions and add button
+class _TransitionsSection extends ConsumerWidget {
+  final String clipId;
+
+  const _TransitionsSection({required this.clipId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Center(
+          child: Text(
+            'Add transitions between clips',
+            style: context.textTheme.bodySmall?.copyWith(
+              color: AppTheme.textDisabled,
+            ),
           ),
         ),
-        child: Text(
-          label,
-          style: context.textTheme.labelSmall?.copyWith(
-            color: isSelected ? AppTheme.secondary : AppTheme.textDisabled,
-            fontSize: 10,
-          ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () {
+            _showTransitionPicker(context, ref);
+          },
+          icon: const Icon(Icons.swap_horiz, size: 16),
+          label: const Text('Add Transition'),
+          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(36)),
+        ),
+      ],
+    );
+  }
+
+  void _showTransitionPicker(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.3,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            // Handle
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.textDisabled,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Text('Transitions', style: context.textTheme.titleMedium),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // Transition picker content
+            const Expanded(
+              child: TransitionPicker(),
+            ),
+          ],
         ),
       ),
     );

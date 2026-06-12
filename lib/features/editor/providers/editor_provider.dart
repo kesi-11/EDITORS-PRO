@@ -427,6 +427,182 @@ class EditorNotifier extends StateNotifier<EditorState> {
     }
   }
 
+  // ─── Effect Bridge Operations ──────────────────────────────────────
+
+  /// Add a filter effect to the selected clip.
+  ///
+  /// `filterTypeName` must match a display name from the filter catalog
+  /// (e.g., "Brightness", "Contrast", "Saturation", etc.).
+  Future<String?> addEffect(String filterTypeName) async {
+    if (!_engineReady) return null;
+    final clipId = state.selectedClipId;
+    if (clipId == null) return null;
+    try {
+      final api = EngineService.instance.api;
+      final effectInfo = await api.addEffect(
+        clipId: clipId,
+        filterTypeName: filterTypeName,
+      );
+      _refreshEngineState();
+      return effectInfo.id;
+    } catch (e) {
+      developer.log('addEffect failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Add effect failed: $e');
+      return null;
+    }
+  }
+
+  /// Remove an effect from the selected clip.
+  Future<void> removeEffect(String effectId) async {
+    if (!_engineReady) return;
+    final clipId = state.selectedClipId;
+    if (clipId == null) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.removeEffect(clipId: clipId, effectId: effectId);
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('removeEffect failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Remove effect failed: $e');
+    }
+  }
+
+  /// Set a parameter value for an effect on the selected clip.
+  Future<void> setEffectParameter(
+    String effectId,
+    String paramName,
+    double value,
+  ) async {
+    if (!_engineReady) return;
+    final clipId = state.selectedClipId;
+    if (clipId == null) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.setEffectParameter(
+        clipId: clipId,
+        effectId: effectId,
+        paramName: paramName,
+        value: value,
+      );
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('setEffectParameter failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Set parameter failed: $e');
+    }
+  }
+
+  /// Toggle the enabled/disabled state of an effect.
+  Future<void> toggleEffect(String effectId) async {
+    if (!_engineReady) return;
+    final clipId = state.selectedClipId;
+    if (clipId == null) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.toggleEffect(clipId: clipId, effectId: effectId);
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('toggleEffect failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Toggle effect failed: $e');
+    }
+  }
+
+  /// Get the filter catalog from the engine.
+  Future<List<dynamic>> getFilterCatalog() async {
+    if (!_engineReady) return [];
+    try {
+      final api = EngineService.instance.api;
+      return await api.getFilterCatalog();
+    } catch (e) {
+      developer.log('getFilterCatalog failed: $e', name: 'EditorNotifier');
+      return [];
+    }
+  }
+
+  /// Get the filter presets from the engine.
+  Future<List<dynamic>> getFilterPresets() async {
+    if (!_engineReady) return [];
+    try {
+      final api = EngineService.instance.api;
+      return await api.getFilterPresets();
+    } catch (e) {
+      developer.log('getFilterPresets failed: $e', name: 'EditorNotifier');
+      return [];
+    }
+  }
+
+  /// Apply a filter preset to the selected clip.
+  Future<void> applyFilterPreset(String presetId) async {
+    if (!_engineReady) return;
+    final clipId = state.selectedClipId;
+    if (clipId == null) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.applyFilterPreset(clipId: clipId, presetId: presetId);
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('applyFilterPreset failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Apply preset failed: $e');
+    }
+  }
+
+  // ─── Transition Bridge Operations ──────────────────────────────────
+
+  /// Add a transition to the selected clip.
+  ///
+  /// `transitionType` must be one of the transition catalog names.
+  /// `direction` is "in" or "out".
+  Future<String?> addTransition(
+    String transitionType,
+    int durationMs,
+    String direction,
+  ) async {
+    if (!_engineReady) return null;
+    final clipId = state.selectedClipId;
+    if (clipId == null) return null;
+    try {
+      final api = EngineService.instance.api;
+      final info = await api.addTransition(
+        clipId: clipId,
+        transitionType: transitionType,
+        durationMs: BigInt.from(durationMs),
+        direction: direction,
+      );
+      _refreshEngineState();
+      return info.id;
+    } catch (e) {
+      developer.log('addTransition failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Add transition failed: $e');
+      return null;
+    }
+  }
+
+  /// Remove a transition from the selected clip.
+  Future<void> removeTransition(String direction) async {
+    if (!_engineReady) return;
+    final clipId = state.selectedClipId;
+    if (clipId == null) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.removeTransition(clipId: clipId, direction: direction);
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('removeTransition failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Remove transition failed: $e');
+    }
+  }
+
+  /// Get the transition catalog from the engine.
+  Future<List<dynamic>> getTransitionCatalog() async {
+    if (!_engineReady) return [];
+    try {
+      final api = EngineService.instance.api;
+      return await api.getTransitionCatalog();
+    } catch (e) {
+      developer.log('getTransitionCatalog failed: $e', name: 'EditorNotifier');
+      return [];
+    }
+  }
+
   // ─── Internal helpers ────────────────────────────────────────────
 
   /// Read the timeline duration from the engine and update state.

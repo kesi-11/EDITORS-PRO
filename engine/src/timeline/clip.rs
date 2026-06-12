@@ -1,10 +1,12 @@
 //! Clip model - A segment of media on a track
 //!
 //! A clip represents a portion of a media asset placed on the timeline.
-//! It tracks the position, duration, trim points, speed, and custom properties.
+//! It tracks the position, duration, trim points, speed, effects, and custom properties.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use crate::effects::{Effect, Transition};
 
 /// A clip on the timeline representing a segment of media
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +27,13 @@ pub struct Clip {
     pub speed: f32,
     /// Opacity level (0.0 = transparent, 1.0 = fully opaque)
     pub opacity: f32,
-    /// Custom properties for effects, text content, etc.
+    /// Visual effects applied to this clip (ordered pipeline)
+    pub effects: Vec<Effect>,
+    /// Transition applied at the start of this clip (in-point)
+    pub transition_in: Option<Transition>,
+    /// Transition applied at the end of this clip (out-point)
+    pub transition_out: Option<Transition>,
+    /// Custom properties for text content, etc.
     pub properties: HashMap<String, serde_json::Value>,
 }
 
@@ -41,6 +49,9 @@ impl Clip {
             trim_end_ms: 0,
             speed: 1.0,
             opacity: 1.0,
+            effects: Vec::new(),
+            transition_in: None,
+            transition_out: None,
             properties: HashMap::new(),
         }
     }
@@ -57,6 +68,9 @@ impl Clip {
             trim_end_ms: 0,
             speed: 1.0,
             opacity: 1.0,
+            effects: Vec::new(),
+            transition_in: None,
+            transition_out: None,
             properties: HashMap::new(),
         }
     }
@@ -157,6 +171,49 @@ impl Clip {
     /// Get a custom property from this clip
     pub fn get_property(&self, key: &str) -> Option<&serde_json::Value> {
         self.properties.get(key)
+    }
+
+    /// Add an effect to this clip's pipeline
+    pub fn add_effect(&mut self, effect: Effect) {
+        let order = effect.order;
+        self.effects.push(effect);
+        self.effects.sort_by_key(|e| e.order);
+    }
+
+    /// Remove an effect from this clip by ID
+    pub fn remove_effect(&mut self, effect_id: &str) -> Option<Effect> {
+        if let Some(pos) = self.effects.iter().position(|e| e.id == effect_id) {
+            Some(self.effects.remove(pos))
+        } else {
+            None
+        }
+    }
+
+    /// Update a parameter of a specific effect on this clip
+    pub fn set_effect_parameter(&mut self, effect_id: &str, param_name: &str, value: f32) -> Result<(), String> {
+        let effect = self.effects.iter_mut()
+            .find(|e| e.id == effect_id)
+            .ok_or_else(|| format!("Effect {} not found on clip {}", effect_id, self.id))?;
+        let param = effect.parameters.iter_mut()
+            .find(|p| p.name == param_name)
+            .ok_or_else(|| format!("Parameter {} not found on effect {}", param_name, effect_id))?;
+        param.set_value(value);
+        Ok(())
+    }
+
+    /// Get all enabled effects in order
+    pub fn enabled_effects(&self) -> Vec<&Effect> {
+        self.effects.iter().filter(|e| e.enabled).collect()
+    }
+
+    /// Set the transition at the clip's in-point
+    pub fn set_transition_in(&mut self, transition: Transition) {
+        self.transition_in = Some(transition);
+    }
+
+    /// Set the transition at the clip's out-point
+    pub fn set_transition_out(&mut self, transition: Transition) {
+        self.transition_out = Some(transition);
     }
 
     /// Check if a given timestamp is within this clip's range
