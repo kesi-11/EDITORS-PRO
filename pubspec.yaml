@@ -1,0 +1,84 @@
+name: editors_pro
+description: "EDITORS-PRO: Professional mobile video editor built with Flutter + Rust"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Navigation
+  go_router: ^14.8.1
+
+  # Rust Bridge
+  flutter_rust_bridge: ^2.9.0
+
+  # Database (local)
+  drift: ^2.22.1
+  sqlite3_flutter_libs: ^0.5.28
+
+  # File picking
+  file_picker: ^9.2.1
+
+  # Path utilities
+  path_provider: ^2.1.5
+  path: ^1.9.1
+
+  # Permissions
+  permission_handler: ^11.4.0
+
+  # UI utilities
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.2
+  shimmer: ^3.0.0
+
+  # Media
+  video_thumbnail: ^0.5.5
+
+  # Utilities
+  uuid: ^4.5.1
+  intl: ^0.20.2
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+  logger: ^2.5.0
+  share_plus: ^10.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  # Code generation
+  build_runner: ^2.4.14
+  freezed: ^2.5.7
+  json_serializable: ^6.9.4
+  riverpod_generator: ^2.6.3
+  drift_dev: ^2.22.1
+
+flutter:
+  uses-material-design: true
+
+  # Note: Assets and fonts will be added in Phase 2 when we set up
+  # the actual build pipeline. For Phase 1, the app uses system fonts
+  # and Material icons only.
+  # assets:
+  #   - assets/icons/
+  #   - assets/images/
+  # fonts:
+  #   - family: Inter
+  #     fonts:
+  #       - asset: assets/fonts/Inter-Regular.ttf
+  #       - asset: assets/fonts/Inter-Medium.ttf
+  #         weight: 500
+  #       - asset: assets/fonts/Inter-SemiBold.ttf
+  #         weight: 600
+  #       - asset: assets/fonts/Inter-Bold.ttf
+  #         weight: 700

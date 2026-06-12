@@ -1,0 +1,71 @@
+[package]
+name = "editors-pro-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust engine for EDITORS-PRO mobile video editor"
+authors = ["EDITORS-PRO Team"]
+license = "Proprietary"
+
+[lib]
+name = "editors_pro_engine"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# IDs and timestamps
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Video I/O (FFmpeg 6.x bindings)
+ffmpeg-next = "7.1"
+
+# Concurrency
+rayon = "1.10"
+
+# Image processing (for thumbnail generation)
+image = "0.25"
+
+# GPU compute (Phase 3 - placeholder)
+# wgpu = "22.0"
+
+# Audio processing (Phase 2+)
+# cpal = "0.15"
+# rubato = "0.15"
+
+# File compression for .epp format
+zip = "2.2"
+
+# Memory-aligned data for GPU interop
+bytemuck = "1.16"
+
+# Android NDK bindings (for MediaCodec hardware acceleration)
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-sys = "0.6"
+jni = "0.21"
+
+[build-dependencies]
+cbindgen = "0.27"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,40 @@
+# Dart/Flutter
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Lock files (keep pubspec.lock for reproducible builds)
+*.lock
+!pubspec.lock
+
+# Rust engine
+engine/target/
+
+# IDE
+.idea/
+*.iml
+
+# Android
+.gradle/
+local.properties
+.cxx/
+*.so
+*.dylib
+*.dll
+
+# OS files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Flutter version management
+.fvm/
+
+# Environment and secrets
+.env
+credentials/
+*.jks
+*.keystore
