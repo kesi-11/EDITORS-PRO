@@ -367,6 +367,108 @@ impl Command for SplitClipCommand {
     }
 }
 
+/// Command to set a track's volume level
+#[derive(Debug, Clone)]
+pub struct SetTrackVolumeCommand {
+    pub track_id: String,
+    pub new_volume: f32,
+    pub old_volume: Option<f32>,
+}
+
+impl SetTrackVolumeCommand {
+    pub fn new(track_id: String, new_volume: f32) -> Self {
+        Self {
+            track_id,
+            new_volume: new_volume.clamp(0.0, 2.0),
+            old_volume: None,
+        }
+    }
+}
+
+impl Command for SetTrackVolumeCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let track = timeline.find_track_mut(&self.track_id)
+            .ok_or_else(|| format!("Track {} not found", self.track_id))?;
+
+        self.old_volume = Some(track.volume);
+        track.set_volume(self.new_volume);
+
+        Ok(CommandResult {
+            success: true,
+            message: format!("Track volume set to {:.2}", self.new_volume),
+            affected_clip_ids: vec![],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let old_volume = self.old_volume.ok_or("No old volume stored")?;
+        let track = timeline.find_track_mut(&self.track_id)
+            .ok_or_else(|| format!("Track {} not found", self.track_id))?;
+
+        track.set_volume(old_volume);
+
+        Ok(CommandResult {
+            success: true,
+            message: "Volume change undone".to_string(),
+            affected_clip_ids: vec![],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Set track volume".to_string()
+    }
+}
+
+/// Command to toggle a track's visibility (mute/unmute for audio)
+#[derive(Debug, Clone)]
+pub struct ToggleTrackVisibilityCommand {
+    pub track_id: String,
+    pub old_visible: Option<bool>,
+}
+
+impl ToggleTrackVisibilityCommand {
+    pub fn new(track_id: String) -> Self {
+        Self {
+            track_id,
+            old_visible: None,
+        }
+    }
+}
+
+impl Command for ToggleTrackVisibilityCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let track = timeline.find_track_mut(&self.track_id)
+            .ok_or_else(|| format!("Track {} not found", self.track_id))?;
+
+        self.old_visible = Some(track.visible);
+        track.toggle_visibility();
+
+        Ok(CommandResult {
+            success: true,
+            message: "Track visibility toggled".to_string(),
+            affected_clip_ids: vec![],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let old_visible = self.old_visible.ok_or("No old visibility stored")?;
+        let track = timeline.find_track_mut(&self.track_id)
+            .ok_or_else(|| format!("Track {} not found", self.track_id))?;
+
+        track.visible = old_visible;
+
+        Ok(CommandResult {
+            success: true,
+            message: "Visibility toggle undone".to_string(),
+            affected_clip_ids: vec![],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Toggle track visibility".to_string()
+    }
+}
+
 /// Command history manager for undo/redo
 #[derive(Debug)]
 pub struct CommandHistory {

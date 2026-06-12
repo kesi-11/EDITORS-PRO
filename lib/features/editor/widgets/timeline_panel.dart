@@ -8,6 +8,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../data/models/project_model.dart';
 import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
+import 'audio_waveform_painter.dart';
 
 /// Timeline panel - Shows tracks and clips with a playhead
 class TimelinePanel extends ConsumerStatefulWidget {
@@ -20,6 +21,8 @@ class TimelinePanel extends ConsumerStatefulWidget {
 class _TimelinePanelState extends ConsumerState<TimelinePanel> {
   final ScrollController _horizontalScrollController = ScrollController();
   final ScrollController _verticalScrollController = ScrollController();
+  /// Cached waveform data keyed by asset ID
+  final Map<String, List<double>> _waveformCache = {};
 
   @override
   void dispose() {
@@ -83,6 +86,7 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                       onClipDrag: (clipId, newStartMs) {
                                         // Will call engine.move_clip
                                       },
+                                      waveformCache: _waveformCache,
                                     );
                                   }),
 
@@ -191,6 +195,16 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  // Volume/mute indicator for audio tracks
+                  if (track.trackType == TrackType.audio)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(
+                        track.visible ? Icons.volume_up : Icons.volume_off,
+                        size: 12,
+                        color: track.visible ? color : AppTheme.error,
+                      ),
+                    ),
                   if (track.locked)
                     Icon(Icons.lock, size: 12, color: AppTheme.textDisabled),
                 ],
@@ -320,6 +334,7 @@ class _TrackRow extends StatelessWidget {
   final String? selectedClipId;
   final ValueChanged<String> onClipTap;
   final void Function(String clipId, int newStartMs) onClipDrag;
+  final Map<String, List<double>> waveformCache;
 
   const _TrackRow({
     required this.track,
@@ -329,6 +344,7 @@ class _TrackRow extends StatelessWidget {
     this.selectedClipId,
     required this.onClipTap,
     required this.onClipDrag,
+    required this.waveformCache,
   });
 
   @override
@@ -373,6 +389,7 @@ class _TrackRow extends StatelessWidget {
                   isSelected: isSelected,
                   zoomLevel: zoomLevel,
                   onTap: () => onClipTap(clip.id),
+                  waveformPeaks: waveformCache[clip.assetId],
                 ),
               );
             }),
@@ -390,6 +407,7 @@ class _ClipWidget extends StatelessWidget {
   final bool isSelected;
   final double zoomLevel;
   final VoidCallback onTap;
+  final List<double>? waveformPeaks;
 
   const _ClipWidget({
     required this.clip,
@@ -397,6 +415,7 @@ class _ClipWidget extends StatelessWidget {
     required this.isSelected,
     required this.zoomLevel,
     required this.onTap,
+    this.waveformPeaks,
   });
 
   @override
@@ -414,33 +433,52 @@ class _ClipWidget extends StatelessWidget {
               ? Border.all(color: Colors.white, width: 2)
               : Border.all(color: color.withValues(alpha: 0.3)),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          child: clipWidth > 40
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      _clipLabel(),
-                      style: context.textTheme.labelSmall?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (clipWidth > 80)
-                      Text(
-                        Duration(milliseconds: clip.durationMs).shortFormatted,
-                        style: context.textTheme.labelSmall?.copyWith(
-                          color: Colors.white70,
-                          fontSize: 8,
+        child: Stack(
+          children: [
+            // Waveform visualization for audio clips
+            if (trackType == TrackType.audio && waveformPeaks != null && waveformPeaks!.isNotEmpty)
+              Positioned.fill(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: AudioWaveformWidget(
+                    peaks: waveformPeaks!,
+                    color: color,
+                    width: math.max(clipWidth, AppTheme.clipMinWidth),
+                    height: AppTheme.trackHeight - 8,
+                  ),
+                ),
+              ),
+
+            // Clip label and duration
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              child: clipWidth > 40
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _clipLabel(),
+                          style: context.textTheme.labelSmall?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                  ],
-                )
-              : const SizedBox.shrink(),
+                        if (clipWidth > 80)
+                          Text(
+                            Duration(milliseconds: clip.durationMs).shortFormatted,
+                            style: context.textTheme.labelSmall?.copyWith(
+                              color: Colors.white70,
+                              fontSize: 8,
+                            ),
+                          ),
+                      ],
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
         ),
       ),
     );

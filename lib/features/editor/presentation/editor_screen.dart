@@ -102,6 +102,12 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                   onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.media),
                 ),
                 _TabButton(
+                  label: 'Audio',
+                  icon: Icons.audiotrack,
+                  selected: state.leftPanelTab == LeftPanelTab.audio,
+                  onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.audio),
+                ),
+                _TabButton(
                   label: 'Effects',
                   icon: Icons.auto_fix_high,
                   selected: state.leftPanelTab == LeftPanelTab.effects,
@@ -130,6 +136,8 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     switch (state.leftPanelTab) {
       case LeftPanelTab.media:
         return _buildMediaLibrary(context);
+      case LeftPanelTab.audio:
+        return _buildAudioPanel(context);
       case LeftPanelTab.effects:
         return _buildEffectsPanel(context);
       case LeftPanelTab.text:
@@ -190,6 +198,101 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         final asset = assets[index - 1];
         return _MediaAssetItem(asset: asset);
       },
+    );
+  }
+
+  Widget _buildAudioPanel(BuildContext context) {
+    final assets = ref.watch(mediaAssetsProvider);
+    final audioAssets = assets.where((a) => a.mediaType == MediaType.audio).toList();
+
+    return Column(
+      children: [
+        // Import audio button
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: OutlinedButton.icon(
+            onPressed: () => _importMedia(),
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Import Audio'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(36)),
+          ),
+        ),
+
+        // Audio assets list
+        if (audioAssets.isEmpty)
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.music_note, size: 48, color: AppTheme.textDisabled),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No Audio Files',
+                      style: context.textTheme.titleSmall?.copyWith(
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Import MP3, WAV, AAC, FLAC,\nor OGG audio files',
+                      style: context.textTheme.bodySmall,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          )
+        else
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(8),
+              itemCount: audioAssets.length,
+              itemBuilder: (context, index) {
+                final asset = audioAssets[index];
+                return Card(
+                  child: ListTile(
+                    dense: true,
+                    leading: Container(
+                      width: 48,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: AppTheme.audioTrackColor.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Icon(
+                        Icons.audiotrack,
+                        color: AppTheme.audioTrackColor,
+                        size: 18,
+                      ),
+                    ),
+                    title: Text(
+                      asset.fileName,
+                      style: context.textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: asset.durationMs != null
+                        ? Text(
+                            Duration(milliseconds: asset.durationMs!).formatted,
+                            style: context.textTheme.labelSmall,
+                          )
+                        : null,
+                    trailing: IconButton(
+                      icon: const Icon(Icons.add_circle_outline, size: 18),
+                      onPressed: () {
+                        // TODO: Add to audio track
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 

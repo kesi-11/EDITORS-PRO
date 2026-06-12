@@ -12,7 +12,9 @@ use std::sync::Mutex;
 
 use super::{
     ClipInfo, EditorsProEngine, MediaAssetInfo, ProjectInfo, TrackInfo,
+    TimelineState,
 };
+use crate::audio::ducking::DuckingConfig;
 use crate::export_engine::{ExportProgress, ExportResult, ExportSettings, ExportStage, OutputFormat, VideoCodec};
 use crate::project::ProjectSettings;
 use crate::timeline::track::TrackType;
@@ -423,6 +425,121 @@ impl EditorsProEngineApi {
         let settings = ExportSettings::preset_by_name(&name)?;
         Some(BridgeExportSettings::from(settings))
     }
+
+    // ─── Audio Operations ─────────────────────────────────────────────
+
+    /// Set the volume level for a track.
+    ///
+    /// Volume is clamped to 0.0–2.0 (0.0 = mute, 1.0 = normal, 2.0 = double).
+    pub fn set_track_volume(&self, track_id: String, volume: f32) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.set_track_volume(&track_id, volume)
+    }
+
+    /// Toggle track visibility (mute/unmute for audio).
+    pub fn toggle_track_visibility(&self, track_id: String) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.toggle_track_visibility(&track_id)
+    }
+
+    /// Get audio samples for an asset at a specific time range.
+    ///
+    /// Returns interleaved f32 PCM samples at the project's sample rate.
+    /// The `start_ms` and `duration_ms` define the time range to extract.
+    pub fn get_audio_samples(
+        &self,
+        asset_id: String,
+        start_ms: u64,
+        duration_ms: u64,
+    ) -> Result<Vec<f32>, String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.get_audio_samples_range(&asset_id, start_ms, duration_ms)
+    }
+
+    /// Mix all audio tracks at the given timeline position.
+    ///
+    /// Returns interleaved f32 PCM samples for the mixed output.
+    /// Respects each track's volume, visibility, and ducking settings.
+    pub fn mix_audio_at_time(
+        &self,
+        start_ms: u64,
+        duration_ms: u64,
+    ) -> Result<Vec<f32>, String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mixed = engine.mix_audio_at_time(start_ms, duration_ms)?;
+        Ok(mixed.samples)
+    }
+
+    /// Get waveform peak data for an audio asset.
+    ///
+    /// Returns a list of peak values (0.0 to 1.0) suitable for
+    /// rendering a waveform visualization. The `num_bins` parameter
+    /// controls the resolution (typically matches the pixel width).
+    pub fn get_waveform(&self, asset_id: String, num_bins: u32) -> Result<Vec<f32>, String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let waveform = engine.get_waveform(&asset_id, num_bins)?;
+        Ok(waveform.peaks)
+    }
+
+    /// Configure audio ducking for a track.
+    ///
+    /// When ducking is enabled, other audio tracks will have their
+    /// volume reduced when this track's audio is active (e.g., voiceover).
+    pub fn set_ducking(
+        &self,
+        track_id: String,
+        enabled: bool,
+        duck_level: f32,
+    ) -> Result<(), String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.set_ducking(track_id, enabled, duck_level)
+    }
+
+    /// Get the ducking configuration for a track.
+    ///
+    /// Returns the duck level (0.0 to 1.0) and whether ducking is enabled.
+    pub fn get_ducking_config(&self, track_id: String) -> BridgeDuckingConfig {
+        let engine = self.inner.lock().ok();
+        match engine {
+            Some(e) => {
+                let config = e.get_ducking_config(&track_id);
+                BridgeDuckingConfig {
+                    enabled: config.enabled,
+                    duck_level: config.duck_level,
+                    attack_ms: config.attack_ms,
+                    release_ms: config.release_ms,
+                    threshold: config.threshold,
+                }
+            }
+            None => BridgeDuckingConfig::default(),
+        }
+    }
+
+    /// Get the full timeline state from the engine.
+    ///
+    /// Returns all tracks and clips so Flutter can render the timeline
+    /// using Rust as the single source of truth.
+    pub fn get_timeline_state(&self) -> Option<TimelineState> {
+        let engine = self.inner.lock().ok()?;
+        engine.get_timeline_state()
+    }
+
+    /// Get audio information for a media file.
+    ///
+    /// Returns sample rate, channels, duration, and codec name
+    /// for the audio stream in the given file.
+    pub fn get_audio_info(&self, file_path: String) -> Result<BridgeAudioInfo, String> {
+        let mut decoder = crate::audio::decoder::AudioDecoder::new();
+        decoder.open(&file_path)?;
+        let info = decoder.audio_info();
+        decoder.close();
+        Ok(BridgeAudioInfo {
+            sample_rate: info.sample_rate,
+            channels: info.channels,
+            duration_ms: info.duration_ms,
+            codec_name: info.codec_name,
+        })
+    }
 }
 
 impl From<ExportSettings> for BridgeExportSettings {
@@ -483,4 +600,47 @@ fn encode_rgba_to_png(rgba_data: &[u8], width: u32, height: u32) -> Result<Vec<u
         .map_err(|e| format!("PNG encoding failed: {}", e))?;
 
     Ok(png_buf.into_inner())
+}
+
+/// Bridge-compatible ducking configuration
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgeDuckingConfig {
+    pub enabled: bool,
+    pub duck_level: f32,
+    pub attack_ms: u64,
+    pub release_ms: u64,
+    pub threshold: f32,
+}
+
+impl Default for BridgeDuckingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            duck_level: 0.3,
+            attack_ms: 50,
+            release_ms: 300,
+            threshold: 0.05,
+        }
+    }
+}
+
+impl From<DuckingConfig> for BridgeDuckingConfig {
+    fn from(c: DuckingConfig) -> Self {
+        Self {
+            enabled: c.enabled,
+            duck_level: c.duck_level,
+            attack_ms: c.attack_ms,
+            release_ms: c.release_ms,
+            threshold: c.threshold,
+        }
+    }
+}
+
+/// Bridge-compatible audio info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgeAudioInfo {
+    pub sample_rate: u32,
+    pub channels: u32,
+    pub duration_ms: u64,
+    pub codec_name: String,
 }

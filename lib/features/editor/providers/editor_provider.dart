@@ -28,6 +28,10 @@ class EditorState {
   final bool showInspector;
   final double playbackSpeed;
   final String? lastError;
+  /// Whether audio playback is active (synchronized with video)
+  final bool isAudioPlaying;
+  /// Master volume level for audio playback (0.0 to 1.0)
+  final double masterVolume;
 
   const EditorState({
     this.isPlaying = false,
@@ -43,6 +47,8 @@ class EditorState {
     this.showInspector = false,
     this.playbackSpeed = 1.0,
     this.lastError,
+    this.isAudioPlaying = false,
+    this.masterVolume = 1.0,
   });
 
   EditorState copyWith({
@@ -60,6 +66,8 @@ class EditorState {
     double? playbackSpeed,
     String? lastError,
     bool clearError = false,
+    bool? isAudioPlaying,
+    double? masterVolume,
   }) {
     return EditorState(
       isPlaying: isPlaying ?? this.isPlaying,
@@ -75,11 +83,13 @@ class EditorState {
       showInspector: showInspector ?? this.showInspector,
       playbackSpeed: playbackSpeed ?? this.playbackSpeed,
       lastError: clearError ? null : (lastError ?? this.lastError),
+      isAudioPlaying: isAudioPlaying ?? this.isAudioPlaying,
+      masterVolume: masterVolume ?? this.masterVolume,
     );
   }
 }
 
-enum LeftPanelTab { media, effects, text }
+enum LeftPanelTab { media, effects, text, audio }
 
 /// Editor state notifier — mediates between the UI and the Rust engine.
 class EditorNotifier extends StateNotifier<EditorState> {
@@ -120,7 +130,7 @@ class EditorNotifier extends StateNotifier<EditorState> {
   void _stopPlayback() {
     _playbackTimer?.cancel();
     _playbackTimer = null;
-    state = state.copyWith(isPlaying: false);
+    state = state.copyWith(isPlaying: false, isAudioPlaying: false);
   }
 
   /// Start playback from current position using a Timer
@@ -131,7 +141,7 @@ class EditorNotifier extends StateNotifier<EditorState> {
       if (!state.isPlaying || state.currentTimeMs >= state.durationMs) {
         timer.cancel();
         _playbackTimer = null;
-        state = state.copyWith(isPlaying: false);
+        state = state.copyWith(isPlaying: false, isAudioPlaying: false);
         return;
       }
       seekTo(state.currentTimeMs + tickMs);
@@ -179,7 +189,10 @@ class EditorNotifier extends StateNotifier<EditorState> {
 
   /// Select a track
   void selectTrack(String? trackId) {
-    state = state.copyWith(selectedTrackId: trackId);
+    state = state.copyWith(
+      selectedTrackId: trackId,
+      showInspector: trackId != null,
+    );
   }
 
   // ─── State flags ─────────────────────────────────────────────────
@@ -202,6 +215,11 @@ class EditorNotifier extends StateNotifier<EditorState> {
   /// Toggle inspector visibility
   void toggleInspector() {
     state = state.copyWith(showInspector: !state.showInspector);
+  }
+
+  /// Set master volume for audio playback
+  void setMasterVolume(double volume) {
+    state = state.copyWith(masterVolume: volume.clamp(0.0, 1.0));
   }
 
   // ─── Bridge-wired operations ─────────────────────────────────────
@@ -339,6 +357,76 @@ class EditorNotifier extends StateNotifier<EditorState> {
     }
   }
 
+  // ─── Audio Bridge Operations ──────────────────────────────────────
+
+  /// Set the volume level for a track via the Rust engine.
+  Future<void> setTrackVolume(String trackId, double volume) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.setTrackVolume(trackId: trackId, volume: volume);
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('setTrackVolume failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Set volume failed: $e');
+    }
+  }
+
+  /// Toggle track visibility (mute/unmute) via the Rust engine.
+  Future<void> toggleTrackVisibility(String trackId) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.toggleTrackVisibility(trackId: trackId);
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('toggleTrackVisibility failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Toggle mute failed: $e');
+    }
+  }
+
+  /// Get waveform peak data for an audio asset.
+  ///
+  /// Returns a list of peak values (0.0 to 1.0) for visualization.
+  Future<List<double>> getWaveform(String assetId, {int numBins = 200}) async {
+    if (!_engineReady) return [];
+    try {
+      final api = EngineService.instance.api;
+      final peaks = await api.getWaveform(assetId: assetId, numBins: numBins);
+      return peaks.map((e) => e.toDouble()).toList();
+    } catch (e) {
+      developer.log('getWaveform failed: $e', name: 'EditorNotifier');
+      return [];
+    }
+  }
+
+  /// Configure audio ducking for a track.
+  Future<void> setDucking(String trackId, {required bool enabled, double duckLevel = 0.3}) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.setDucking(trackId: trackId, enabled: enabled, duckLevel: duckLevel);
+    } catch (e) {
+      developer.log('setDucking failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Set ducking failed: $e');
+    }
+  }
+
+  /// Get the full timeline state from the engine.
+  ///
+  /// Returns the timeline state DTO for rendering, or null if
+  /// the engine is not ready or no project is open.
+  Future<dynamic> getTimelineState() async {
+    if (!_engineReady) return null;
+    try {
+      final api = EngineService.instance.api;
+      return await api.getTimelineState();
+    } catch (e) {
+      developer.log('getTimelineState failed: $e', name: 'EditorNotifier');
+      return null;
+    }
+  }
+
   // ─── Internal helpers ────────────────────────────────────────────
 
   /// Read the timeline duration from the engine and update state.
@@ -379,4 +467,10 @@ final playbackTimeProvider = Provider<String>((ref) {
 final durationTimeProvider = Provider<String>((ref) {
   final durationMs = ref.watch(editorProvider.select((s) => s.durationMs));
   return Duration(milliseconds: durationMs).formatted;
+});
+
+/// Provider for waveform data, keyed by asset ID
+final waveformProvider = FutureProvider.family<List<double>, String>((ref, assetId) async {
+  final notifier = ref.read(editorProvider.notifier);
+  return notifier.getWaveform(assetId);
 });

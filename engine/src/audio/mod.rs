@@ -1,6 +1,9 @@
-//! Audio module - Audio processing and mixing
+//! Audio module - Audio processing, decoding, and mixing
 //!
-//! Handles audio playback, mixing, and processing for the editor.
+//! Handles audio decoding from media files, multi-track mixing,
+//! waveform visualization data generation, and audio ducking.
 
+pub mod decoder;
+pub mod ducking;
 pub mod mixer;
 pub mod waveform;

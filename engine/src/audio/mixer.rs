@@ -2,6 +2,7 @@
 //!
 //! Mixes audio from multiple tracks, applying volume, fade in/out,
 //! and ducking effects to produce a final audio output.
+//! Supports resampling to a common sample rate for mixing.
 
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,33 @@ impl AudioBuffer {
     pub fn duration_ms(&self) -> u64 {
         self.duration_ms
     }
+
+    /// Get samples at a specific time offset
+    ///
+    /// Returns a slice of interleaved samples for the given time range.
+    pub fn samples_at_time(&self, time_ms: u64, duration_ms: u64) -> &[f32] {
+        let start_sample = (time_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+        let sample_count = (duration_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+
+        let end = (start_sample + sample_count).min(self.samples.len());
+        if start_sample >= self.samples.len() {
+            return &[];
+        }
+        &self.samples[start_sample..end]
+    }
+
+    /// Calculate the peak amplitude of the buffer
+    pub fn peak_amplitude(&self) -> f32 {
+        self.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max)
+    }
+
+    /// Calculate the RMS (root mean square) energy of the buffer
+    pub fn rms_energy(&self) -> f32 {
+        if self.samples.is_empty() {
+            return 0.0;
+        }
+        (self.samples.iter().map(|s| s * s).sum::<f32>() / self.samples.len() as f32).sqrt()
+    }
 }
 
 /// Volume envelope for fade in/out effects
@@ -54,6 +82,21 @@ impl Default for VolumeEnvelope {
     }
 }
 
+/// Represents a track's audio contribution for mixing
+#[derive(Debug, Clone)]
+pub struct TrackAudioSource {
+    /// The audio buffer for this track
+    pub buffer: AudioBuffer,
+    /// Volume level for this track (0.0 to 2.0, 1.0 = normal)
+    pub volume: f32,
+    /// Offset in milliseconds from the timeline start
+    pub offset_ms: u64,
+    /// Volume envelope for fade effects
+    pub envelope: VolumeEnvelope,
+    /// Whether this track is muted
+    pub muted: bool,
+}
+
 /// The audio mixer combines multiple audio sources
 pub struct AudioMixer {
     sample_rate: u32,
@@ -65,7 +108,55 @@ impl AudioMixer {
         Self { sample_rate, channels }
     }
 
-    /// Mix multiple audio buffers into a single output
+    /// Mix multiple audio track sources into a single output
+    ///
+    /// Each source has its own volume, offset, and envelope settings.
+    /// The output is at the mixer's configured sample rate and channel count.
+    /// Soft clipping (tanh) is applied to prevent harsh distortion.
+    pub fn mix_sources(&self, sources: &[TrackAudioSource], output_duration_ms: u64) -> AudioBuffer {
+        if sources.is_empty() || output_duration_ms == 0 {
+            return AudioBuffer::new(self.sample_rate, self.channels, 0);
+        }
+
+        let output_sample_count = (self.sample_rate as f64 * self.channels as f64 * output_duration_ms as f64 / 1000.0) as usize;
+        let mut output = vec![0.0f32; output_sample_count];
+
+        for source in sources {
+            if source.muted || source.volume <= 0.0 {
+                continue;
+            }
+
+            // Calculate the offset in samples
+            let offset_samples = (source.offset_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+
+            // Apply volume envelope first, then mix
+            let mut processed = source.buffer.clone();
+            self.apply_envelope(&mut processed, &source.envelope);
+
+            // Mix the processed buffer into the output at the correct offset
+            for (i, &sample) in processed.samples.iter().enumerate() {
+                let out_idx = offset_samples + i;
+                if out_idx < output.len() {
+                    output[out_idx] += sample * source.volume;
+                }
+            }
+        }
+
+        // Soft clipping using tanh to prevent harsh distortion
+        for sample in output.iter_mut() {
+            *sample = sample.tanh();
+        }
+
+        AudioBuffer {
+            samples: output,
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            start_ms: 0,
+            duration_ms: output_duration_ms,
+        }
+    }
+
+    /// Mix multiple audio buffers into a single output (simple version)
     pub fn mix(&self, sources: &[(&AudioBuffer, f32)]) -> AudioBuffer {
         if sources.is_empty() {
             return AudioBuffer::new(self.sample_rate, self.channels, 0);
@@ -84,9 +175,9 @@ impl AudioMixer {
             }
         }
 
-        // Clamp output to prevent clipping
+        // Soft clipping
         for sample in output.iter_mut() {
-            *sample = sample.clamp(-1.0, 1.0);
+            *sample = sample.tanh();
         }
 
         AudioBuffer {
@@ -200,5 +291,203 @@ impl AudioMixer {
                 *sample *= gain;
             }
         }
+    }
+
+    /// Resample audio to a different sample rate
+    ///
+    /// Uses linear interpolation for simplicity. For production use,
+    /// a proper resampling library (rubato) should be used.
+    pub fn resample(&self, buffer: &AudioBuffer, target_sample_rate: u32) -> AudioBuffer {
+        if buffer.sample_rate == target_sample_rate {
+            return buffer.clone();
+        }
+
+        let ratio = target_sample_rate as f64 / buffer.sample_rate as f64;
+        let channels = buffer.channels as usize;
+        let input_frames = buffer.samples.len() / channels;
+        let output_frames = (input_frames as f64 * ratio) as usize;
+        let output_duration_ms = (output_frames as f64 * 1000.0 / target_sample_rate as f64) as u64;
+
+        let mut output = vec![0.0f32; output_frames * channels];
+
+        for frame in 0..output_frames {
+            let src_frame = frame as f64 / ratio;
+            let src_frame_floor = src_frame.floor() as usize;
+            let src_frame_ceil = (src_frame_floor + 1).min(input_frames - 1);
+            let frac = src_frame - src_frame_floor as f64;
+
+            for ch in 0..channels {
+                let src_idx_floor = src_frame_floor * channels + ch;
+                let src_idx_ceil = src_frame_ceil * channels + ch;
+                let value = buffer.samples[src_idx_floor] * (1.0 - frac as f32)
+                    + buffer.samples[src_idx_ceil] * frac as f32;
+                output[frame * channels + ch] = value;
+            }
+        }
+
+        AudioBuffer {
+            samples: output,
+            sample_rate: target_sample_rate,
+            channels: buffer.channels,
+            start_ms: buffer.start_ms,
+            duration_ms: output_duration_ms,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mix_empty_sources() {
+        let mixer = AudioMixer::new(44100, 2);
+        let result = mixer.mix(&[]);
+        assert_eq!(result.samples.len(), 0);
+    }
+
+    #[test]
+    fn test_mix_single_source() {
+        let mixer = AudioMixer::new(44100, 2);
+        let buffer = AudioBuffer {
+            samples: vec![0.5; 100],
+            sample_rate: 44100,
+            channels: 2,
+            start_ms: 0,
+            duration_ms: 100,
+        };
+
+        let result = mixer.mix(&[(&buffer, 1.0)]);
+        // tanh(0.5) ≈ 0.4621
+        assert!((result.samples[0] - 0.4621).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_mix_two_sources() {
+        let mixer = AudioMixer::new(44100, 2);
+        let buf1 = AudioBuffer {
+            samples: vec![0.5; 100],
+            sample_rate: 44100,
+            channels: 2,
+            start_ms: 0,
+            duration_ms: 100,
+        };
+        let buf2 = AudioBuffer {
+            samples: vec![0.3; 100],
+            sample_rate: 44100,
+            channels: 2,
+            start_ms: 0,
+            duration_ms: 100,
+        };
+
+        let result = mixer.mix(&[(&buf1, 1.0), (&buf2, 1.0)]);
+        // 0.5 + 0.3 = 0.8, tanh(0.8) ≈ 0.6640
+        assert!((result.samples[0] - 0.664).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_mix_sources_with_offset() {
+        let mixer = AudioMixer::new(44100, 2);
+        let buf1 = AudioBuffer {
+            samples: vec![1.0; 100],
+            sample_rate: 44100,
+            channels: 2,
+            start_ms: 0,
+            duration_ms: 100,
+        };
+
+        let sources = vec![TrackAudioSource {
+            buffer: buf1,
+            volume: 1.0,
+            offset_ms: 0,
+            envelope: VolumeEnvelope::default(),
+            muted: false,
+        }];
+
+        let result = mixer.mix_sources(&sources, 200);
+        // Output should be 200ms long, first 100ms has signal, rest is silence
+        assert!(result.samples.len() > 100);
+        assert!(result.samples[0].abs() > 0.0);
+    }
+
+    #[test]
+    fn test_volume_envelope_fade_in() {
+        let mixer = AudioMixer::new(44100, 2);
+        let mut buffer = AudioBuffer::new(44100, 2, 1000);
+        buffer.samples.fill(1.0);
+
+        let envelope = VolumeEnvelope {
+            volume: 1.0,
+            fade_in_ms: 500,
+            fade_out_ms: 0,
+        };
+
+        mixer.apply_envelope(&mut buffer, &envelope);
+
+        // First sample should be near 0 (fade in start)
+        assert!(buffer.samples[0].abs() < 0.01);
+        // Middle should be at full volume
+        let mid = buffer.samples.len() / 2;
+        assert!((buffer.samples[mid] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_normalize() {
+        let mixer = AudioMixer::new(44100, 2);
+        let mut buffer = AudioBuffer {
+            samples: vec![0.5, -0.5, 0.3, -0.3],
+            sample_rate: 44100,
+            channels: 2,
+            start_ms: 100,
+            duration_ms: 100,
+        };
+
+        mixer.normalize(&mut buffer, 1.0);
+        // Peak should be 1.0
+        let peak = buffer.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!((peak - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_resample_up() {
+        let mixer = AudioMixer::new(44100, 2);
+        let buffer = AudioBuffer {
+            samples: vec![0.5; 44100], // 0.5s at 44100Hz mono
+            sample_rate: 44100,
+            channels: 1,
+            start_ms: 0,
+            duration_ms: 500,
+        };
+
+        let resampled = mixer.resample(&buffer, 48000);
+        assert_eq!(resampled.sample_rate, 48000);
+        // Should have more samples (upsampled)
+        assert!(resampled.samples.len() > buffer.samples.len());
+    }
+
+    #[test]
+    fn test_peak_amplitude() {
+        let buffer = AudioBuffer {
+            samples: vec![0.1, -0.5, 0.3, -0.8, 0.2],
+            sample_rate: 44100,
+            channels: 1,
+            start_ms: 0,
+            duration_ms: 100,
+        };
+
+        assert!((buffer.peak_amplitude() - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_rms_energy() {
+        let buffer = AudioBuffer {
+            samples: vec![1.0, -1.0, 1.0, -1.0],
+            sample_rate: 44100,
+            channels: 1,
+            start_ms: 0,
+            duration_ms: 100,
+        };
+
+        assert!((buffer.rms_energy() - 1.0).abs() < 0.001);
     }
 }

@@ -21,9 +21,13 @@ use crate::project::format::EppFormat;
 use crate::project::{MediaAsset, MediaType, Project, ProjectSettings};
 use crate::renderer::PreviewRenderer;
 use crate::timeline::clip::Clip;
+use crate::audio::decoder::AudioDecoder;
+use crate::audio::ducking::DuckingConfig;
+use crate::audio::mixer::{AudioBuffer, AudioMixer, TrackAudioSource, VolumeEnvelope};
+use crate::audio::waveform::WaveformData;
 use crate::timeline::command::{
     AddClipCommand, Command, CommandHistory, MoveClipCommand, RemoveClipCommand,
-    SplitClipCommand, TrimClipCommand,
+    SetTrackVolumeCommand, SplitClipCommand, ToggleTrackVisibilityCommand, TrimClipCommand,
 };
 use crate::timeline::track::TrackType;
 use crate::timeline::Timeline;
@@ -35,6 +39,8 @@ pub struct EditorsProEngine {
     decoder: HardwareDecoder,
     renderer: PreviewRenderer,
     command_history: CommandHistory,
+    audio_decoder: AudioDecoder,
+    audio_mixer: AudioMixer,
     initialized: bool,
     /// The file path of the video currently loaded in the decoder.
     /// Used to detect clip-switching so the decoder is re-opened when
@@ -44,6 +50,10 @@ pub struct EditorsProEngine {
     /// The encoding loop checks this flag before each frame and will
     /// abort early if it is set.
     export_canceled: std::sync::atomic::AtomicBool,
+    /// Cached audio data keyed by asset_id for quick access
+    audio_cache: std::collections::HashMap<String, AudioBuffer>,
+    /// Ducking configurations per track
+    ducking_configs: std::collections::HashMap<String, DuckingConfig>,
 }
 
 impl EditorsProEngine {
@@ -54,9 +64,13 @@ impl EditorsProEngine {
             decoder: HardwareDecoder::new(),
             renderer: PreviewRenderer::new(1920, 1080),
             command_history: CommandHistory::new(),
+            audio_decoder: AudioDecoder::new(),
+            audio_mixer: AudioMixer::new(44100, 2),
             initialized: false,
             current_file_path: None,
             export_canceled: std::sync::atomic::AtomicBool::new(false),
+            audio_cache: std::collections::HashMap::new(),
+            ducking_configs: std::collections::HashMap::new(),
         }
     }
 
@@ -507,6 +521,271 @@ impl EditorsProEngine {
             _ => MediaType::Video, // Default to video
         }
     }
+
+    // ─── Audio Operations ─────────────────────────────────────────────
+
+    /// Set the volume level for a track
+    pub fn set_track_volume(&mut self, track_id: &str, volume: f32) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let command = SetTrackVolumeCommand::new(track_id.to_string(), volume);
+        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        log::info!("Set track {} volume to {:.2}", track_id, volume);
+        Ok(())
+    }
+
+    /// Toggle track visibility (mute/unmute for audio tracks)
+    pub fn toggle_track_visibility(&mut self, track_id: &str) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let command = ToggleTrackVisibilityCommand::new(track_id.to_string());
+        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        Ok(())
+    }
+
+    /// Decode audio samples from a media asset
+    ///
+    /// Returns the decoded audio as interleaved f32 samples at the
+    /// project's sample rate (44100Hz stereo by default). Results
+    /// are cached for quick access.
+    pub fn get_audio_samples(&mut self, asset_id: &str) -> Result<AudioBuffer, String> {
+        // Check cache first
+        if let Some(cached) = self.audio_cache.get(asset_id).cloned() {
+            return Ok(cached);
+        }
+
+        // Find the asset's file path
+        let file_path = {
+            let project = self.project.as_ref().ok_or("No project open")?;
+            let asset = project.find_media_asset(asset_id)
+                .ok_or_else(|| format!("Asset {} not found", asset_id))?;
+            asset.file_path.clone()
+        };
+
+        // Open and decode the audio
+        self.audio_decoder.open(&file_path)?;
+        let project = self.project.as_ref().ok_or("No project open")?;
+        let sample_rate = project.settings.sample_rate;
+
+        let audio = self.audio_decoder.decode_all(sample_rate, 2)?;
+        self.audio_decoder.close();
+
+        // Cache the result
+        self.audio_cache.insert(asset_id.to_string(), audio.clone());
+
+        log::info!(
+            "Decoded audio for asset {}: {} samples ({}ms)",
+            asset_id, audio.samples.len(), audio.duration_ms
+        );
+
+        Ok(audio)
+    }
+
+    /// Get audio samples for a specific time range
+    pub fn get_audio_samples_range(
+        &mut self,
+        asset_id: &str,
+        start_ms: u64,
+        duration_ms: u64,
+    ) -> Result<Vec<f32>, String> {
+        let audio = self.get_audio_samples(asset_id)?;
+        let segment = audio.segment(start_ms, start_ms + duration_ms);
+        Ok(segment.samples)
+    }
+
+    /// Mix all audio tracks at a given timeline position
+    ///
+    /// Returns mixed audio samples for the given time range, taking
+    /// into account each track's volume, visibility, and ducking settings.
+    pub fn mix_audio_at_time(
+        &mut self,
+        start_ms: u64,
+        duration_ms: u64,
+    ) -> Result<AudioBuffer, String> {
+        let project = self.project.as_ref().ok_or("No project open")?;
+
+        // Collect audio tracks and their clips
+        let audio_tracks: Vec<_> = project.timeline().tracks_of_type(TrackType::Audio)
+            .into_iter()
+            .filter(|t| t.visible)
+            .collect();
+
+        let mut sources: Vec<TrackAudioSource> = Vec::new();
+
+        for track in audio_tracks {
+            for clip in &track.clips {
+                // Check if this clip overlaps with our requested range
+                let clip_start = clip.start_ms;
+                let clip_end = clip.end_ms();
+                if clip_start >= start_ms + duration_ms || clip_end <= start_ms {
+                    continue;
+                }
+
+                // Calculate the actual time range we need from this clip
+                let overlap_start = clip_start.max(start_ms);
+                let overlap_end = clip_end.min(start_ms + duration_ms);
+                let overlap_duration = overlap_end - overlap_start;
+
+                // Get the source audio
+                let audio = self.get_audio_samples(&clip.asset_id)?;
+
+                // Calculate the offset within the source
+                let source_start = clip.trim_start_ms + (overlap_start - clip_start);
+                let segment = audio.segment(source_start, source_start + overlap_duration);
+
+                sources.push(TrackAudioSource {
+                    buffer: segment,
+                    volume: track.volume,
+                    offset_ms: overlap_start - start_ms,
+                    envelope: VolumeEnvelope::default(),
+                    muted: !track.visible,
+                });
+            }
+        }
+
+        // Also include audio from video tracks
+        let video_tracks: Vec<_> = project.timeline().tracks_of_type(TrackType::Video)
+            .into_iter()
+            .filter(|t| t.visible)
+            .collect();
+
+        for track in video_tracks {
+            for clip in &track.clips {
+                let clip_start = clip.start_ms;
+                let clip_end = clip.end_ms();
+                if clip_start >= start_ms + duration_ms || clip_end <= start_ms {
+                    continue;
+                }
+
+                let overlap_start = clip_start.max(start_ms);
+                let overlap_end = clip_end.min(start_ms + duration_ms);
+                let overlap_duration = overlap_end - overlap_start;
+
+                // Video clips may have embedded audio
+                if let Ok(audio) = self.get_audio_samples(&clip.asset_id) {
+                    let source_start = clip.trim_start_ms + (overlap_start - clip_start);
+                    let segment = audio.segment(source_start, source_start + overlap_duration);
+
+                    sources.push(TrackAudioSource {
+                        buffer: segment,
+                        volume: track.volume,
+                        offset_ms: overlap_start - start_ms,
+                        envelope: VolumeEnvelope::default(),
+                        muted: !track.visible,
+                    });
+                }
+            }
+        }
+
+        // Mix all sources
+        let mixed = self.audio_mixer.mix_sources(&sources, duration_ms);
+
+        // Apply ducking if configured
+        for (track_id, config) in &self.ducking_configs {
+            if config.enabled {
+                // Find the trigger track (voiceover)
+                let trigger_track = project.timeline().tracks.iter()
+                    .find(|t| &t.id == track_id);
+                if let Some(trigger) = trigger_track {
+                    // Collect trigger audio
+                    for clip in &trigger.clips {
+                        let clip_start = clip.start_ms;
+                        let clip_end = clip.end_ms();
+                        if clip_start >= start_ms + duration_ms || clip_end <= start_ms {
+                            continue;
+                        }
+                        if let Ok(trigger_audio) = self.get_audio_samples(&clip.asset_id) {
+                            let source_start = clip.trim_start_ms + (clip_start.max(start_ms) - clip_start);
+                            let segment = trigger_audio.segment(source_start, source_start + duration_ms);
+                            let mut mixed_mut = mixed.clone();
+                            crate::audio::ducking::apply_ducking(&mut mixed_mut, &segment, config);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(mixed)
+    }
+
+    /// Get waveform data for an audio asset
+    ///
+    /// Returns peak values for visualization. The `num_bins` parameter
+    /// controls how many data points are returned (typically matches
+    /// the pixel width of the waveform display).
+    pub fn get_waveform(&mut self, asset_id: &str, num_bins: u32) -> Result<WaveformData, String> {
+        let audio = self.get_audio_samples(asset_id)?;
+        let waveform = WaveformData::from_samples(
+            &audio.samples,
+            audio.sample_rate,
+            audio.channels,
+            num_bins,
+        );
+        Ok(waveform)
+    }
+
+    /// Configure ducking for a track
+    ///
+    /// When ducking is enabled, other audio tracks will have their
+    /// volume reduced when this track's audio is active.
+    pub fn set_ducking(
+        &mut self,
+        track_id: String,
+        enabled: bool,
+        duck_level: f32,
+    ) -> Result<(), String> {
+        let project = self.project.as_ref().ok_or("No project open")?;
+
+        // Verify track exists
+        project.timeline().find_track(&track_id)
+            .ok_or_else(|| format!("Track {} not found", track_id))?;
+
+        let config = self.ducking_configs.entry(track_id.clone()).or_insert_with(DuckingConfig::default);
+        config.enabled = enabled;
+        config.duck_level = duck_level.clamp(0.0, 1.0);
+
+        log::info!("Set ducking for track {}: enabled={}, level={:.2}", track_id, enabled, duck_level);
+        Ok(())
+    }
+
+    /// Get the ducking configuration for a track
+    pub fn get_ducking_config(&self, track_id: &str) -> DuckingConfig {
+        self.ducking_configs.get(track_id).cloned().unwrap_or_default()
+    }
+
+    /// Get the full timeline state as a DTO for Flutter
+    ///
+    /// Returns all tracks and clips in a serializable format that
+    /// Flutter can use to render the timeline.
+    pub fn get_timeline_state(&self) -> Option<TimelineState> {
+        let project = self.project.as_ref()?;
+
+        let tracks: Vec<TrackStateDto> = project.timeline().tracks.iter().map(|t| {
+            let clips: Vec<ClipStateDto> = t.clips.iter().map(|c| ClipStateDto {
+                id: c.id.clone(),
+                asset_id: c.asset_id.clone(),
+                start_ms: c.start_ms,
+                duration_ms: c.effective_duration(),
+                trim_start_ms: c.trim_start_ms,
+                trim_end_ms: c.trim_end_ms,
+                speed: c.speed,
+                opacity: c.opacity,
+            }).collect();
+
+            TrackStateDto {
+                id: t.id.clone(),
+                name: t.name.clone(),
+                track_type: format!("{}", t.track_type),
+                clips,
+                locked: t.locked,
+                visible: t.visible,
+                volume: t.volume,
+            }
+        }).collect();
+
+        Some(TimelineState {
+            tracks,
+            duration_ms: project.timeline().duration_ms,
+        })
+    }
 }
 
 // Helper trait to access timeline on Project
@@ -642,4 +921,40 @@ impl ClipInfo {
             opacity: clip.opacity,
         }
     }
+}
+
+/// Full timeline state DTO for Flutter synchronization
+///
+/// This DTO carries the complete timeline state (all tracks and clips)
+/// from the Rust engine to Flutter, establishing Rust as the single
+/// source of truth. Flutter reads this after every mutation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineState {
+    pub tracks: Vec<TrackStateDto>,
+    pub duration_ms: u64,
+}
+
+/// Track state DTO for timeline synchronization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackStateDto {
+    pub id: String,
+    pub name: String,
+    pub track_type: String,
+    pub clips: Vec<ClipStateDto>,
+    pub locked: bool,
+    pub visible: bool,
+    pub volume: f32,
+}
+
+/// Clip state DTO for timeline synchronization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipStateDto {
+    pub id: String,
+    pub asset_id: String,
+    pub start_ms: u64,
+    pub duration_ms: u64,
+    pub trim_start_ms: u64,
+    pub trim_end_ms: u64,
+    pub speed: f32,
+    pub opacity: f32,
 }
