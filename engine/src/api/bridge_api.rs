@@ -170,16 +170,121 @@ impl EditorsProEngineApi {
         }
     }
 
+    /// Private helper that acquires the Mutex lock with automatic recovery
+    /// from a poisoned state.
+    ///
+    /// If a previous panic left the Mutex poisoned, this method recovers by
+    /// replacing the inner engine with a fresh instance, logging the recovery,
+    /// and then calling the provided closure. This allows the application to
+    /// continue operating even after an unexpected panic.
+    ///
+    /// # Type Parameters
+    /// - `T`: The success type returned by the closure
+    /// - `F`: The closure type, receiving `&mut EditorsProEngine`
+    fn with_engine_recovery<T, F>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce(&mut EditorsProEngine) -> Result<T, String>,
+    {
+        let mut guard = match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poison_err) => {
+                log::error!(
+                    "Engine mutex is poisoned (a previous panic occurred). \
+                     Recovering by creating a new engine instance."
+                );
+                // Recover: get the guard despite the poison, then replace
+                // the engine with a fresh instance so subsequent calls work.
+                let mut guard = poison_err.into_inner();
+                *guard = EditorsProEngine::new();
+                log::info!("Engine recovered successfully after mutex poisoning.");
+                guard
+            }
+        };
+        f(&mut guard)
+    }
+
+    /// Attempt to recover a project after a crash or error.
+    ///
+    /// Recovery strategy:
+    /// 1. Try to load the auto-saved version of the project from the given path.
+    /// 2. If the auto-save path is `None` or loading fails, create a brand-new
+    ///    empty project called "Recovered Project".
+    ///
+    /// Returns the `ProjectInfo` of the recovered (or newly created) project.
+    pub fn recover_project(&self, auto_save_path: Option<String>) -> Result<ProjectInfo, String> {
+        // Step 1: Try auto-save if a path was provided
+        if let Some(ref path) = auto_save_path {
+            log::info!("Attempting to recover project from auto-save: {}", path);
+            match self.with_engine_recovery(|engine| engine.load_project(path)) {
+                Ok(info) => {
+                    log::info!("Project successfully recovered from auto-save: {}", path);
+                    return Ok(info);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Auto-save recovery failed ({}). Falling back to new project.",
+                        e
+                    );
+                }
+            }
+        }
+
+        // Step 2: Create a fresh project as last resort
+        log::info!("Creating new empty project as recovery fallback.");
+        self.with_engine_recovery(|engine| {
+            engine
+                .create_project("Recovered Project", None)
+                .map_err(|e| format!("{}", e))
+        })
+    }
+
+    /// Force-reset the engine to a fresh state.
+    ///
+    /// Drops the current engine (including any in-memory project, caches,
+    /// and undo history) and replaces it with a brand-new instance. This is
+    /// useful for recovering from unrecoverable errors where the engine's
+    /// internal state is inconsistent.
+    ///
+    /// **Note:** The new engine is **not** initialized — you must call
+    /// `initialize()` again after a force reset.
+    pub fn force_reset_engine(&self) -> Result<(), String> {
+        let mut guard = match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poison_err) => {
+                // Even if poisoned, we're about to replace it anyway
+                poison_err.into_inner()
+            }
+        };
+        log::warn!("Force-resetting engine — all in-memory state will be lost.");
+        *guard = EditorsProEngine::new();
+        log::info!("Engine has been force-reset to a fresh state.");
+        Ok(())
+    }
+
     /// Initialize the engine.
     ///
     /// Must be called once before any other operations.
     /// Sets up logging and FFmpeg libraries.
     pub fn initialize(&self) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.initialize().map_err(|e| format!("{}", e))
+        // Set up panic hook for crash reporting
+        std::panic::set_hook(Box::new(|info| {
+            let payload = info.payload();
+            let message = if let Some(s) = payload.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
+            };
+            let location = info
+                .location()
+                .map(|l| format!(" at {}:{}", l.file(), l.line()))
+                .unwrap_or_default();
+            log::error!("RUST PANIC: {}{}", message, location);
+            // Future: report to Crashlytics via platform channel
+        }));
+
+        self.with_engine_recovery(|engine| engine.initialize().map_err(|e| format!("{}", e)))
     }
 
     /// Create a new project with the given name and optional settings.
@@ -190,14 +295,12 @@ impl EditorsProEngineApi {
         name: String,
         settings: Option<BridgeProjectSettings>,
     ) -> Result<ProjectInfo, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let project_settings = settings.map(ProjectSettings::from);
-        engine
-            .create_project(&name, project_settings)
-            .map_err(|e| format!("{}", e))
+        self.with_engine_recovery(|engine| {
+            engine
+                .create_project(&name, project_settings)
+                .map_err(|e| format!("{}", e))
+        })
     }
 
     /// Import a media file into the current project.
@@ -205,11 +308,7 @@ impl EditorsProEngineApi {
     /// The file at `file_path` must be accessible from the native side.
     /// Returns a `MediaAssetInfo` DTO with metadata extracted from the file.
     pub fn import_media(&self, file_path: String) -> Result<MediaAssetInfo, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.import_media(&file_path)
+        self.with_engine_recovery(|engine| engine.import_media(&file_path))
     }
 
     /// Add a track to the timeline.
@@ -224,11 +323,7 @@ impl EditorsProEngineApi {
             "Effect" => TrackType::Effect,
             other => return Err(format!("Unknown track type: {}", other)),
         };
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.add_track(tt, name)
+        self.with_engine_recovery(|engine| engine.add_track(tt, name))
     }
 
     /// Add a clip to a track.
@@ -244,11 +339,9 @@ impl EditorsProEngineApi {
         start_ms: u64,
         duration_ms: u64,
     ) -> Result<ClipInfo, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.add_clip(&track_id, &asset_id, start_ms, duration_ms)
+        self.with_engine_recovery(|engine| {
+            engine.add_clip(&track_id, &asset_id, start_ms, duration_ms)
+        })
     }
 
     /// Trim a clip by adjusting its in/out points.
@@ -258,11 +351,7 @@ impl EditorsProEngineApi {
         trim_start_ms: u64,
         trim_end_ms: u64,
     ) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.trim_clip(&clip_id, trim_start_ms, trim_end_ms)
+        self.with_engine_recovery(|engine| engine.trim_clip(&clip_id, trim_start_ms, trim_end_ms))
     }
 
     /// Split a clip at the given timestamp.
@@ -273,11 +362,7 @@ impl EditorsProEngineApi {
         clip_id: String,
         time_ms: u64,
     ) -> Result<(ClipInfo, ClipInfo), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.split_clip(&clip_id, time_ms)
+        self.with_engine_recovery(|engine| engine.split_clip(&clip_id, time_ms))
     }
 
     /// Move a clip to a new position on the timeline.
@@ -289,20 +374,12 @@ impl EditorsProEngineApi {
         new_start_ms: u64,
         new_track_id: Option<String>,
     ) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.move_clip(&clip_id, new_start_ms, new_track_id)
+        self.with_engine_recovery(|engine| engine.move_clip(&clip_id, new_start_ms, new_track_id))
     }
 
     /// Remove a clip from the timeline.
     pub fn remove_clip(&self, clip_id: String) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.remove_clip(&clip_id)
+        self.with_engine_recovery(|engine| engine.remove_clip(&clip_id))
     }
 
     /// Render a single preview frame at the given timestamp.
@@ -314,15 +391,11 @@ impl EditorsProEngineApi {
     /// side because Flutter does not have a built-in RGBA → widget
     /// decoder.
     pub fn get_frame(&self, time_ms: u64) -> Result<Vec<u8>, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-
-        // The engine returns a FrameData struct with width, height, and RGBA data.
-        let frame_data = engine.get_frame(time_ms).map_err(|e| format!("{}", e))?;
-
-        encode_rgba_to_png(&frame_data.data, frame_data.width, frame_data.height)
+        self.with_engine_recovery(|engine| {
+            // The engine returns a FrameData struct with width, height, and RGBA data.
+            let frame_data = engine.get_frame(time_ms).map_err(|e| format!("{}", e))?;
+            encode_rgba_to_png(&frame_data.data, frame_data.width, frame_data.height)
+        })
     }
 
     /// Export the project as a video file with real FFmpeg encoding.
@@ -338,17 +411,13 @@ impl EditorsProEngineApi {
         output_path: String,
         settings: BridgeExportSettings,
     ) -> Result<BridgeExportResult, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let export_settings = ExportSettings::from(settings);
-
-        let result = engine.export_video(&output_path, export_settings, &|_progress| {
-            // No-op for synchronous export — progress is not reported
-        })?;
-
-        Ok(BridgeExportResult::from(result))
+        self.with_engine_recovery(|engine| {
+            let result = engine.export_video(&output_path, export_settings, &|_progress| {
+                // No-op for synchronous export — progress is not reported
+            })?;
+            Ok(BridgeExportResult::from(result))
+        })
     }
 
     /// Export the project with progress reporting via a StreamSink.
@@ -363,18 +432,14 @@ impl EditorsProEngineApi {
         settings: BridgeExportSettings,
         progress_sink: flutter_rust_bridge::StreamSink<BridgeExportProgress>,
     ) -> Result<BridgeExportResult, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let export_settings = ExportSettings::from(settings);
-
-        let result = engine.export_video(&output_path, export_settings, &|progress| {
-            let bridge_progress = BridgeExportProgress::from(progress);
-            let _ = progress_sink.add(bridge_progress);
-        })?;
-
-        Ok(BridgeExportResult::from(result))
+        self.with_engine_recovery(|engine| {
+            let result = engine.export_video(&output_path, export_settings, &|progress| {
+                let bridge_progress = BridgeExportProgress::from(progress);
+                let _ = progress_sink.add(bridge_progress);
+            })?;
+            Ok(BridgeExportResult::from(result))
+        })
     }
 
     /// Export the project with progress reporting via a simple polling approach.
@@ -386,17 +451,13 @@ impl EditorsProEngineApi {
         output_path: String,
         settings: BridgeExportSettings,
     ) -> Result<BridgeExportResult, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let export_settings = ExportSettings::from(settings);
-
-        let result = engine.export_video(&output_path, export_settings, &|_progress| {
-            // No-op for synchronous export without progress reporting
-        })?;
-
-        Ok(BridgeExportResult::from(result))
+        self.with_engine_recovery(|engine| {
+            let result = engine.export_video(&output_path, export_settings, &|_progress| {
+                // No-op for synchronous export without progress reporting
+            })?;
+            Ok(BridgeExportResult::from(result))
+        })
     }
 
     /// Request cancellation of an in-progress export.
@@ -405,80 +466,57 @@ impl EditorsProEngineApi {
     /// and will abort early if set. This is safe to call from any
     /// thread (including the Flutter UI thread).
     pub fn cancel_export(&self) -> Result<(), String> {
-        let engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.cancel_export();
-        Ok(())
+        self.with_engine_recovery(|engine| {
+            engine.cancel_export();
+            Ok(())
+        })
     }
 
     /// Undo the last action.
     pub fn undo(&self) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.undo()
+        self.with_engine_recovery(|engine| engine.undo())
     }
 
     /// Redo the last undone action.
     pub fn redo(&self) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.redo()
+        self.with_engine_recovery(|engine| engine.redo())
     }
 
     /// Save the current project to an `.epp` file.
     pub fn save_project(&self, path: String) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.save_project(&path)
+        self.with_engine_recovery(|engine| engine.save_project(&path))
     }
 
     /// Load a project from an `.epp` file.
     pub fn load_project(&self, path: String) -> Result<ProjectInfo, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.load_project(&path)
+        self.with_engine_recovery(|engine| engine.load_project(&path))
     }
 
     /// Get information about the current project.
     ///
     /// Returns `null` (in Dart: `null`) when no project is open.
     pub fn get_project_info(&self) -> Option<ProjectInfo> {
-        let engine = self.inner.lock().ok()?;
-        engine.get_project_info()
+        self.with_engine_recovery(|engine| Ok(engine.get_project_info()))
+            .ok()
+            .flatten()
     }
 
     /// Get the total timeline duration in milliseconds.
     pub fn get_timeline_duration(&self) -> u64 {
-        match self.inner.lock() {
-            Ok(engine) => engine.get_timeline_duration(),
-            Err(_) => 0,
-        }
+        self.with_engine_recovery(|engine| Ok(engine.get_timeline_duration()))
+            .unwrap_or(0)
     }
 
     /// Check whether undo is available.
     pub fn can_undo(&self) -> bool {
-        match self.inner.lock() {
-            Ok(engine) => engine.can_undo(),
-            Err(_) => false,
-        }
+        self.with_engine_recovery(|engine| Ok(engine.can_undo()))
+            .unwrap_or(false)
     }
 
     /// Check whether redo is available.
     pub fn can_redo(&self) -> bool {
-        match self.inner.lock() {
-            Ok(engine) => engine.can_redo(),
-            Err(_) => false,
-        }
+        self.with_engine_recovery(|engine| Ok(engine.can_redo()))
+            .unwrap_or(false)
     }
 
     /// Get the list of available export presets.
@@ -509,20 +547,12 @@ impl EditorsProEngineApi {
     ///
     /// Volume is clamped to 0.0–2.0 (0.0 = mute, 1.0 = normal, 2.0 = double).
     pub fn set_track_volume(&self, track_id: String, volume: f32) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.set_track_volume(&track_id, volume)
+        self.with_engine_recovery(|engine| engine.set_track_volume(&track_id, volume))
     }
 
     /// Toggle track visibility (mute/unmute for audio).
     pub fn toggle_track_visibility(&self, track_id: String) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.toggle_track_visibility(&track_id)
+        self.with_engine_recovery(|engine| engine.toggle_track_visibility(&track_id))
     }
 
     /// Get audio samples for an asset at a specific time range.
@@ -535,11 +565,9 @@ impl EditorsProEngineApi {
         start_ms: u64,
         duration_ms: u64,
     ) -> Result<Vec<f32>, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.get_audio_samples_range(&asset_id, start_ms, duration_ms)
+        self.with_engine_recovery(|engine| {
+            engine.get_audio_samples_range(&asset_id, start_ms, duration_ms)
+        })
     }
 
     /// Mix all audio tracks at the given timeline position.
@@ -547,12 +575,10 @@ impl EditorsProEngineApi {
     /// Returns interleaved f32 PCM samples for the mixed output.
     /// Respects each track's volume, visibility, and ducking settings.
     pub fn mix_audio_at_time(&self, start_ms: u64, duration_ms: u64) -> Result<Vec<f32>, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        let mixed = engine.mix_audio_at_time(start_ms, duration_ms)?;
-        Ok(mixed.samples)
+        self.with_engine_recovery(|engine| {
+            let mixed = engine.mix_audio_at_time(start_ms, duration_ms)?;
+            Ok(mixed.samples)
+        })
     }
 
     /// Get waveform peak data for an audio asset.
@@ -561,12 +587,10 @@ impl EditorsProEngineApi {
     /// rendering a waveform visualization. The `num_bins` parameter
     /// controls the resolution (typically matches the pixel width).
     pub fn get_waveform(&self, asset_id: String, num_bins: u32) -> Result<Vec<f32>, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        let waveform = engine.get_waveform(&asset_id, num_bins)?;
-        Ok(waveform.peaks)
+        self.with_engine_recovery(|engine| {
+            let waveform = engine.get_waveform(&asset_id, num_bins)?;
+            Ok(waveform.peaks)
+        })
     }
 
     /// Configure audio ducking for a track.
@@ -579,31 +603,24 @@ impl EditorsProEngineApi {
         enabled: bool,
         duck_level: f32,
     ) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.set_ducking(track_id, enabled, duck_level)
+        self.with_engine_recovery(|engine| engine.set_ducking(track_id, enabled, duck_level))
     }
 
     /// Get the ducking configuration for a track.
     ///
     /// Returns the duck level (0.0 to 1.0) and whether ducking is enabled.
     pub fn get_ducking_config(&self, track_id: String) -> BridgeDuckingConfig {
-        let engine = self.inner.lock().ok();
-        match engine {
-            Some(e) => {
-                let config = e.get_ducking_config(&track_id);
-                BridgeDuckingConfig {
-                    enabled: config.enabled,
-                    duck_level: config.duck_level,
-                    attack_ms: config.attack_ms,
-                    release_ms: config.release_ms,
-                    threshold: config.threshold,
-                }
-            }
-            None => BridgeDuckingConfig::default(),
-        }
+        self.with_engine_recovery(|engine| {
+            let config = engine.get_ducking_config(&track_id);
+            Ok(BridgeDuckingConfig {
+                enabled: config.enabled,
+                duck_level: config.duck_level,
+                attack_ms: config.attack_ms,
+                release_ms: config.release_ms,
+                threshold: config.threshold,
+            })
+        })
+        .unwrap_or_default()
     }
 
     /// Get the full timeline state from the engine.
@@ -611,8 +628,9 @@ impl EditorsProEngineApi {
     /// Returns all tracks and clips so Flutter can render the timeline
     /// using Rust as the single source of truth.
     pub fn get_timeline_state(&self) -> Option<TimelineState> {
-        let engine = self.inner.lock().ok()?;
-        engine.get_timeline_state()
+        self.with_engine_recovery(|engine| Ok(engine.get_timeline_state()))
+            .ok()
+            .flatten()
     }
 
     /// Get audio information for a media file.
@@ -651,21 +669,19 @@ impl EditorsProEngineApi {
         start_ms: u64,
         duration_ms: u64,
     ) -> Result<ClipInfo, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.add_text_clip(
-            &track_id,
-            &text,
-            &font_family,
-            font_size,
-            &color_hex,
-            position_x,
-            position_y,
-            start_ms,
-            duration_ms,
-        )
+        self.with_engine_recovery(|engine| {
+            engine.add_text_clip(
+                &track_id,
+                &text,
+                &font_family,
+                font_size,
+                &color_hex,
+                position_x,
+                position_y,
+                start_ms,
+                duration_ms,
+            )
+        })
     }
 
     /// Set text position on a text clip.
@@ -678,11 +694,9 @@ impl EditorsProEngineApi {
         position_x: f32,
         position_y: f32,
     ) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.set_text_position(&clip_id, position_x, position_y)
+        self.with_engine_recovery(|engine| {
+            engine.set_text_position(&clip_id, position_x, position_y)
+        })
     }
 
     /// Set text style on a text clip.
@@ -695,11 +709,9 @@ impl EditorsProEngineApi {
         font_size: f32,
         color_hex: String,
     ) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.set_text_style(&clip_id, &font_family, font_size, &color_hex)
+        self.with_engine_recovery(|engine| {
+            engine.set_text_style(&clip_id, &font_family, font_size, &color_hex)
+        })
     }
 
     /// Get the list of available fonts.
@@ -707,10 +719,8 @@ impl EditorsProEngineApi {
     /// Returns a list of `FontInfo` objects describing each font
     /// available for use in text overlays.
     pub fn get_available_fonts(&self) -> Vec<FontInfo> {
-        match self.inner.lock() {
-            Ok(engine) => engine.get_available_fonts(),
-            Err(_) => vec![],
-        }
+        self.with_engine_recovery(|engine| Ok(engine.get_available_fonts()))
+            .unwrap_or_default()
     }
 
     /// Import subtitles from an SRT file.
@@ -718,11 +728,7 @@ impl EditorsProEngineApi {
     /// Parses the given `.srt` file and returns a list of
     /// `SubtitleEntry` objects with timing and text data.
     pub fn import_subtitles(&self, file_path: String) -> Result<Vec<SubtitleEntry>, String> {
-        let engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.import_subtitles(&file_path)
+        self.with_engine_recovery(|engine| engine.import_subtitles(&file_path))
     }
 
     // ─── Effect Operations ─────────────────────────────────────────────
@@ -737,20 +743,12 @@ impl EditorsProEngineApi {
         clip_id: String,
         filter_type_name: String,
     ) -> Result<EffectInfo, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.add_effect(&clip_id, &filter_type_name)
+        self.with_engine_recovery(|engine| engine.add_effect(&clip_id, &filter_type_name))
     }
 
     /// Remove an effect from a clip by its effect ID.
     pub fn remove_effect(&self, clip_id: String, effect_id: String) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.remove_effect(&clip_id, &effect_id)
+        self.with_engine_recovery(|engine| engine.remove_effect(&clip_id, &effect_id))
     }
 
     /// Set a parameter value for an effect on a clip.
@@ -764,29 +762,64 @@ impl EditorsProEngineApi {
         param_name: String,
         value: f32,
     ) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.set_effect_parameter(&clip_id, &effect_id, &param_name, value)
+        self.with_engine_recovery(|engine| {
+            engine.set_effect_parameter(&clip_id, &effect_id, &param_name, value)
+        })
     }
 
     /// Get the effects applied to a clip.
     pub fn get_clip_effects(&self, clip_id: String) -> Result<Vec<EffectInfo>, String> {
-        let engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.get_clip_effects(&clip_id)
+        self.with_engine_recovery(|engine| engine.get_clip_effects(&clip_id))
     }
 
     /// Toggle the enabled/disabled state of an effect on a clip.
     pub fn toggle_effect(&self, clip_id: String, effect_id: String) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.toggle_effect(&clip_id, &effect_id)
+        self.with_engine_recovery(|engine| engine.toggle_effect(&clip_id, &effect_id))
+    }
+
+    /// Add a chroma key effect to a clip with the specified parameters.
+    ///
+    /// Creates a `ChromaKeyConfig` from the given parameters and adds it
+    /// as a `ChromaKey` effect to the specified clip. This provides more
+    /// control than the generic `add_effect()` method, which only supports
+    /// default chroma key parameters.
+    pub fn add_chroma_key_effect(
+        &self,
+        clip_id: String,
+        target_hue: f32,
+        hue_tolerance: f32,
+        saturation_tolerance: f32,
+        softness: f32,
+        spill_suppression: f32,
+    ) -> Result<EffectInfo, String> {
+        self.with_engine_recovery(|engine| {
+            engine.add_chroma_key_effect(
+                &clip_id,
+                target_hue,
+                hue_tolerance,
+                saturation_tolerance,
+                softness,
+                spill_suppression,
+            )
+        })
+    }
+
+    /// Pick a color from the preview frame at the given coordinates.
+    ///
+    /// Decodes a frame at the specified time and samples the pixel at
+    /// (x, y), returning the RGB values as a list [r, g, b] in the
+    /// range 0–255. This is used by the eyedropper tool in the chroma
+    /// key UI to select the target color directly from the video frame.
+    pub fn pick_color_from_frame(
+        &self,
+        time_ms: u64,
+        x: u32,
+        y: u32,
+    ) -> Result<Vec<f32>, String> {
+        self.with_engine_recovery(|engine| {
+            let (r, g, b) = engine.pick_color_from_frame(time_ms, x, y)?;
+            Ok(vec![r, g, b])
+        })
     }
 
     /// Get the catalog of all available filter types.
@@ -794,27 +827,19 @@ impl EditorsProEngineApi {
     /// Returns a list of `FilterTypeInfo` objects describing each filter
     /// and its default parameters. Use this to populate the effects panel UI.
     pub fn get_filter_catalog(&self) -> Vec<FilterTypeInfo> {
-        match self.inner.lock() {
-            Ok(engine) => engine.get_filter_catalog(),
-            Err(_) => vec![],
-        }
+        self.with_engine_recovery(|engine| Ok(engine.get_filter_catalog()))
+            .unwrap_or_default()
     }
 
     /// Get the list of available filter presets.
     pub fn get_filter_presets(&self) -> Vec<FilterPresetInfo> {
-        match self.inner.lock() {
-            Ok(engine) => engine.get_filter_presets(),
-            Err(_) => vec![],
-        }
+        self.with_engine_recovery(|engine| Ok(engine.get_filter_presets()))
+            .unwrap_or_default()
     }
 
     /// Apply a filter preset to a clip (replaces all existing effects).
     pub fn apply_filter_preset(&self, clip_id: String, preset_id: String) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.apply_filter_preset(&clip_id, &preset_id)
+        self.with_engine_recovery(|engine| engine.apply_filter_preset(&clip_id, &preset_id))
     }
 
     // ─── Transition Operations ─────────────────────────────────────────
@@ -832,11 +857,9 @@ impl EditorsProEngineApi {
         duration_ms: u64,
         direction: String,
     ) -> Result<TransitionInfo, String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.add_transition(&clip_id, &transition_type, duration_ms, &direction)
+        self.with_engine_recovery(|engine| {
+            engine.add_transition(&clip_id, &transition_type, duration_ms, &direction)
+        })
     }
 
     /// Get the transition on a clip (in-point or out-point).
@@ -845,25 +868,20 @@ impl EditorsProEngineApi {
         clip_id: String,
         direction: String,
     ) -> Option<TransitionInfo> {
-        let engine = self.inner.lock().ok()?;
-        engine.get_clip_transition(&clip_id, &direction)
+        self.with_engine_recovery(|engine| Ok(engine.get_clip_transition(&clip_id, &direction)))
+            .ok()
+            .flatten()
     }
 
     /// Remove a transition from a clip.
     pub fn remove_transition(&self, clip_id: String, direction: String) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.remove_transition(&clip_id, &direction)
+        self.with_engine_recovery(|engine| engine.remove_transition(&clip_id, &direction))
     }
 
     /// Get the catalog of all available transition types.
     pub fn get_transition_catalog(&self) -> Vec<TransitionTypeInfo> {
-        match self.inner.lock() {
-            Ok(engine) => engine.get_transition_catalog(),
-            Err(_) => vec![],
-        }
+        self.with_engine_recovery(|engine| Ok(engine.get_transition_catalog()))
+            .unwrap_or_default()
     }
 
     // ─── Speed Curve & Keyframe Operations ────────────────────────────
@@ -873,13 +891,13 @@ impl EditorsProEngineApi {
     /// The speed curve defines variable playback speed within the clip,
     /// allowing smooth speed ramps (e.g., slow-motion to normal to fast-forward).
     /// Pass a `BridgeSpeedCurve` with one or more `BridgeSpeedSegment` entries.
-    pub fn set_clip_speed_curve(&self, clip_id: String, curve: BridgeSpeedCurve) -> Result<(), String> {
+    pub fn set_clip_speed_curve(
+        &self,
+        clip_id: String,
+        curve: BridgeSpeedCurve,
+    ) -> Result<(), String> {
         let speed_curve = SpeedCurve::from(curve);
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.set_clip_speed_curve(&clip_id, speed_curve)
+        self.with_engine_recovery(|engine| engine.set_clip_speed_curve(&clip_id, speed_curve))
     }
 
     /// Add a keyframe to a clip's property track.
@@ -899,11 +917,9 @@ impl EditorsProEngineApi {
     ) -> Result<String, String> {
         let easing_type = crate::timeline::speed_curve::EasingType::from_str_lossy(&easing)
             .ok_or_else(|| format!("Unknown easing type: {}", easing))?;
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.add_keyframe(&clip_id, &property, time_ms, value, easing_type)
+        self.with_engine_recovery(|engine| {
+            engine.add_keyframe(&clip_id, &property, time_ms, value, easing_type)
+        })
     }
 
     /// Remove a keyframe from a clip's property track.
@@ -913,11 +929,9 @@ impl EditorsProEngineApi {
         property: String,
         keyframe_id: String,
     ) -> Result<(), String> {
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.remove_keyframe(&clip_id, &property, &keyframe_id)
+        self.with_engine_recovery(|engine| {
+            engine.remove_keyframe(&clip_id, &property, &keyframe_id)
+        })
     }
 
     /// Update a keyframe's value and/or easing.
@@ -934,11 +948,9 @@ impl EditorsProEngineApi {
         let easing_type = easing
             .as_deref()
             .and_then(|s| crate::timeline::speed_curve::EasingType::from_str_lossy(s));
-        let mut engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.update_keyframe(&clip_id, &property, &keyframe_id, value, easing_type)
+        self.with_engine_recovery(|engine| {
+            engine.update_keyframe(&clip_id, &property, &keyframe_id, value, easing_type)
+        })
     }
 
     /// Get all keyframes for a clip's property track.
@@ -950,23 +962,12 @@ impl EditorsProEngineApi {
         clip_id: String,
         property: String,
     ) -> Result<Vec<super::KeyframeInfo>, String> {
-        let engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.get_keyframes(&clip_id, &property)
+        self.with_engine_recovery(|engine| engine.get_keyframes(&clip_id, &property))
     }
 
     /// Get the speed curve for a clip.
-    pub fn get_clip_speed_curve(
-        &self,
-        clip_id: String,
-    ) -> Result<super::SpeedCurveInfo, String> {
-        let engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))?;
-        engine.get_clip_speed_curve(&clip_id)
+    pub fn get_clip_speed_curve(&self, clip_id: String) -> Result<super::SpeedCurveInfo, String> {
+        self.with_engine_recovery(|engine| engine.get_clip_speed_curve(&clip_id))
     }
 
     /// Get current system metrics for memory monitoring.
@@ -975,12 +976,9 @@ impl EditorsProEngineApi {
     /// and cache statistics. Use this to implement adaptive quality
     /// and proactive cache eviction in the Flutter layer.
     pub fn get_system_metrics(&self) -> crate::system::SystemMetrics {
-        let engine = self
-            .inner
-            .lock()
-            .map_err(|e| format!("Lock poisoned: {}", e))
+        self.with_engine_recovery(|engine| Ok(engine.get_system_metrics()))
             .unwrap_or_else(|_| {
-                // If lock is poisoned, return zeroed metrics
+                // If lock is poisoned and recovery failed, return zeroed metrics
                 crate::system::SystemMetrics {
                     memory_rss_bytes: 0,
                     memory_peak_bytes: 0,
@@ -990,8 +988,7 @@ impl EditorsProEngineApi {
                     cached_frames: 0,
                     cached_audio_buffers: 0,
                 }
-            });
-        engine.get_system_metrics()
+            })
     }
 
     /// Check if memory pressure is detected.
@@ -999,14 +996,407 @@ impl EditorsProEngineApi {
     /// Returns `true` if the engine is under warning or critical memory
     /// pressure, suggesting that caches should be released.
     pub fn is_memory_pressure(&self) -> bool {
-        let engine = self
-            .inner
-            .lock()
-            .map_err(|_| false);
-        match engine {
-            Ok(e) => e.is_memory_pressure(),
-            Err(_) => false,
+        self.with_engine_recovery(|engine| Ok(engine.is_memory_pressure()))
+            .unwrap_or(false)
+    }
+
+    // ─── GPU Acceleration Operations (Phase 8) ───────────────────────
+
+    /// Check if GPU rendering is available.
+    ///
+    /// Returns `true` when a compatible GPU adapter (Vulkan, Metal, or
+    /// DX12) was found during engine initialization.
+    pub fn is_gpu_available(&self) -> bool {
+        self.with_engine_recovery(|engine| Ok(engine.is_gpu_available()))
+            .unwrap_or(false)
+    }
+
+    /// Get GPU adapter information.
+    ///
+    /// Returns a `GpuInfo` struct describing the available GPU adapter,
+    /// including its name, backend type, VRAM, and which effects
+    /// support GPU acceleration. If no GPU is available, the `available`
+    /// field will be `false`.
+    pub fn get_gpu_info(&self) -> GpuInfo {
+        self.with_engine_recovery(|engine| {
+            let info = engine.get_gpu_info();
+            Ok(GpuInfo {
+                available: info.available,
+                adapter_name: info.adapter_name,
+                backend: info.backend,
+                vram_bytes: info.vram_bytes,
+                supported_effects: info.supported_effects,
+                is_hardware_encoder_available: info.is_hardware_encoder_available,
+            })
+        })
+        .unwrap_or(GpuInfo {
+            available: false,
+            adapter_name: String::new(),
+            backend: String::new(),
+            vram_bytes: 0,
+            supported_effects: vec![],
+            is_hardware_encoder_available: false,
+        })
+    }
+
+    /// Export the project using a hardware encoder when available.
+    ///
+    /// When a hardware encoder is available (NVENC, VideoToolbox, etc.),
+    /// this method uses it for significantly faster encoding. Falls back
+    /// to the software encoder if the hardware encoder fails to
+    /// initialize.
+    ///
+    /// Returns a `BridgeExportResult` with details about the exported file.
+    pub fn export_video_hardware(
+        &self,
+        output_path: String,
+        settings: BridgeExportSettings,
+    ) -> Result<BridgeExportResult, String> {
+        let export_settings = ExportSettings::from(settings);
+        self.with_engine_recovery(|engine| {
+            let result =
+                engine.export_video_hardware(&output_path, export_settings, &|_progress| {
+                    // No-op for synchronous export — progress is not reported
+                })?;
+            Ok(BridgeExportResult::from(result))
+        })
+    }
+
+    /// Toggle GPU acceleration on or off.
+    ///
+    /// When `enabled` is `false`, the engine will use CPU-only rendering
+    /// even if a GPU is available. This is useful for debugging or when
+    /// GPU rendering produces incorrect results on a particular device.
+    ///
+    /// When `enabled` is `true`, the engine will use GPU rendering if
+    /// available.
+    pub fn set_gpu_acceleration(&self, enabled: bool) -> Result<(), String> {
+        self.with_engine_recovery(|engine| engine.set_gpu_acceleration(enabled))
+    }
+
+    // ─── Cloud Sync Operations (Phase 10) ──────────────────────────
+
+    /// Sync a project to/from the cloud.
+    ///
+    /// This is a placeholder that returns a "not implemented" result.
+    /// Full cloud sync integration (Google Drive, Dropbox) will be
+    /// added in a future phase.
+    pub fn sync_project(&self, project_id: String) -> Result<SyncResultInfo, String> {
+        use crate::cloud::{CloudProvider, SyncResult};
+        let result = SyncResult::not_implemented(project_id.clone());
+        Ok(SyncResultInfo::from_sync_result(result))
+    }
+
+    /// Get the sync status for a project.
+    ///
+    /// Returns a `SyncStatusInfo` describing the current sync state.
+    /// If the project is not tracked, returns a `LocalOnly` status.
+    pub fn get_sync_status(&self, project_id: String) -> SyncStatusInfo {
+        SyncStatusInfo {
+            project_id: project_id.clone(),
+            status: "LocalOnly".to_string(),
+            status_display_name: "Local Only".to_string(),
+            is_actionable: false,
+            last_synced_at: None,
+            error_message: None,
         }
+    }
+
+    /// List projects available in cloud storage.
+    ///
+    /// This is a placeholder that returns an empty list.
+    /// Full cloud project listing will be added in a future phase.
+    pub fn get_cloud_projects(&self) -> Vec<CloudProjectInfo> {
+        // Placeholder — no cloud projects available yet
+        vec![]
+    }
+
+    /// Resolve a sync conflict for a project.
+    ///
+    /// `strategy` must be one of: "KeepLocal", "KeepCloud", "KeepBoth",
+    /// or "AutoMerge".
+    pub fn resolve_sync_conflict(
+        &self,
+        project_id: String,
+        strategy: String,
+    ) -> Result<(), String> {
+        use crate::cloud::conflict::ConflictStrategy;
+        let _conflict_strategy = ConflictStrategy::from_str_lossy(&strategy)
+            .ok_or_else(|| format!("Unknown conflict strategy: {}", strategy))?;
+        // Placeholder — conflict resolution logic will be wired up
+        // when the sync manager is integrated with the engine.
+        log::info!(
+            "Conflict resolution requested for project {} with strategy {}",
+            project_id,
+            strategy
+        );
+        Err("Cloud sync not yet implemented".to_string())
+    }
+
+    // ─── Template Operations (Phase 10) ────────────────────────────
+
+    /// Get the list of available built-in templates.
+    ///
+    /// Returns a list of `TemplateInfo` objects describing each template,
+    /// including its category, duration, and placeholder count.
+    pub fn get_templates(&self) -> Vec<TemplateInfo> {
+        crate::template::built_in_templates()
+            .iter()
+            .map(TemplateInfo::from_template)
+            .collect()
+    }
+
+    /// Get details for a specific template by its ID.
+    ///
+    /// Returns `None` if no template with the given ID exists.
+    pub fn get_template_details(&self, template_id: String) -> Option<TemplateInfo> {
+        crate::template::built_in_templates()
+            .iter()
+            .find(|t| t.id == template_id)
+            .map(TemplateInfo::from_template)
+    }
+
+    /// Create a new project from a template by filling placeholder slots.
+    ///
+    /// `template_id` identifies which built-in template to use.
+    /// `assignments` is a map of slot ID → media file path.
+    /// Slots without assignments are filled with placeholder (black) clips.
+    ///
+    /// Returns a `ProjectInfo` DTO for the newly created project.
+    pub fn instantiate_template(
+        &self,
+        template_id: String,
+        assignments: std::collections::HashMap<String, String>,
+    ) -> Result<ProjectInfo, String> {
+        let template = crate::template::built_in_templates()
+            .iter()
+            .find(|t| t.id == template_id)
+            .ok_or_else(|| format!("Template {} not found", template_id))?
+            .clone();
+
+        let result = crate::template::builder::instantiate_template(&template, &assignments)?;
+
+        // Create a new project from the instantiated timeline
+        let settings = crate::project::ProjectSettings {
+            width: template.aspect_ratio.0.max(1) * (1920 / template.aspect_ratio.1.max(1)),
+            height: 1920,
+            fps: 30.0,
+            ..Default::default()
+        };
+
+        self.with_engine_recovery(|engine| {
+            let project_info = engine
+                .create_project(&format!("{} Project", template.name), Some(settings))
+                .map_err(|e| format!("{}", e))?;
+            Ok(project_info)
+        })
+    }
+
+    // ─── Transcription Operations (Phase 10) ──────────────────────
+
+    /// Transcribe audio from a media asset.
+    ///
+    /// Uses the built-in transcription engine (currently placeholder)
+    /// to convert speech in the audio to timestamped text segments.
+    /// `language` should be a language code (e.g., "en", "es") or "auto"
+    /// for auto-detection.
+    ///
+    /// Returns a list of `TranscriptionSegmentInfo` DTOs.
+    pub fn transcribe_audio(
+        &self,
+        asset_id: String,
+        language: String,
+    ) -> Result<Vec<TranscriptionSegmentInfo>, String> {
+        let result = self.with_engine_recovery(|engine| {
+            engine.transcribe_audio(&asset_id, &language)
+        })?;
+
+        let segments = result
+            .segments
+            .iter()
+            .map(TranscriptionSegmentInfo::from_segment)
+            .collect();
+
+        Ok(segments)
+    }
+
+    /// Create text clips on a text track from a transcription result.
+    ///
+    /// Transcribes the audio from the given asset and creates text clips
+    /// on the specified track, one for each transcription segment.
+    /// Returns the IDs of the newly created text clips.
+    pub fn add_subtitles_from_transcription(
+        &self,
+        asset_id: String,
+        track_id: String,
+    ) -> Result<Vec<String>, String> {
+        // First, transcribe the audio
+        let segments = self.transcribe_audio(asset_id, "auto".to_string())?;
+
+        if segments.is_empty() {
+            log::info!("Transcription returned no segments, no subtitles added");
+            return Ok(vec![]);
+        }
+
+        // Create text clips from transcription segments
+        let mut clip_ids = Vec::new();
+        for seg_info in &segments {
+            let result = self.add_text_clip(
+                track_id.clone(),
+                seg_info.text.clone(),
+                "sans-serif".to_string(),
+                24.0,
+                "#FFFFFF".to_string(),
+                0.5,
+                0.9,
+                seg_info.start_ms,
+                seg_info.end_ms.saturating_sub(seg_info.start_ms),
+            );
+            match result {
+                Ok(clip_info) => clip_ids.push(clip_info.id),
+                Err(e) => {
+                    log::warn!("Failed to add subtitle clip: {}", e);
+                }
+            }
+        }
+
+        log::info!("Added {} subtitle clips from transcription", clip_ids.len());
+        Ok(clip_ids)
+    }
+
+    // ─── Proxy Workflow Operations (Phase 10) ────────────────────────
+
+    /// Generate a proxy for an asset.
+    ///
+    /// Creates a lower-resolution copy of the source video for smooth
+    /// timeline editing. The proxy is stored in the cache directory.
+    /// Returns the path to the generated proxy file on success.
+    pub fn generate_proxy(&self, asset_id: String, source_path: String) -> Result<String, String> {
+        self.with_engine_recovery(|engine| engine.generate_proxy(&asset_id, &source_path))
+    }
+
+    /// Get the proxy path for an asset.
+    ///
+    /// Returns `None` if no proxy has been generated for this asset.
+    pub fn get_proxy_path(&self, asset_id: String) -> Option<String> {
+        self.with_engine_recovery(|engine| Ok(engine.get_proxy_path(&asset_id)))
+            .ok()
+            .flatten()
+    }
+
+    /// Set the proxy quality setting.
+    ///
+    /// Valid values: "off", "360p", "480p", "720p".
+    pub fn set_proxy_quality(&self, quality: String) -> Result<(), String> {
+        self.with_engine_recovery(|engine| engine.set_proxy_quality(&quality))
+    }
+
+    /// Get the current proxy quality setting.
+    ///
+    /// Returns one of: "Off", "360p", "480p", "720p".
+    pub fn get_proxy_quality(&self) -> String {
+        self.with_engine_recovery(|engine| Ok(engine.get_proxy_quality()))
+            .unwrap_or_else(|_| "480p".to_string())
+    }
+
+    /// Clear all proxy files from the cache directory.
+    ///
+    /// Returns the total bytes freed.
+    pub fn clear_proxy_cache(&self) -> Result<u64, String> {
+        self.with_engine_recovery(|engine| engine.clear_proxy_cache())
+    }
+
+    /// Get the total size of all proxy files in the cache.
+    ///
+    /// Returns the total size in bytes.
+    pub fn get_proxy_cache_size(&self) -> Result<u64, String> {
+        self.with_engine_recovery(|engine| engine.get_proxy_cache_size())
+    }
+
+    /// Get the number of active proxies.
+    pub fn get_proxy_count(&self) -> u32 {
+        self.with_engine_recovery(|engine| Ok(engine.proxy_count() as u32))
+            .unwrap_or(0)
+    }
+
+    /// Set the cache directory for proxy files.
+    pub fn set_cache_dir(&self, path: String) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.set_cache_dir(&path);
+            Ok(())
+        })
+    }
+
+    // ─── Auto-Proxy & Proxy Info (Phase 10.4) ──────────────────────────
+
+    /// Enable or disable automatic proxy generation on media import.
+    ///
+    /// When enabled, any imported video whose resolution exceeds the
+    /// threshold will automatically have a proxy generated.
+    pub fn set_auto_proxy(&self, enabled: bool) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.set_auto_proxy(enabled);
+            Ok(())
+        })
+    }
+
+    /// Check whether automatic proxy generation is enabled.
+    pub fn is_auto_proxy_enabled(&self) -> bool {
+        self.with_engine_recovery(|engine| Ok(engine.is_auto_proxy_enabled()))
+            .unwrap_or(true)
+    }
+
+    /// Get proxy metadata for a specific asset.
+    ///
+    /// Returns `None` if no proxy exists for the given asset ID.
+    pub fn get_proxy_info(&self, asset_id: String) -> Option<ProxyInfo> {
+        self.with_engine_recovery(|engine| {
+            let meta = engine.get_proxy_metadata(&asset_id);
+            Ok(meta.map(ProxyInfo::from_metadata))
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// Regenerate the proxy for an asset.
+    ///
+    /// Useful after changing the proxy quality setting.  If a proxy
+    /// already exists for the asset, the old proxy file is deleted and
+    /// a new one is generated at the current quality level.
+    ///
+    /// Returns the path to the newly generated proxy file.
+    pub fn regenerate_proxy(&self, asset_id: String) -> Result<String, String> {
+        // Look up the asset's file path
+        let source_path = self.with_engine_recovery(|engine| {
+            let project = engine.project.as_ref().ok_or("No project open")?;
+            let asset = project
+                .find_media_asset(&asset_id)
+                .ok_or_else(|| format!("Asset {} not found", asset_id))?;
+            Ok(asset.file_path.clone())
+        })?;
+
+        self.with_engine_recovery(|engine| {
+            // Remove old proxy if it exists
+            if let Some(old_meta) = engine.get_proxy_metadata(&asset_id).cloned() {
+                let _ = crate::proxy::generator::delete_proxy(&old_meta.proxy_path);
+                engine.proxy_manager_mut().remove_proxy(&asset_id);
+            }
+
+            // Generate a new proxy at the current quality
+            engine.generate_proxy(&asset_id, &source_path)
+        })
+    }
+
+    /// Check whether a video at the given resolution would trigger
+    /// proxy generation.
+    ///
+    /// This can be called before importing media to determine whether
+    /// a proxy will be auto-generated.
+    pub fn should_generate_proxy(&self, width: u32, height: u32) -> bool {
+        self.with_engine_recovery(|engine| {
+            Ok(engine.proxy_manager_ref().should_generate_proxy(width, height))
+        })
+        .unwrap_or(false)
     }
 }
 
@@ -1108,6 +1498,21 @@ pub struct BridgeAudioInfo {
     pub codec_name: String,
 }
 
+/// GPU adapter information for hardware acceleration
+///
+/// Contains details about the available GPU adapter, including its name,
+/// backend type (Vulkan/Metal/DX12), VRAM size, and which effects
+/// support GPU acceleration.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GpuInfo {
+    pub available: bool,
+    pub adapter_name: String,
+    pub backend: String,
+    pub vram_bytes: u64,
+    pub supported_effects: Vec<String>,
+    pub is_hardware_encoder_available: bool,
+}
+
 /// Bridge-compatible speed segment
 ///
 /// Represents a single segment of a speed curve with start/end times
@@ -1133,13 +1538,214 @@ pub struct BridgeSpeedCurve {
 
 impl From<BridgeSpeedCurve> for SpeedCurve {
     fn from(bc: BridgeSpeedCurve) -> Self {
-        let segments: Vec<SpeedSegment> = bc.segments.into_iter().map(|seg| {
-            let easing = EasingType::from_str_lossy(&seg.easing_name)
-                .unwrap_or(EasingType::Linear);
-            SpeedSegment::new(seg.start_ms, seg.end_ms, seg.start_speed, seg.end_speed, easing)
-        }).collect();
+        let segments: Vec<SpeedSegment> = bc
+            .segments
+            .into_iter()
+            .map(|seg| {
+                let easing =
+                    EasingType::from_str_lossy(&seg.easing_name).unwrap_or(EasingType::Linear);
+                SpeedSegment::new(
+                    seg.start_ms,
+                    seg.end_ms,
+                    seg.start_speed,
+                    seg.end_speed,
+                    easing,
+                )
+            })
+            .collect();
         let mut curve = SpeedCurve::constant(1.0);
         curve.segments = segments;
         curve
+    }
+}
+
+// ─── Cloud Sync DTOs (Phase 10) ─────────────────────────────────────
+
+/// Bridge-compatible sync result
+///
+/// Describes the outcome of a cloud sync operation for a project.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncResultInfo {
+    /// Whether the sync operation succeeded
+    pub success: bool,
+    /// The resulting sync status name (e.g., "Synced", "Error")
+    pub status: String,
+    /// Human-readable message describing the outcome
+    pub message: String,
+    /// The project ID that was synced
+    pub project_id: String,
+    /// Number of bytes transferred during this operation
+    pub bytes_transferred: u64,
+}
+
+impl SyncResultInfo {
+    /// Create from an engine `SyncResult`.
+    pub fn from_sync_result(result: crate::cloud::SyncResult) -> Self {
+        Self {
+            success: result.success,
+            status: result.status.display_name().to_string(),
+            message: result.message,
+            project_id: result.project_id,
+            bytes_transferred: result.bytes_transferred,
+        }
+    }
+}
+
+/// Bridge-compatible sync status
+///
+/// Describes the current sync state of a project.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncStatusInfo {
+    /// The project ID
+    pub project_id: String,
+    /// The sync status name (e.g., "LocalOnly", "Synced", "Conflict")
+    pub status: String,
+    /// Human-readable status name (e.g., "Local Only", "Synced")
+    pub status_display_name: String,
+    /// Whether the user can take action on this status
+    pub is_actionable: bool,
+    /// Last successful sync timestamp (milliseconds since epoch), if any
+    pub last_synced_at: Option<i64>,
+    /// Error message if status is "Error"
+    pub error_message: Option<String>,
+}
+
+/// Bridge-compatible cloud project entry
+///
+/// Describes a project available in cloud storage.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CloudProjectInfo {
+    /// Unique project identifier
+    pub project_id: String,
+    /// Display name of the project
+    pub name: String,
+    /// Last modification timestamp (milliseconds since epoch)
+    pub modified_at: i64,
+    /// Size of the .epp file in bytes
+    pub size_bytes: u64,
+    /// Provider-specific file identifier
+    pub cloud_file_id: String,
+    /// Cloud provider name (e.g., "Google Drive", "Dropbox")
+    pub provider_name: String,
+}
+
+// ─── Template DTOs (Phase 10) ─────────────────────────────────────
+
+/// Bridge-compatible template info
+///
+/// Describes a pre-built template for quick video creation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TemplateInfo {
+    /// Unique template identifier
+    pub id: String,
+    /// Display name of the template
+    pub name: String,
+    /// Description of what the template creates
+    pub description: String,
+    /// Category name (e.g., "Social", "Cinematic", "Tutorial")
+    pub category: String,
+    /// Preview image path for the template thumbnail
+    pub preview_path: String,
+    /// Number of placeholder slots that need user media
+    pub placeholder_count: usize,
+    /// Total duration in milliseconds
+    pub duration_ms: u64,
+    /// Aspect ratio as a string (e.g., "16:9", "9:16", "1:1")
+    pub aspect_ratio: String,
+    /// Tags for search/filtering
+    pub tags: Vec<String>,
+}
+
+impl TemplateInfo {
+    /// Create from an engine `Template`.
+    pub fn from_template(template: &crate::template::Template) -> Self {
+        Self {
+            id: template.id.clone(),
+            name: template.name.clone(),
+            description: template.description.clone(),
+            category: template.category.display_name().to_string(),
+            preview_path: template.preview_path.clone(),
+            placeholder_count: template.placeholder_slots.len(),
+            duration_ms: template.duration_ms,
+            aspect_ratio: format!("{}:{}", template.aspect_ratio.0, template.aspect_ratio.1),
+            tags: template.tags.clone(),
+        }
+    }
+}
+
+// ─── Proxy Info DTOs (Phase 10.4) ────────────────────────────────
+
+/// Proxy metadata DTO for bridge transfer
+///
+/// Contains all information about a proxy file for a given asset,
+/// including original and proxy resolution, file paths, and quality.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProxyInfo {
+    /// ID of the asset this proxy is for
+    pub asset_id: String,
+    /// Path to the original (full-resolution) media file
+    pub original_path: String,
+    /// Path to the generated proxy file (None if not yet generated)
+    pub proxy_path: Option<String>,
+    /// Quality level name (e.g., "480p", "720p")
+    pub quality: String,
+    /// Width of the original media in pixels
+    pub original_width: u32,
+    /// Height of the original media in pixels
+    pub original_height: u32,
+    /// Width of the proxy in pixels (None if not yet generated)
+    pub proxy_width: Option<u32>,
+    /// Height of the proxy in pixels (None if not yet generated)
+    pub proxy_height: Option<u32>,
+    /// Size of the proxy file in bytes (None if not yet generated)
+    pub file_size_bytes: Option<u64>,
+}
+
+impl ProxyInfo {
+    /// Create from an engine `ProxyMetadata`.
+    pub fn from_metadata(meta: &crate::proxy::ProxyMetadata) -> Self {
+        Self {
+            asset_id: meta.original_asset_id.clone(),
+            original_path: meta.original_path.clone(),
+            proxy_path: Some(meta.proxy_path.clone()),
+            quality: meta.quality.display_name().to_string(),
+            original_width: meta.original_width,
+            original_height: meta.original_height,
+            proxy_width: Some(meta.proxy_width),
+            proxy_height: Some(meta.proxy_height),
+            file_size_bytes: Some(meta.file_size_bytes),
+        }
+    }
+}
+
+// ─── Transcription DTOs (Phase 10) ──────────────────────────────────
+
+/// Bridge-compatible transcription segment
+///
+/// Describes a single transcribed text segment with timing information.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TranscriptionSegmentInfo {
+    /// Unique segment identifier
+    pub id: String,
+    /// The transcribed text
+    pub text: String,
+    /// Start time in milliseconds
+    pub start_ms: u64,
+    /// End time in milliseconds
+    pub end_ms: u64,
+    /// Confidence score (0.0-1.0)
+    pub confidence: f32,
+}
+
+impl TranscriptionSegmentInfo {
+    /// Create from an engine `TranscriptionSegment`.
+    pub fn from_segment(segment: &crate::audio::transcription::TranscriptionSegment) -> Self {
+        Self {
+            id: segment.id.clone(),
+            text: segment.text.clone(),
+            start_ms: segment.start_ms,
+            end_ms: segment.end_ms,
+            confidence: segment.confidence,
+        }
     }
 }

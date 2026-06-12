@@ -810,6 +810,7 @@ dependencies = [
  "bytemuck",
  "cbindgen",
  "chrono",
+ "crc32fast",
  "env_logger",
  "ffmpeg-next",
  "flutter_rust_bridge",

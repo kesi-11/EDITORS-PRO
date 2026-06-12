@@ -18,7 +18,8 @@ pub struct AudioBuffer {
 
 impl AudioBuffer {
     pub fn new(sample_rate: u32, channels: u32, duration_ms: u64) -> Self {
-        let sample_count = (sample_rate as f64 * channels as f64 * duration_ms as f64 / 1000.0) as usize;
+        let sample_count =
+            (sample_rate as f64 * channels as f64 * duration_ms as f64 / 1000.0) as usize;
         Self {
             samples: vec![0.0; sample_count],
             sample_rate,
@@ -40,8 +41,10 @@ impl AudioBuffer {
     ///
     /// Returns a slice of interleaved samples for the given time range.
     pub fn samples_at_time(&self, time_ms: u64, duration_ms: u64) -> &[f32] {
-        let start_sample = (time_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
-        let sample_count = (duration_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+        let start_sample =
+            (time_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+        let sample_count =
+            (duration_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
 
         let end = (start_sample + sample_count).min(self.samples.len());
         if start_sample >= self.samples.len() {
@@ -72,14 +75,17 @@ impl AudioBuffer {
             return AudioBuffer::new(self.sample_rate, self.channels, 0);
         }
 
-        let start_sample = (start_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
-        let end_sample = (end_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+        let start_sample =
+            (start_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+        let end_sample =
+            (end_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
 
         let start = start_sample.min(self.samples.len());
         let end = end_sample.min(self.samples.len());
 
         let segment_duration = if end > start {
-            ((end - start) as f64 * 1000.0 / (self.sample_rate as f64 * self.channels as f64)) as u64
+            ((end - start) as f64 * 1000.0 / (self.sample_rate as f64 * self.channels as f64))
+                as u64
         } else {
             0
         };
@@ -149,7 +155,10 @@ pub struct AudioMixer {
 
 impl AudioMixer {
     pub fn new(sample_rate: u32, channels: u32) -> Self {
-        Self { sample_rate, channels }
+        Self {
+            sample_rate,
+            channels,
+        }
     }
 
     /// Mix multiple audio track sources into a single output
@@ -157,12 +166,18 @@ impl AudioMixer {
     /// Each source has its own volume, offset, and envelope settings.
     /// The output is at the mixer's configured sample rate and channel count.
     /// Soft clipping (tanh) is applied to prevent harsh distortion.
-    pub fn mix_sources(&self, sources: &[TrackAudioSource], output_duration_ms: u64) -> AudioBuffer {
+    pub fn mix_sources(
+        &self,
+        sources: &[TrackAudioSource],
+        output_duration_ms: u64,
+    ) -> AudioBuffer {
         if sources.is_empty() || output_duration_ms == 0 {
             return AudioBuffer::new(self.sample_rate, self.channels, 0);
         }
 
-        let output_sample_count = (self.sample_rate as f64 * self.channels as f64 * output_duration_ms as f64 / 1000.0) as usize;
+        let output_sample_count =
+            (self.sample_rate as f64 * self.channels as f64 * output_duration_ms as f64 / 1000.0)
+                as usize;
         let mut output = vec![0.0f32; output_sample_count];
 
         for source in sources {
@@ -171,7 +186,9 @@ impl AudioMixer {
             }
 
             // Calculate the offset in samples
-            let offset_samples = (source.offset_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+            let offset_samples =
+                (source.offset_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0)
+                    as usize;
 
             // Apply volume envelope first, then mix
             let mut processed = source.buffer.clone();
@@ -207,8 +224,13 @@ impl AudioMixer {
         }
 
         // Find the longest buffer
-        let max_duration = sources.iter().map(|(buf, _)| buf.duration_ms).max().unwrap_or(0);
-        let max_samples = (self.sample_rate as f64 * self.channels as f64 * max_duration as f64 / 1000.0) as usize;
+        let max_duration = sources
+            .iter()
+            .map(|(buf, _)| buf.duration_ms)
+            .max()
+            .unwrap_or(0);
+        let max_samples = (self.sample_rate as f64 * self.channels as f64 * max_duration as f64
+            / 1000.0) as usize;
 
         let mut output = vec![0.0f32; max_samples];
 
@@ -248,9 +270,8 @@ impl AudioMixer {
 
         // Apply constant volume to middle section
         let fade_in_end = fade_in_samples;
-        let fade_out_start = total_samples.saturating_sub(
-            (envelope.fade_out_ms as usize * samples_per_ms).min(total_samples)
-        );
+        let fade_out_start = total_samples
+            .saturating_sub((envelope.fade_out_ms as usize * samples_per_ms).min(total_samples));
 
         for i in fade_in_end..fade_out_start {
             buffer.samples[i] *= envelope.volume;
@@ -283,7 +304,8 @@ impl AudioMixer {
         let min_len = main_buffer.samples.len().min(duck_trigger.samples.len());
 
         // Detect when the duck trigger is active (simplified: RMS energy threshold)
-        let window_size = (50.0 * main_buffer.sample_rate as f64 * channels as f64 / 1000.0) as usize;
+        let window_size =
+            (50.0 * main_buffer.sample_rate as f64 * channels as f64 / 1000.0) as usize;
 
         let mut is_ducking = false;
         let mut duck_progress = 0.0f32;
@@ -325,7 +347,9 @@ impl AudioMixer {
 
     /// Normalize audio levels
     pub fn normalize(&self, buffer: &mut AudioBuffer, target_peak: f32) {
-        let peak = buffer.samples.iter()
+        let peak = buffer
+            .samples
+            .iter()
             .map(|s| s.abs())
             .fold(0.0f32, f32::max);
 
@@ -488,7 +512,11 @@ mod tests {
 
         mixer.normalize(&mut buffer, 1.0);
         // Peak should be 1.0
-        let peak = buffer.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        let peak = buffer
+            .samples
+            .iter()
+            .map(|s| s.abs())
+            .fold(0.0f32, f32::max);
         assert!((peak - 1.0).abs() < 0.01);
     }
 

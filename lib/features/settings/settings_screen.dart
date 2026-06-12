@@ -1,15 +1,21 @@
 /// Settings screen for EDITORS-PRO.
 ///
 /// Provides user-configurable preferences for the editor including
-/// default project settings, storage management, and performance tuning.
+/// default project settings, storage management, performance tuning,
+/// export defaults, and privacy options.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/extensions/context_extensions.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/services/database_provider.dart';
+import '../../../core/services/engine_service.dart';
+import '../cloud/providers/cloud_provider.dart';
+import '../editor/providers/proxy_provider.dart';
+import 'providers/settings_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -27,6 +33,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _proxyQuality = '480p';
   bool _hardwareDecoding = true;
   int _cacheSizeMb = 500;
+  bool _isClearingProxyCache = false;
+  String? _proxyCacheSizeDisplay;
+  String _cloudProvider = 'None';
+  bool _autoSyncEnabled = false;
 
   @override
   void initState() {
@@ -45,6 +55,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final hwDecode = await db.getPreference('hardware_decoding');
     final cacheSize = await db.getPreference('cache_size_mb');
 
+    // Also try to get proxy quality from the engine bridge
+    String effectiveProxyQuality = proxyQuality ?? '480p';
+    try {
+      final engine = EngineService.instance;
+      if (engine.isInitialized) {
+        final engineQuality = await engine.api.getProxyQuality();
+        if (engineQuality.isNotEmpty) {
+          effectiveProxyQuality = engineQuality;
+        }
+      }
+    } catch (_) {
+      // Engine not available, use local preference
+    }
+
     if (mounted) {
       setState(() {
         _autoSaveEnabled = autoSave != 'false';
@@ -52,10 +76,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _defaultResolution = defaultRes ?? '1080p';
         _defaultFps = double.tryParse(defaultFps ?? '') ?? 30.0;
         _proxyEnabled = proxyEnabled == 'true';
-        _proxyQuality = proxyQuality ?? '480p';
+        _proxyQuality = effectiveProxyQuality;
         _hardwareDecoding = hwDecode != 'false';
         _cacheSizeMb = int.tryParse(cacheSize ?? '') ?? 500;
       });
+      _loadProxyCacheSize();
     }
   }
 
@@ -64,8 +89,87 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await db.setPreference(key, value);
   }
 
+  Future<void> _setProxyQuality(String quality) async {
+    setState(() => _proxyQuality = quality);
+    await _setPreference('proxy_quality', quality);
+    final notifier = ref.read(settingsProvider.notifier);
+    notifier.setProxyQuality(quality);
+
+    // Update engine proxy quality via bridge API
+    try {
+      final engine = EngineService.instance;
+      if (engine.isInitialized) {
+        await engine.api.setProxyQuality(quality: quality);
+      }
+    } catch (e) {
+      debugPrint('Failed to set proxy quality on engine: $e');
+    }
+  }
+
+  Future<void> _loadProxyCacheSize() async {
+    try {
+      final engine = EngineService.instance;
+      if (engine.isInitialized) {
+        final size = await engine.api.getProxyCacheSize();
+        if (mounted && size > 0) {
+          setState(() {
+            _proxyCacheSizeDisplay = _formatBytes(size);
+          });
+        }
+      }
+    } catch (_) {
+      // Engine not available
+    }
+  }
+
+  Future<void> _clearProxyCache() async {
+    setState(() => _isClearingProxyCache = true);
+    try {
+      final engine = EngineService.instance;
+      if (engine.isInitialized) {
+        final bytesFreed = await engine.api.clearProxyCache();
+        if (mounted) {
+          setState(() {
+            _proxyCacheSizeDisplay = null;
+            _isClearingProxyCache = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                bytesFreed > 0
+                    ? 'Proxy cache cleared (${_formatBytes(bytesFreed)} freed)'
+                    : 'Proxy cache is already empty',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isClearingProxyCache = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to clear proxy cache: $e')),
+        );
+      }
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    } else if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    } else if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '$bytes B';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final settings = ref.watch(settingsProvider);
+    final settingsNotifier = ref.read(settingsProvider.notifier);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
@@ -158,30 +262,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onChanged: (v) {
                   setState(() => _hardwareDecoding = v);
                   _setPreference('hardware_decoding', v.toString());
+                  settingsNotifier.setHardwareDecoding(v);
                 },
               ),
               const Divider(height: 1),
               _SettingsSwitch(
-                label: 'Proxy Editing',
-                subtitle: 'Use lower-resolution proxies for smoother editing',
-                value: _proxyEnabled,
-                onChanged: (v) {
-                  setState(() => _proxyEnabled = v);
-                  _setPreference('proxy_enabled', v.toString());
-                },
+                label: 'GPU Acceleration',
+                subtitle: 'Use GPU for rendering when available',
+                value: settings.gpuAccelerationEnabled,
+                onChanged: (v) => settingsNotifier.setGpuAcceleration(v),
               ),
-              if (_proxyEnabled) ...[
-                const Divider(height: 1),
-                _SettingsDropdown(
-                  label: 'Proxy Quality',
-                  value: _proxyQuality,
-                  options: const ['360p', '480p', '720p'],
-                  onChanged: (v) {
-                    setState(() => _proxyQuality = v);
-                    _setPreference('proxy_quality', v);
-                  },
-                ),
-              ],
               const Divider(height: 1),
               _SettingsSlider(
                 label: 'Preview Cache Size',
@@ -193,7 +283,96 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onChanged: (v) {
                   setState(() => _cacheSizeMb = v.round());
                   _setPreference('cache_size_mb', v.round().toString());
+                  settingsNotifier.setCacheSizeMb(v.round());
                 },
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          // ─── Proxy & Performance ───────────────────────────
+          _SectionHeader(title: 'Proxy & Performance'),
+          Consumer(builder: (context, ref, _) {
+            final proxyState = ref.watch(proxyProvider);
+            final proxyNotifier = ref.read(proxyProvider.notifier);
+            return _SettingsCard(
+              children: [
+                _SettingsDropdown(
+                  label: 'Proxy Quality',
+                  value: proxyState.quality,
+                  options: const ['Off', '360p', '480p', '720p'],
+                  onChanged: (v) {
+                    proxyNotifier.setQuality(v);
+                    _setProxyQuality(v);
+                  },
+                ),
+                const Divider(height: 1),
+                _SettingsSwitch(
+                  label: 'Auto-Generate Proxies',
+                  subtitle: 'Automatically create proxies when importing high-res media',
+                  value: proxyState.autoProxyEnabled,
+                  onChanged: (v) => proxyNotifier.setAutoProxy(v),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.video_settings_outlined, color: AppTheme.primary),
+                  title: Text('Proxy Cache', style: context.textTheme.bodyMedium),
+                  subtitle: Text(
+                    proxyState.cacheSizeBytes > 0
+                        ? '${_formatBytes(proxyState.cacheSizeBytes)} · ${proxyState.activeProxyCount} active prox${proxyState.activeProxyCount == 1 ? 'y' : 'ies'}'
+                        : '${proxyState.activeProxyCount} active prox${proxyState.activeProxyCount == 1 ? 'y' : 'ies'}',
+                    style: context.textTheme.bodySmall,
+                  ),
+                  trailing: _isClearingProxyCache
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: proxyState.cacheSizeBytes > 0
+                              ? () => _showClearProxyCacheDialog(context)
+                              : null,
+                          child: const Text('Clear'),
+                        ),
+                ),
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text(
+                    'Proxies are lower-resolution copies used for smooth editing. '
+                    'The original full-resolution media is always used for export.',
+                    style: context.textTheme.bodySmall?.copyWith(
+                      color: AppTheme.textDisabled,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }),
+
+          const SizedBox(height: 24),
+
+          // ─── Export ────────────────────────────────────────
+          _SectionHeader(title: 'Export'),
+          _SettingsCard(
+            children: [
+              _SettingsDropdown(
+                label: 'Default Export Codec',
+                value: settings.defaultCodec,
+                options: const ['H.264', 'H.265'],
+                onChanged: (v) => settingsNotifier.setCodec(v),
+              ),
+              const Divider(height: 1),
+              _SettingsSwitchWithBadge(
+                label: 'Hardware Encoding',
+                subtitle: 'Use hardware encoder (NVENC / VideoToolbox) for faster exports',
+                value: settings.hardwareEncodingEnabled,
+                badgeLabel: 'GPU',
+                showBadge: settings.hardwareEncodingEnabled,
+                onChanged: (v) => settingsNotifier.setHardwareEncoding(v),
               ),
             ],
           ),
@@ -213,11 +392,136 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const Divider(height: 1),
               ListTile(
+                leading: const Icon(Icons.video_settings_outlined, color: AppTheme.primary),
+                title: Text('Clear Proxy Cache', style: context.textTheme.bodyMedium),
+                subtitle: Text(
+                  _proxyCacheSizeDisplay != null
+                      ? 'Current size: $_proxyCacheSizeDisplay'
+                      : 'Free up disk space used by proxy videos',
+                  style: context.textTheme.bodySmall,
+                ),
+                trailing: _isClearingProxyCache
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(Icons.chevron_right, color: AppTheme.textDisabled),
+                onTap: _isClearingProxyCache ? null : () => _showClearProxyCacheDialog(context),
+              ),
+              const Divider(height: 1),
+              ListTile(
                 leading: const Icon(Icons.delete_sweep_outlined, color: AppTheme.error),
                 title: Text('Delete All Projects', style: context.textTheme.bodyMedium),
                 subtitle: Text('Permanently remove all projects and assets', style: context.textTheme.bodySmall),
                 trailing: Icon(Icons.chevron_right, color: AppTheme.textDisabled),
                 onTap: () => _showDeleteAllDialog(context),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          // ─── Cloud Sync ────────────────────────────────────────
+          _SectionHeader(title: 'Cloud Sync'),
+          _SettingsCard(
+            children: [
+              _SettingsDropdown(
+                label: 'Cloud Provider',
+                value: _cloudProvider,
+                options: const ['None', 'Google Drive', 'Dropbox', 'Custom'],
+                onChanged: (v) {
+                  setState(() => _cloudProvider = v);
+                  _setPreference('cloud_provider', v);
+                  ref.read(cloudSyncProvider.notifier).setProvider(
+                        v == 'None' ? 'None' : v,
+                      );
+                },
+              ),
+              const Divider(height: 1),
+              _SettingsSwitch(
+                label: 'Auto-Sync',
+                subtitle: 'Automatically sync projects when changes are detected',
+                value: _autoSyncEnabled,
+                onChanged: (v) {
+                  setState(() => _autoSyncEnabled = v);
+                  _setPreference('auto_sync_enabled', v.toString());
+                },
+              ),
+              if (_cloudProvider != 'None') ...[
+                const Divider(height: 1),
+                Consumer(builder: (context, ref, _) {
+                  final syncState = ref.watch(cloudSyncProvider);
+                  return ListTile(
+                    leading: Icon(
+                      syncState.isAuthenticated
+                          ? Icons.cloud_done
+                          : Icons.cloud_outlined,
+                      color: syncState.isAuthenticated
+                          ? AppTheme.success
+                          : AppTheme.textSecondary,
+                    ),
+                    title: Text(
+                      syncState.isAuthenticated ? 'Signed In' : 'Sign In',
+                      style: context.textTheme.bodyMedium,
+                    ),
+                    subtitle: syncState.isAuthenticated && syncState.accountName != null
+                        ? Text(
+                            syncState.accountName!,
+                            style: context.textTheme.bodySmall,
+                          )
+                        : null,
+                    trailing: syncState.isAuthenticated
+                        ? TextButton(
+                            onPressed: () =>
+                                ref.read(cloudSyncProvider.notifier).signOut(),
+                            child: const Text('Sign Out'),
+                          )
+                        : ElevatedButton(
+                            onPressed: () => context.push('/cloud'),
+                            child: const Text('Sign In'),
+                          ),
+                  );
+                }),
+              ],
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(
+                  Icons.cloud_sync_outlined,
+                  color: AppTheme.primary,
+                ),
+                title: Text(
+                  'Manage Cloud Sync',
+                  style: context.textTheme.bodyMedium,
+                ),
+                subtitle: Text(
+                  'View synced projects and resolve conflicts',
+                  style: context.textTheme.bodySmall,
+                ),
+                trailing: Icon(Icons.chevron_right, color: AppTheme.textDisabled),
+                onTap: () => context.push('/cloud'),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          // ─── Privacy & Data ────────────────────────────────
+          _SectionHeader(title: 'Privacy & Data'),
+          _SettingsCard(
+            children: [
+              _SettingsSwitch(
+                label: 'Crash Reporting',
+                subtitle: 'Helps us improve the app by sending crash reports',
+                value: settings.crashReportingEnabled,
+                onChanged: (v) => settingsNotifier.setCrashReporting(v),
+              ),
+              const Divider(height: 1),
+              _SettingsSwitch(
+                label: 'Anonymous Analytics',
+                subtitle: 'Share anonymous usage data to improve features',
+                value: settings.analyticsEnabled,
+                onChanged: (v) => settingsNotifier.setAnalytics(v),
               ),
             ],
           ),
@@ -244,6 +548,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   'Flutter + Rust',
                   style: context.textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
                 ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.privacy_tip_outlined, color: AppTheme.textSecondary),
+                title: Text('Privacy Policy', style: context.textTheme.bodyMedium),
+                trailing: Icon(Icons.open_in_new, size: 18, color: AppTheme.textDisabled),
+                onTap: () {
+                  // Placeholder — would launch URL in production
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Privacy Policy — coming soon')),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.description_outlined, color: AppTheme.textSecondary),
+                title: Text('Licenses', style: context.textTheme.bodyMedium),
+                trailing: Icon(Icons.chevron_right, color: AppTheme.textDisabled),
+                onTap: () {
+                  showLicensePage(
+                    context: context,
+                    applicationName: AppConstants.appName,
+                    applicationVersion: AppConstants.appVersion,
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.source_outlined, color: AppTheme.textSecondary),
+                title: Text('Open Source Notices', style: context.textTheme.bodyMedium),
+                trailing: Icon(Icons.chevron_right, color: AppTheme.textDisabled),
+                onTap: () {
+                  showLicensePage(
+                    context: context,
+                    applicationName: AppConstants.appName,
+                    applicationVersion: AppConstants.appVersion,
+                  );
+                },
               ),
             ],
           ),
@@ -310,6 +652,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
   }
+
+  void _showClearProxyCacheDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear Proxy Cache?'),
+        content: const Text(
+          'This will delete all proxy video files from the cache. '
+          'Proxies will be regenerated automatically when needed. '
+          'Your original media files will not be affected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _clearProxyCache();
+            },
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ─── Reusable Settings Widgets ────────────────────────────────────
@@ -364,6 +733,65 @@ class _SettingsSwitch extends StatelessWidget {
   Widget build(BuildContext context) {
     return SwitchListTile(
       title: Text(label, style: context.textTheme.bodyMedium),
+      subtitle: subtitle != null
+          ? Text(subtitle!, style: context.textTheme.bodySmall)
+          : null,
+      value: value,
+      onChanged: onChanged,
+      activeColor: AppTheme.primary,
+    );
+  }
+}
+
+/// Switch tile with an optional trailing badge (e.g. "GPU").
+class _SettingsSwitchWithBadge extends StatelessWidget {
+  final String label;
+  final String? subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final String badgeLabel;
+  final bool showBadge;
+
+  const _SettingsSwitchWithBadge({
+    required this.label,
+    this.subtitle,
+    required this.value,
+    required this.onChanged,
+    required this.badgeLabel,
+    required this.showBadge,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SwitchListTile(
+      title: Row(
+        children: [
+          Text(label, style: context.textTheme.bodyMedium),
+          if (showBadge) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.secondary.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(
+                  color: AppTheme.secondary.withOpacity(0.4),
+                  width: 1,
+                ),
+              ),
+              child: Text(
+                badgeLabel,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.secondary,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
       subtitle: subtitle != null
           ? Text(subtitle!, style: context.textTheme.bodySmall)
           : null,

@@ -5,13 +5,16 @@
 
 pub mod api;
 pub mod audio;
+pub mod cloud;
 pub mod decoder;
 pub mod effects;
 pub mod export_engine;
 pub mod project;
+pub mod proxy;
 pub mod renderer;
 pub mod subtitle;
 pub mod system;
+pub mod template;
 pub mod timeline;
 
 use log::LevelFilter;
@@ -65,6 +68,9 @@ pub enum EngineError {
 
     #[error("Timeline error: {0}")]
     TimelineError(String),
+
+    #[error("Proxy error: {0}")]
+    ProxyError(String),
 
     #[error("Bridge error: {0}")]
     BridgeError(String),

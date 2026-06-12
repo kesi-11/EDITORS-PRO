@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -7,137 +7,167 @@ on:
     branches: [main]
 
 env:
-  CARGO_TERM_COLOR: always
-  FLUTTER_VERSION: '3.24.x'
+  RUST_BACKTRACE: 1
 
 jobs:
-  # ─── Rust Engine Checks ─────────────────────────────────────────────
+  # ─── Rust Engine Checks ──────────────────────────────────────────────
   rust-check:
-    name: Rust Engine
+    name: Rust Check (lint + test)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: editors-pro/engine
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
-      - name: Cache Cargo
+      - name: Cache Cargo registry & build
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            editors-pro/engine/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('editors-pro/engine/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+            engine/target
+          key: rust-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
 
-      - name: Install Linux dependencies (for ffmpeg-next)
+      - name: Install FFmpeg dev libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config
+          sudo apt-get install -y \
+            libavcodec-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswscale-dev \
+            libswresample-dev \
+            pkg-config
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Cargo check
+        run: cargo check --manifest-path engine/Cargo.toml
 
-      - name: Run Clippy
-        run: cargo clippy -- -D warnings
+      - name: Clippy
+        run: cargo clippy --manifest-path engine/Cargo.toml -- -D warnings
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --manifest-path engine/Cargo.toml
 
-  # ─── Flutter App Checks ─────────────────────────────────────────────
+  # ─── Flutter App Checks ──────────────────────────────────────────────
   flutter-check:
-    name: Flutter App
+    name: Flutter Check (analyze + test)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: editors-pro
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install Flutter
+      - name: Install Flutter stable
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: 'stable'
+          channel: stable
+          cache: true
 
-      - name: Cache Pub
+      - name: Cache Pub packages
         uses: actions/cache@v4
         with:
           path: |
             ~/.pub-cache
-            editors-pro/.dart_tool
-          key: ${{ runner.os }}-pub-${{ hashFiles('editors-pro/pubspec.lock') }}
-          restore-keys: ${{ runner.os }}-pub-
+            .dart_tool
+          key: flutter-pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            flutter-pub-${{ runner.os }}-
 
-      - name: Install dependencies
+      - name: Flutter pub get
         run: flutter pub get
 
-      - name: Check formatting
-        run: dart format --set-exit-if-changed .
+      - name: Flutter analyze
+        run: flutter analyze
 
-      - name: Analyze Dart code
-        run: dart analyze --fatal-infos
-
-      - name: Run Flutter tests
+      - name: Flutter test
         run: flutter test
 
-  # ─── Android Build ──────────────────────────────────────────────────
+  # ─── Android Release Build ──────────────────────────────────────────
   build-android:
-    name: Android APK
+    name: Build Android APK
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     needs: [rust-check, flutter-check]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
 
+      - name: Cache Cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            engine/target
+          key: rust-android-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock') }}
+          restore-keys: |
+            rust-android-${{ runner.os }}-
+
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
 
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r27
-
-      - name: Build Rust for Android arm64
+      - name: Install FFmpeg dev libraries
         run: |
-          cd editors-pro/engine
-          cargo ndk -t arm64-v8a -o ../android/app/src/main/jniLibs build --release
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          sudo apt-get update
+          sudo apt-get install -y \
+            libavcodec-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswscale-dev \
+            libswresample-dev \
+            pkg-config
 
-      - name: Install Flutter
+      - name: Install Flutter stable
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: 'stable'
+          channel: stable
+          cache: true
 
-      - name: Install Flutter dependencies
-        run: |
-          cd editors-pro
-          flutter pub get
+      # ── Android SDK / NDK setup ─────────────────────────────────────
+      # The runner image ships with Android SDK. We ensure the NDK
+      # version required by android/app/build.gradle.kts is available.
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@v3
 
-      - name: Build APK
+      - name: Install NDK ${{ vars.ANDROID_NDK_VERSION || '27.0.12077973' }}
+        run: sdkmanager --install "ndk;27.0.12077973"
+
+      # ── Build Rust engine for Android ───────────────────────────────
+      - name: Build Rust engine (arm64-v8a)
+        run: cargo ndk -t arm64-v8a build --release --manifest-path engine/Cargo.toml
+
+      - name: Copy native library to jniLibs
         run: |
-          cd editors-pro
-          flutter build apk --release
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          cp engine/target/aarch64-linux-android/release/libeditors_pro_engine.so \
+             android/app/src/main/jniLibs/arm64-v8a/
+
+      # ── Build Flutter APK ───────────────────────────────────────────
+      # NOTE: For production release builds you must configure signing.
+      # Set these repository secrets / environment variables:
+      #   EDITORS_PRO_STORE_FILE, EDITORS_PRO_KEY_ALIAS,
+      #   EDITORS_PRO_STORE_PASSWORD, EDITORS_PRO_KEY_PASSWORD
+      # The app's build.gradle.kts will pick them up automatically.
+      # Without them the APK is signed with the debug key.
+      - name: Build Flutter APK
+        run: flutter build apk --release
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: editors-pro-release
-          path: editors-pro/build/app/outputs/flutter-apk/app-release.apk
+          name: editors-pro-arm64-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14

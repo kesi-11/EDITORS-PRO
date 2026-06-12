@@ -7,12 +7,26 @@ import 'features/projects/presentation/project_home_screen.dart';
 import 'features/editor/presentation/editor_screen.dart';
 import 'features/export/presentation/export_screen.dart';
 import 'features/settings/settings_screen.dart';
+import 'features/onboarding/presentation/onboarding_screen.dart';
+import 'features/splash/splash_screen.dart';
+import 'features/cloud/presentation/cloud_screen.dart';
+import 'features/templates/presentation/template_browser.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
-    initialLocation: '/',
+    initialLocation: '/splash',
     debugLogDiagnostics: true,
     routes: [
+      GoRoute(
+        path: '/splash',
+        name: 'splash',
+        builder: (context, state) => const SplashScreen(),
+      ),
+      GoRoute(
+        path: '/onboarding',
+        name: 'onboarding',
+        builder: (context, state) => const OnboardingScreen(),
+      ),
       GoRoute(
         path: '/',
         name: 'home',
@@ -38,6 +52,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/settings',
         name: 'settings',
         builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: '/cloud',
+        name: 'cloud',
+        builder: (context, state) => const CloudScreen(),
+      ),
+      GoRoute(
+        path: '/templates',
+        name: 'templates',
+        builder: (context, state) => const TemplateBrowserScreen(),
       ),
     ],
   );

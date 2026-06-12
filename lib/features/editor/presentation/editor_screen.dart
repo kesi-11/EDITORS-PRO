@@ -24,6 +24,8 @@ import '../widgets/transition_picker.dart';
 import '../widgets/text_panel.dart';
 import '../widgets/speed_curve_editor.dart';
 import '../widgets/keyframe_graph_editor.dart';
+import '../widgets/gpu_status_badge.dart';
+import '../widgets/proxy_status_badge.dart';
 
 /// Main editor screen - the core editing experience
 class EditorScreen extends ConsumerStatefulWidget {
@@ -66,9 +68,25 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                 if (!isNarrowScreen) _buildLeftPanel(context, editorState),
 
                 // Center: Preview viewport
-                const Expanded(
+                Expanded(
                   flex: 3,
-                  child: PreviewViewport(),
+                  child: Stack(
+                    children: [
+                      const PreviewViewport(),
+                      // GPU status badge — top-right of viewport
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: const GpuStatusBadge(),
+                      ),
+                      // Proxy status badge — next to GPU badge
+                      Positioned(
+                        top: 8,
+                        right: 58,
+                        child: const ProxyStatusBadge(),
+                      ),
+                    ],
+                  ),
                 ),
 
                 // Right: Inspector / Properties (hidden on narrow screens)

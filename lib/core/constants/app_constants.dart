@@ -33,4 +33,12 @@ class AppConstants {
   static const String thumbnailsDir = 'thumbnails';
   static const String exportsDir = 'exports';
   static const String proxiesDir = 'proxies';
+
+  // ─── Performance targets (Phase 9) ─────────────────────────────
+  static const Duration targetColdStart = Duration(seconds: 3);
+  static const int targetPreviewFps = 24;
+  static const int targetDecodeTimeMs = 16;
+  static const int maxEditingMemoryMb = 400;
+  static const int maxExportMemoryMb = 600;
+  static const int maxApkSizeMb = 50;
 }

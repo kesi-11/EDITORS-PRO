@@ -48,9 +48,7 @@ impl WaveformData {
             let window = &samples[window_start..window_end];
 
             // Calculate peak
-            let peak = window.iter()
-                .map(|s| s.abs())
-                .fold(0.0f32, f32::max);
+            let peak = window.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
 
             // Calculate RMS
             let rms = if window.is_empty() {

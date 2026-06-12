@@ -32,7 +32,8 @@ impl DecodedAudio {
 
     /// Create a silent audio buffer of a given duration
     pub fn silence(sample_rate: u32, channels: u32, duration_ms: u64) -> Self {
-        let sample_count = (sample_rate as f64 * channels as f64 * duration_ms as f64 / 1000.0) as usize;
+        let sample_count =
+            (sample_rate as f64 * channels as f64 * duration_ms as f64 / 1000.0) as usize;
         Self {
             samples: vec![0.0f32; sample_count],
             sample_rate,
@@ -56,14 +57,17 @@ impl DecodedAudio {
             return Self::empty(self.sample_rate, self.channels);
         }
 
-        let start_sample = (start_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
-        let end_sample = (end_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+        let start_sample =
+            (start_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+        let end_sample =
+            (end_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
 
         let start = start_sample.min(self.samples.len());
         let end = end_sample.min(self.samples.len());
 
         let segment_duration = if end > start {
-            ((end - start) as f64 * 1000.0 / (self.sample_rate as f64 * self.channels as f64)) as u64
+            ((end - start) as f64 * 1000.0 / (self.sample_rate as f64 * self.channels as f64))
+                as u64
         } else {
             0
         };
@@ -134,22 +138,30 @@ impl AudioDecoder {
             .map_err(|e| format!("Failed to open file '{}': {}", file_path, e))?;
 
         // Find the best audio stream
-        let audio_stream = input.streams().best(ff::media::Type::Audio)
+        let audio_stream = input
+            .streams()
+            .best(ff::media::Type::Audio)
             .ok_or_else(|| format!("No audio stream found in '{}'", file_path))?;
 
         let context = ff::codec::context::Context::from_parameters(audio_stream.parameters())
             .map_err(|e| format!("Failed to create codec context: {}", e))?;
 
-        let codec = context.decoder().audio()
+        let codec = context
+            .decoder()
+            .audio()
             .map_err(|e| format!("Failed to get audio decoder: {}", e))?;
 
         self.source_sample_rate = codec.sample_rate() as u32;
         self.source_channels = codec.channels() as u32;
-        self.codec_name = codec.codec().map(|c| c.name().to_string()).unwrap_or_default();
+        self.codec_name = codec
+            .codec()
+            .map(|c| c.name().to_string())
+            .unwrap_or_default();
 
         // Calculate duration
         if audio_stream.duration() > 0 {
-            self.duration_ms = (audio_stream.duration() as f64 * 1000.0
+            self.duration_ms = (audio_stream.duration() as f64
+                * 1000.0
                 * f64::from(audio_stream.time_base())) as u64;
         } else {
             // Fallback: estimate from format duration
@@ -161,7 +173,11 @@ impl AudioDecoder {
 
         log::info!(
             "AudioDecoder opened: {} ({}Hz, {}ch, {}ms, codec={})",
-            file_path, self.source_sample_rate, self.source_channels, self.duration_ms, self.codec_name
+            file_path,
+            self.source_sample_rate,
+            self.source_channels,
+            self.duration_ms,
+            self.codec_name
         );
 
         Ok(())
@@ -197,14 +213,19 @@ impl AudioDecoder {
     /// Returns the audio as interleaved f32 samples at the source
     /// sample rate. For resampling to a different rate, use
     /// `decode_samples_with_rate()`.
-    pub fn decode_all(&self, target_sample_rate: u32, target_channels: u32) -> Result<DecodedAudio, String> {
-        let file_path = self.file_path.as_ref()
-            .ok_or("No file is open")?;
+    pub fn decode_all(
+        &self,
+        target_sample_rate: u32,
+        target_channels: u32,
+    ) -> Result<DecodedAudio, String> {
+        let file_path = self.file_path.as_ref().ok_or("No file is open")?;
 
-        let input = ff::format::input(file_path)
-            .map_err(|e| format!("Failed to open file: {}", e))?;
+        let input =
+            ff::format::input(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
 
-        let audio_stream = input.streams().best(ff::media::Type::Audio)
+        let audio_stream = input
+            .streams()
+            .best(ff::media::Type::Audio)
             .ok_or("No audio stream found")?;
 
         let stream_index = audio_stream.index();
@@ -212,7 +233,9 @@ impl AudioDecoder {
         let context = ff::codec::context::Context::from_parameters(audio_stream.parameters())
             .map_err(|e| format!("Failed to create codec context: {}", e))?;
 
-        let mut decoder = context.decoder().audio()
+        let mut decoder = context
+            .decoder()
+            .audio()
             .map_err(|e| format!("Failed to get audio decoder: {}", e))?;
 
         // Set up resampler if needed
@@ -228,14 +251,17 @@ impl AudioDecoder {
             let in_format = decoder.format();
             let out_format = ff::format::Sample::F32(ff::format::sample::Type::Packed);
 
-            Some(ff::software::resampling::context::Context::get(
-                in_format,
-                in_channels,
-                in_rate,
-                out_format,
-                out_channels,
-                out_rate,
-            ).map_err(|e| format!("Failed to create resampler: {}", e))?)
+            Some(
+                ff::software::resampling::context::Context::get(
+                    in_format,
+                    in_channels,
+                    in_rate,
+                    out_format,
+                    out_channels,
+                    out_rate,
+                )
+                .map_err(|e| format!("Failed to create resampler: {}", e))?,
+            )
         } else {
             None
         };
@@ -244,90 +270,111 @@ impl AudioDecoder {
         let mut frames_decoded = 0u64;
 
         // Decode packets
-        let mut receive_and_send = |decoder: &mut ff::decoder::Audio, resampler: &mut Option<ff::software::resampling::context::Context>| -> Result<(), String> {
-            // Send packet already done outside
-            let mut frame = ff::util::frame::Audio::empty();
+        let mut receive_and_send =
+            |decoder: &mut ff::decoder::Audio,
+             resampler: &mut Option<ff::software::resampling::context::Context>|
+             -> Result<(), String> {
+                // Send packet already done outside
+                let mut frame = ff::util::frame::Audio::empty();
 
-            loop {
-                match decoder.receive_frame(&mut frame) {
-                    Ok(()) => {
-                        frames_decoded += 1;
+                loop {
+                    match decoder.receive_frame(&mut frame) {
+                        Ok(()) => {
+                            frames_decoded += 1;
 
-                        if let Some(r) = resampler {
-                            let mut resampled = ff::util::frame::Audio::empty();
-                            r.run(&frame, &mut resampled)
-                                .map_err(|e| format!("Resampling failed: {}", e))?;
+                            if let Some(r) = resampler {
+                                let mut resampled = ff::util::frame::Audio::empty();
+                                r.run(&frame, &mut resampled)
+                                    .map_err(|e| format!("Resampling failed: {}", e))?;
 
-                            let data = resampled.data(0);
-                            let sample_count = data.len() / 4; // f32 = 4 bytes
-                            let samples = unsafe {
-                                std::slice::from_raw_parts(data.as_ptr() as *const f32, sample_count)
-                            };
-                            all_samples.extend_from_slice(samples);
-                        } else {
-                            // Direct f32 packed data
-                            let data = frame.data(0);
-                            let sample_count = data.len() / 4;
-                            let samples = unsafe {
-                                std::slice::from_raw_parts(data.as_ptr() as *const f32, sample_count)
-                            };
-                            all_samples.extend_from_slice(samples);
+                                let data = resampled.data(0);
+                                let sample_count = data.len() / 4; // f32 = 4 bytes
+                                let samples = unsafe {
+                                    std::slice::from_raw_parts(
+                                        data.as_ptr() as *const f32,
+                                        sample_count,
+                                    )
+                                };
+                                all_samples.extend_from_slice(samples);
+                            } else {
+                                // Direct f32 packed data
+                                let data = frame.data(0);
+                                let sample_count = data.len() / 4;
+                                let samples = unsafe {
+                                    std::slice::from_raw_parts(
+                                        data.as_ptr() as *const f32,
+                                        sample_count,
+                                    )
+                                };
+                                all_samples.extend_from_slice(samples);
+                            }
+
+                            frame = ff::util::frame::Audio::empty();
                         }
-
-                        frame = ff::util::frame::Audio::empty();
-                    }
-                    Err(ff::Error::Other { errno: ff::sys::EAGAIN }) => {
-                        // Need more input
-                        break;
-                    }
-                    Err(ff::Error::EOF) => {
-                        // Flush resampler
-                        if let Some(r) = resampler {
-                            let mut resampled = ff::util::frame::Audio::empty();
-                            r.flush(&mut resampled)
-                                .map_err(|e| format!("Resampler flush failed: {}", e))?;
-                            let data = resampled.data(0);
-                            let sample_count = data.len() / 4;
-                            let samples = unsafe {
-                                std::slice::from_raw_parts(data.as_ptr() as *const f32, sample_count)
-                            };
-                            all_samples.extend_from_slice(samples);
+                        Err(ff::Error::Other {
+                            errno: ff::sys::EAGAIN,
+                        }) => {
+                            // Need more input
+                            break;
                         }
-                        break;
-                    }
-                    Err(e) => {
-                        log::warn!("Audio decode error: {}", e);
-                        break;
+                        Err(ff::Error::EOF) => {
+                            // Flush resampler
+                            if let Some(r) = resampler {
+                                let mut resampled = ff::util::frame::Audio::empty();
+                                r.flush(&mut resampled)
+                                    .map_err(|e| format!("Resampler flush failed: {}", e))?;
+                                let data = resampled.data(0);
+                                let sample_count = data.len() / 4;
+                                let samples = unsafe {
+                                    std::slice::from_raw_parts(
+                                        data.as_ptr() as *const f32,
+                                        sample_count,
+                                    )
+                                };
+                                all_samples.extend_from_slice(samples);
+                            }
+                            break;
+                        }
+                        Err(e) => {
+                            log::warn!("Audio decode error: {}", e);
+                            break;
+                        }
                     }
                 }
-            }
 
-            Ok(())
-        };
+                Ok(())
+            };
 
         // Process all packets from the audio stream
         for (stream, packet) in input.packets() {
             if stream.index() == stream_index {
-                decoder.send_packet(&packet)
+                decoder
+                    .send_packet(&packet)
                     .map_err(|e| format!("Failed to send packet: {}", e))?;
                 receive_and_send(&mut decoder, &mut resampler)?;
             }
         }
 
         // Flush decoder
-        decoder.send_eof()
+        decoder
+            .send_eof()
             .map_err(|e| format!("Failed to send EOF: {}", e))?;
         receive_and_send(&mut decoder, &mut resampler)?;
 
         let duration_ms = if target_sample_rate > 0 && target_channels > 0 {
-            (all_samples.len() as f64 * 1000.0 / (target_sample_rate as f64 * target_channels as f64)) as u64
+            (all_samples.len() as f64 * 1000.0
+                / (target_sample_rate as f64 * target_channels as f64)) as u64
         } else {
             0
         };
 
         log::info!(
             "Decoded {} frames, {} samples ({}ms at {}Hz/{})",
-            frames_decoded, all_samples.len(), duration_ms, target_sample_rate, target_channels
+            frames_decoded,
+            all_samples.len(),
+            duration_ms,
+            target_sample_rate,
+            target_channels
         );
 
         Ok(DecodedAudio {

@@ -6,8 +6,12 @@ import '../../../core/extensions/context_extensions.dart';
 import '../../../data/models/project_model.dart';
 import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
+import 'chroma_key_controls.dart';
 import 'speed_curve_editor.dart';
 import 'keyframe_graph_editor.dart';
+
+// Re-export GpuInfo for the GPU settings section
+import 'package:editors_pro/src/rust/api/bridge_api.dart' show GpuInfo;
 
 /// Inspector panel - Shows properties of the selected clip or track
 class InspectorPanel extends ConsumerWidget {
@@ -177,6 +181,34 @@ class InspectorPanel extends ConsumerWidget {
           _EffectsSection(clipId: selectedClip.id),
           const SizedBox(height: 16),
 
+          // Chroma Key section (show when a ChromaKey effect is applied to the clip)
+          Builder(builder: (context) {
+            // Check if the clip has a ChromaKey effect
+            final chromaKeyEffects = selectedClip.effects.where(
+              (e) => e.effectType == 'chroma_key' || e.name == 'Chroma Key',
+            );
+            if (chromaKeyEffects.isNotEmpty) {
+              final chromaKeyEffect = chromaKeyEffects.first;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _SectionHeader(
+                    title: 'Chroma Key',
+                    icon: Icons.filter_vintage,
+                    iconColor: Colors.green,
+                  ),
+                  const SizedBox(height: 8),
+                  ChromaKeyControls(
+                    effectId: chromaKeyEffect.id,
+                    clipId: selectedClip.id,
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              );
+            }
+            return const SizedBox.shrink();
+          }),
+
           // Transitions section
           _SectionHeader(title: 'Transitions'),
           const SizedBox(height: 8),
@@ -291,27 +323,112 @@ class InspectorPanel extends ConsumerWidget {
   Widget _buildEmptyInspector(BuildContext context) {
     return Container(
       color: AppTheme.surface,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const SizedBox(height: 32),
+          // Empty state message
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.touch_app, size: 48, color: AppTheme.textDisabled),
+                const SizedBox(height: 16),
+                Text(
+                  'Select a clip',
+                  style: context.textTheme.titleSmall?.copyWith(
+                    color: AppTheme.textDisabled,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tap any clip on the timeline\nto view its properties',
+                  style: context.textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 32),
+
+          // GPU Acceleration settings section
+          _buildGpuSettingsSection(context),
+        ],
+      ),
+    );
+  }
+
+  /// Build the GPU acceleration settings section shown in the empty
+  /// inspector panel. Allows users to toggle GPU acceleration and
+  /// see GPU adapter info.
+  Widget _buildGpuSettingsSection(BuildContext context) {
+    return Consumer(
+      builder: (context, ref, _) {
+        final editorState = ref.watch(editorProvider);
+        final gpuAvailable = editorState.gpuAvailable;
+        final gpuEnabled = editorState.gpuAccelerationEnabled;
+        final gpuInfo = editorState.gpuInfo;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.touch_app, size: 48, color: AppTheme.textDisabled),
-            const SizedBox(height: 16),
-            Text(
-              'Select a clip',
-              style: context.textTheme.titleSmall?.copyWith(
-                color: AppTheme.textDisabled,
+            _SectionHeader(title: 'GPU Acceleration'),
+            const SizedBox(height: 12),
+
+            // GPU toggle switch
+            _SettingsRow(
+              label: 'Enable GPU',
+              child: Switch(
+                value: gpuAvailable && gpuEnabled,
+                onChanged: gpuAvailable
+                    ? (value) {
+                        ref.read(editorProvider.notifier).toggleGpuAcceleration(value);
+                      }
+                    : null,
+                activeColor: AppTheme.success,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
             ),
+
             const SizedBox(height: 8),
-            Text(
-              'Tap any clip on the timeline\nto view its properties',
-              style: context.textTheme.bodySmall,
-              textAlign: TextAlign.center,
-            ),
+
+            // GPU info rows
+            if (gpuInfo != null && gpuInfo.available) ...[
+              _SettingsRow(
+                label: 'Adapter',
+                value: gpuInfo.adapterName.isNotEmpty
+                    ? gpuInfo.adapterName
+                    : 'Unknown',
+              ),
+              _SettingsRow(
+                label: 'Backend',
+                value: gpuInfo.backend.isNotEmpty
+                    ? gpuInfo.backend
+                    : 'Unknown',
+              ),
+              _SettingsRow(
+                label: 'VRAM',
+                value: gpuInfo.vramFormatted,
+              ),
+              _SettingsRow(
+                label: 'HW Encoder',
+                value: gpuInfo.isHardwareEncoderAvailable ? 'Available' : 'Not available',
+              ),
+              if (gpuInfo.supportedEffects.isNotEmpty)
+                _SettingsRow(
+                  label: 'GPU Effects',
+                  value: '${gpuInfo.supportedEffects.length} supported',
+                ),
+            ] else ...[
+              _SettingsRow(
+                label: 'Status',
+                value: 'No GPU detected',
+                valueColor: AppTheme.textDisabled,
+              ),
+            ],
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -338,17 +455,27 @@ class InspectorPanel extends ConsumerWidget {
 
 class _SectionHeader extends StatelessWidget {
   final String title;
+  final IconData? icon;
+  final Color? iconColor;
 
-  const _SectionHeader({required this.title});
+  const _SectionHeader({required this.title, this.icon, this.iconColor});
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      title.toUpperCase(),
-      style: context.textTheme.labelMedium?.copyWith(
-        color: AppTheme.textDisabled,
-        letterSpacing: 1,
-      ),
+    return Row(
+      children: [
+        if (icon != null) ...[
+          Icon(icon, size: 14, color: iconColor ?? AppTheme.textDisabled),
+          const SizedBox(width: 6),
+        ],
+        Text(
+          title.toUpperCase(),
+          style: context.textTheme.labelMedium?.copyWith(
+            color: AppTheme.textDisabled,
+            letterSpacing: 1,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -371,6 +498,46 @@ class _PropertyRow extends StatelessWidget {
             fontFamily: 'monospace',
             color: AppTheme.textPrimary,
           )),
+        ],
+      ),
+    );
+  }
+}
+
+/// A settings row that can display a label with either a text value
+/// or a custom child widget (e.g., a switch). Used in the GPU settings
+/// section of the inspector.
+class _SettingsRow extends StatelessWidget {
+  final String label;
+  final String? value;
+  final Color? valueColor;
+  final Widget? child;
+
+  const _SettingsRow({
+    required this.label,
+    this.value,
+    this.valueColor,
+    this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: context.textTheme.bodySmall),
+          if (child != null)
+            child!
+          else
+            Text(
+              value ?? '',
+              style: context.textTheme.bodySmall?.copyWith(
+                fontFamily: 'monospace',
+                color: valueColor ?? AppTheme.textPrimary,
+              ),
+            ),
         ],
       ),
     );
@@ -674,8 +841,11 @@ class _AppliedEffectCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name = effect['name'] as String? ?? 'Unknown';
+    final effectType = effect['effect_type'] as String? ?? '';
     final enabled = effect['enabled'] as bool? ?? true;
     final parameters = effect['parameters'] as List<dynamic>? ?? [];
+    final effectId = effect['id'] as String? ?? '';
+    final isChromaKey = effectType == 'chroma_key' || effectType == 'ChromaKey' || name == 'Chroma Key';
 
     return Card(
       color: AppTheme.surfaceVariant,
@@ -689,7 +859,7 @@ class _AppliedEffectCard extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  Icons.auto_fix_high,
+                  isChromaKey ? Icons.colorize : Icons.auto_fix_high,
                   size: 16,
                   color: enabled ? AppTheme.primary : AppTheme.textDisabled,
                 ),
@@ -727,27 +897,40 @@ class _AppliedEffectCard extends StatelessWidget {
               ],
             ),
 
-            // Parameter sliders
+            // Parameter sliders (or ChromaKey controls)
             if (enabled && parameters.isNotEmpty) ...[
               const SizedBox(height: 4),
-              ...parameters.map((param) {
-                final p = param as Map<dynamic, dynamic>;
-                final paramName = p['name'] as String? ?? '';
-                final displayName = p['display_name'] as String? ?? paramName;
-                final value = (p['value'] as num?)?.toDouble() ?? 0.0;
-                final minVal = (p['min_value'] as num?)?.toDouble() ?? 0.0;
-                final maxVal = (p['max_value'] as num?)?.toDouble() ?? 1.0;
-                final step = (p['step'] as num?)?.toDouble() ?? 0.01;
+              if (isChromaKey) ...[
+                // Use dedicated ChromaKey controls widget
+                Consumer(builder: (context, ref, _) {
+                  // Find the clip ID from the editor state
+                  final editorState = ref.watch(editorProvider);
+                  final clipId = editorState.selectedClipId ?? '';
+                  return ChromaKeyControls(
+                    effectId: effectId,
+                    clipId: clipId,
+                  );
+                }),
+              ] else ...[
+                ...parameters.map((param) {
+                  final p = param as Map<dynamic, dynamic>;
+                  final paramName = p['name'] as String? ?? '';
+                  final displayName = p['display_name'] as String? ?? paramName;
+                  final value = (p['value'] as num?)?.toDouble() ?? 0.0;
+                  final minVal = (p['min_value'] as num?)?.toDouble() ?? 0.0;
+                  final maxVal = (p['max_value'] as num?)?.toDouble() ?? 1.0;
+                  final step = (p['step'] as num?)?.toDouble() ?? 0.01;
 
-                return _EffectParameterSlider(
-                  name: displayName,
-                  value: value,
-                  min: minVal,
-                  max: maxVal,
-                  step: step,
-                  onChanged: (v) => onParameterChanged(paramName, v),
-                );
-              }),
+                  return _EffectParameterSlider(
+                    name: displayName,
+                    value: value,
+                    min: minVal,
+                    max: maxVal,
+                    step: step,
+                    onChanged: (v) => onParameterChanged(paramName, v),
+                  );
+                }),
+              ],
             ],
           ],
         ),

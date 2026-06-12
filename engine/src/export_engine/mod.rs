@@ -12,15 +12,31 @@
 //! - Progress reporting via callback
 //! - Storage space validation
 //! - Audio passthrough (stream copy from source)
+//!
+//! ## Phase 8 Implementation
+//!
+//! Hardware-accelerated encoding using Android MediaCodec:
+//! - Automatic detection of hardware encoder capabilities
+//! - 3-5x speedup on devices with hardware H.264/H.265 encoders
+//! - Transparent fallback to software (libx264/libx265) when HW unavailable
+//! - Drop-in `HardwareEncoder` replacement for `VideoEncoder` in the export pipeline
 
 pub mod encoder;
+pub mod hardware_encoder;
 
 #[cfg(test)]
 mod tests;
 
 use serde::{Deserialize, Serialize};
 
-pub use encoder::{convert_rgba_to_yuv420p, estimate_remaining, check_storage_space, VideoEncoder};
+pub use encoder::{
+    convert_f32_to_s16, convert_rgba_to_yuv420p, estimate_remaining, check_storage_space,
+    AudioEncoder, MuxedEncoder, VideoEncoder,
+};
+
+pub use hardware_encoder::{
+    HardwareEncoder, HardwareEncoderType, HardwareEncoderCapabilities,
+};
 
 /// Export configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

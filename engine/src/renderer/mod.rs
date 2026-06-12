@@ -13,6 +13,10 @@
 
 pub mod gpu;
 pub mod shader;
+pub mod shaders;
+
+#[cfg(test)]
+mod shader_bench;
 
 use crate::decoder::FrameData;
 use crate::effects::EffectsPipeline;
@@ -126,7 +130,32 @@ impl PreviewRenderer {
                     0.0
                 };
 
-                let overlay = TextOverlay::simple("Text");
+                // Build TextOverlay from clip properties instead of hardcoded "Text"
+                let content = clip.properties.get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Text");
+                let font_family = clip.properties.get("font_family")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("sans-serif");
+                let font_size = clip.properties.get("font_size")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32)
+                    .unwrap_or(48.0);
+                let color_hex = clip.properties.get("color_hex")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("#FFFFFF");
+
+                let mut overlay = TextOverlay::simple(content);
+                overlay.font_family = font_family.to_string();
+                overlay.font_size = font_size;
+                overlay.color = crate::effects::text_render::TextColor::with_hex(color_hex);
+
+                // Apply position from clip properties if specified
+                if let Some(pos_x) = clip.properties.get("position_x").and_then(|v| v.as_f64()) {
+                    if let Some(pos_y) = clip.properties.get("position_y").and_then(|v| v.as_f64()) {
+                        overlay.position = crate::effects::text_render::TextPosition::at(pos_x as f32, pos_y as f32);
+                    }
+                }
                 self.text_rasterizer.render_text(
                     &overlay,
                     &mut frame.data,
@@ -257,6 +286,34 @@ impl PreviewRenderer {
     /// Check if GPU acceleration is currently active.
     pub fn is_gpu_accelerated(&self) -> bool {
         self.gpu_available
+    }
+
+    /// Get the name of the GPU adapter, if available.
+    pub fn gpu_adapter_name(&self) -> Option<String> {
+        self.gpu_renderer.adapter_name()
+    }
+
+    /// Get the name of the GPU backend (e.g., "Vulkan", "Metal"), if available.
+    pub fn gpu_backend_name(&self) -> Option<String> {
+        self.gpu_renderer.backend_name()
+    }
+
+    /// Get the list of effects that have GPU shader pipelines.
+    pub fn gpu_accelerated_effects(&self) -> Vec<&str> {
+        self.gpu_renderer.gpu_accelerated_effects()
+    }
+
+    /// Enable or disable GPU acceleration at runtime.
+    ///
+    /// When `enabled` is `false`, the renderer will use CPU-only effects
+    /// even if a GPU is available. This is useful for debugging.
+    pub fn set_gpu_enabled(&mut self, enabled: bool) {
+        if !enabled {
+            self.gpu_available = false;
+        } else {
+            // Only re-enable if the GPU was actually initialized
+            self.gpu_available = self.gpu_renderer.is_available();
+        }
     }
 
     /// Get the rendering resolution.

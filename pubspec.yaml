@@ -43,6 +43,9 @@ dependencies:
   # Media
   video_thumbnail: ^0.5.5
 
+  # Persistence
+  shared_preferences: ^2.3.4
+
   # Utilities
   uuid: ^4.5.1
   intl: ^0.20.2

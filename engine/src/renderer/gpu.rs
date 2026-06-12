@@ -822,6 +822,25 @@ impl GpuRenderer {
         None
     }
 
+    /// Get the name of the GPU backend (e.g., "Vulkan", "Metal"), if available.
+    pub fn backend_name(&self) -> Option<String> {
+        if self.initialized && !self.use_cpu_fallback {
+            // Report backend based on what wgpu selected at init time.
+            // Since we request VULKAN | METAL in init(), we can infer
+            // the backend from the platform. A more accurate approach
+            // would store the actual backend from the adapter.
+            if cfg!(target_os = "android") || cfg!(target_os = "linux") {
+                Some("Vulkan".to_string())
+            } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
+                Some("Metal".to_string())
+            } else {
+                Some("Unknown".to_string())
+            }
+        } else {
+            None
+        }
+    }
+
     /// Get the list of effects that have GPU shader pipelines.
     pub fn gpu_accelerated_effects(&self) -> Vec<&str> {
         self.pipelines.keys().map(|s| s.as_str()).collect()

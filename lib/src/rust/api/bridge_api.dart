@@ -487,6 +487,37 @@ class FontInfo {
   );
 }
 
+/// Bridge-compatible transcription segment
+///
+/// Describes a single transcribed text segment with timing information.
+class TranscriptionSegmentInfo {
+  final String id;
+  final String text;
+  final int startMs;
+  final int endMs;
+  final double confidence;
+
+  const TranscriptionSegmentInfo({
+    required this.id,
+    required this.text,
+    required this.startMs,
+    required this.endMs,
+    required this.confidence,
+  });
+
+  factory TranscriptionSegmentInfo.fromJson(Map<String, dynamic> json) =>
+      TranscriptionSegmentInfo(
+        id: json['id'] as String,
+        text: json['text'] as String,
+        startMs: json['start_ms'] as int,
+        endMs: json['end_ms'] as int,
+        confidence: (json['confidence'] as num).toDouble(),
+      );
+
+  /// Duration of this segment in milliseconds
+  int get durationMs => endMs - startMs;
+}
+
 /// Audio information for a media file
 class BridgeAudioInfo {
   final int sampleRate;
@@ -639,6 +670,106 @@ class KeyframeInfo {
         value: (json['value'] as num).toDouble(),
         easingName: json['easing_name'] as String,
       );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 10 — Template DTOs
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Bridge-compatible template info
+///
+/// Describes a pre-built template for quick video creation.
+class TemplateInfo {
+  /// Unique template identifier
+  final String id;
+  /// Display name of the template
+  final String name;
+  /// Description of what the template creates
+  final String description;
+  /// Category name (e.g., "Social", "Cinematic", "Tutorial")
+  final String category;
+  /// Preview image path for the template thumbnail
+  final String previewPath;
+  /// Number of placeholder slots that need user media
+  final int placeholderCount;
+  /// Total duration in milliseconds
+  final int durationMs;
+  /// Aspect ratio as a string (e.g., "16:9", "9:16", "1:1")
+  final String aspectRatio;
+  /// Tags for search/filtering
+  final List<String> tags;
+
+  const TemplateInfo({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.category,
+    required this.previewPath,
+    required this.placeholderCount,
+    required this.durationMs,
+    required this.aspectRatio,
+    required this.tags,
+  });
+
+  factory TemplateInfo.fromJson(Map<String, dynamic> json) => TemplateInfo(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        description: json['description'] as String,
+        category: json['category'] as String,
+        previewPath: json['preview_path'] as String,
+        placeholderCount: json['placeholder_count'] as int,
+        durationMs: json['duration_ms'] as int,
+        aspectRatio: json['aspect_ratio'] as String,
+        tags: (json['tags'] as List).map((e) => e as String).toList(),
+      );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 8 — GPU Acceleration DTOs
+// ═══════════════════════════════════════════════════════════════════════
+
+/// GPU adapter information for hardware acceleration
+class GpuInfo {
+  final bool available;
+  final String adapterName;
+  final String backend;
+  final int vramBytes;
+  final List<String> supportedEffects;
+  final bool isHardwareEncoderAvailable;
+
+  const GpuInfo({
+    this.available = false,
+    this.adapterName = '',
+    this.backend = '',
+    this.vramBytes = 0,
+    this.supportedEffects = const [],
+    this.isHardwareEncoderAvailable = false,
+  });
+
+  factory GpuInfo.fromJson(Map<String, dynamic> json) => GpuInfo(
+        available: json['available'] as bool? ?? false,
+        adapterName: json['adapter_name'] as String? ?? '',
+        backend: json['backend'] as String? ?? '',
+        vramBytes: json['vram_bytes'] as int? ?? 0,
+        supportedEffects: (json['supported_effects'] as List?)
+                ?.map((e) => e as String)
+                .toList() ??
+            [],
+        isHardwareEncoderAvailable:
+            json['is_hardware_encoder_available'] as bool? ?? false,
+      );
+
+  /// Human-readable VRAM size
+  String get vramFormatted {
+    if (vramBytes >= 1073741824) {
+      return '${(vramBytes / 1073741824).toStringAsFixed(1)} GB';
+    } else if (vramBytes >= 1048576) {
+      return '${(vramBytes / 1048576).toStringAsFixed(1)} MB';
+    } else if (vramBytes > 0) {
+      return '${(vramBytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return 'Unknown';
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1396,5 +1527,132 @@ class EditorsProEngineApi {
   Future<bool> isMemoryPressure() async {
     final result = await _call<dynamic>('is_memory_pressure', {});
     return result as bool;
+  }
+
+  // ─── GPU Acceleration Operations (Phase 8) ────────────────────────
+
+  /// Check if GPU rendering is available.
+  ///
+  /// Returns true when a compatible GPU adapter was found during
+  /// engine initialization.
+  Future<bool> isGpuAvailable() async {
+    final result = await _call<dynamic>('is_gpu_available', {});
+    return result as bool;
+  }
+
+  /// Get GPU adapter information.
+  ///
+  /// Returns a [GpuInfo] object describing the available GPU adapter,
+  /// including its name, backend type, VRAM, and which effects support
+  /// GPU acceleration.
+  Future<GpuInfo> getGpuInfo() async {
+    final result = await _call<dynamic>('get_gpu_info', {});
+    return GpuInfo.fromJson(result as Map<String, dynamic>);
+  }
+
+  /// Export the project using a hardware encoder when available.
+  ///
+  /// When a hardware encoder is available (NVENC, VideoToolbox, etc.),
+  /// this method uses it for significantly faster encoding. Falls back
+  /// to the software encoder if the hardware encoder fails.
+  Future<BridgeExportResult> exportVideoHardware({
+    required String outputPath,
+    required BridgeExportSettings settings,
+  }) async {
+    final result = await _call<dynamic>('export_video_hardware', {
+      'output_path': outputPath,
+      'settings': settings.toJson(),
+    });
+    return BridgeExportResult.fromJson(result as Map<String, dynamic>);
+  }
+
+  /// Toggle GPU acceleration on or off.
+  ///
+  /// When [enabled] is false, the engine will use CPU-only rendering
+  /// even if a GPU is available. This is useful for debugging.
+  Future<void> setGpuAcceleration({required bool enabled}) async {
+    return await _call<void>('set_gpu_acceleration', {'enabled': enabled});
+  }
+
+  // ─── Template Operations (Phase 10) ──────────────────────────────
+
+  /// Get the list of available built-in templates.
+  ///
+  /// Returns a list of [TemplateInfo] objects describing each template,
+  /// including its category, duration, and placeholder count.
+  Future<List<TemplateInfo>> getTemplates() async {
+    final result = await _call<dynamic>('get_templates', {});
+    return (result as List)
+        .map((e) => TemplateInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Get details for a specific template by its ID.
+  ///
+  /// Returns `null` if no template with the given ID exists.
+  Future<TemplateInfo?> getTemplateDetails({required String templateId}) async {
+    final result = await _call<dynamic>('get_template_details', {
+      'template_id': templateId,
+    });
+    if (result == null) return null;
+    return TemplateInfo.fromJson(result as Map<String, dynamic>);
+  }
+
+  /// Create a new project from a template by filling placeholder slots.
+  ///
+  /// [templateId] identifies which built-in template to use.
+  /// [assignments] is a map of slot ID → media file path.
+  /// Slots without assignments are filled with placeholder (black) clips.
+  ///
+  /// Returns a [ProjectInfo] DTO for the newly created project.
+  Future<ProjectInfo> instantiateTemplate({
+    required String templateId,
+    required Map<String, String> assignments,
+  }) async {
+    final result = await _call<dynamic>('instantiate_template', {
+      'template_id': templateId,
+      'assignments': assignments,
+    });
+    return ProjectInfo.fromJson(result as Map<String, dynamic>);
+  }
+
+  // ─── Transcription Operations (Phase 10) ──────────────────────────
+
+  /// Transcribe audio from a media asset.
+  ///
+  /// Uses the built-in transcription engine to convert speech in the
+  /// audio to timestamped text segments. [language] should be a language
+  /// code (e.g., "en", "es") or "auto" for auto-detection.
+  ///
+  /// Returns a list of [TranscriptionSegmentInfo] DTOs.
+  Future<List<TranscriptionSegmentInfo>> transcribeAudio({
+    required String assetId,
+    required String language,
+  }) async {
+    final result = await _call<dynamic>('transcribe_audio', {
+      'asset_id': assetId,
+      'language': language,
+    });
+    return (result as List)
+        .map((e) =>
+            TranscriptionSegmentInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Create text clips on a text track from a transcription result.
+  ///
+  /// Transcribes the audio from the given asset and creates text clips
+  /// on the specified track, one for each transcription segment.
+  /// Returns the IDs of the newly created text clips.
+  Future<List<String>> addSubtitlesFromTranscription({
+    required String assetId,
+    required String trackId,
+  }) async {
+    final result = await _call<dynamic>(
+        'add_subtitles_from_transcription', {
+      'asset_id': assetId,
+      'track_id': trackId,
+    });
+    return List<String>.from(result as List);
   }
 }

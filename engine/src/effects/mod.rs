@@ -1,18 +1,21 @@
 //! Effects module - Visual effects pipeline
 //!
 //! Manages the application of visual effects including filters,
-//! transitions, and text overlays to timeline frames.
+//! transitions, text overlays, and chroma key to timeline frames.
 //!
 //! ## Architecture
 //!
 //! - `filters` — Pixel-level filter functions using rayon for parallel processing
 //! - `transitions` — Clip-to-clip transition blending with spatial effects
 //! - `text_render` — Text overlay rendering (model only, rasterization in Phase 6)
+//! - `chroma_key` — Green/blue screen color keying with HSV color space
 //!
 //! The `EffectsPipeline` applies a chain of effects to a frame in order,
 //! respecting each effect's `enabled` flag and `order` field.
 
+pub mod chroma_key;
 pub mod filters;
+pub mod gpu_filters;
 pub mod text_render;
 pub mod text_rasterizer;
 pub mod transitions;
@@ -162,12 +165,14 @@ impl EffectsPipeline {
 
     /// Apply all enabled filter effects to RGBA frame data.
     ///
-    /// This method iterates through enabled effects of type `Filter`
-    /// and applies each one using the `FilterType::apply_to_frame()`
-    /// method, which uses rayon for parallel pixel processing.
+    /// This method iterates through enabled effects and applies each
+    /// one based on its type:
+    /// - **Filter** effects use `FilterType::apply_to_frame()` with rayon
+    /// - **ChromaKey** effects use `chroma_key::apply_chroma_key()` with rayon
+    /// - **TextOverlay** and **Transition** effects are handled separately
     ///
-    /// Non-filter effects (transitions, text overlays, chroma key)
-    /// are handled separately and are NOT applied by this method.
+    /// Non-filter effects (transitions, text overlays) are handled
+    /// elsewhere and are NOT applied by this method.
     pub fn apply(&self, frame_data: &mut [u8], width: u32, height: u32) {
         for effect in self.enabled_effects() {
             match effect.effect_type {
@@ -190,7 +195,15 @@ impl EffectsPipeline {
                     log::debug!("Transition effect: {} (handled during transitions)", effect.name);
                 }
                 EffectType::ChromaKey => {
-                    log::debug!("Chroma key effect: {} (future phase)", effect.name);
+                    // Note: ChromaKey can also be GPU-accelerated via gpu_filters
+                    // when GPU is available. The gpu_filters module maps "chroma_key"
+                    // to the dedicated chroma_key.wgsl compute shader which performs
+                    // the same HSV-based keying, smoothstep feathering, and spill
+                    // suppression entirely on the GPU. When the GPU pipeline is active,
+                    // the GpuFilterDispatcher will create a descriptor for this effect
+                    // and dispatch it as a compute pass instead of using this CPU path.
+                    let config = chroma_key::ChromaKeyConfig::from_parameters(&effect.parameters);
+                    chroma_key::apply_chroma_key(frame_data, width, height, &config);
                 }
             }
         }

@@ -226,6 +226,7 @@ class _FilterCard extends StatelessWidget {
       case 'invert': return Icons.invert_colors;
       case 'vignette': return Icons.vignette;
       case 'temperature': return Icons.thermostat;
+      case 'chroma_key': return Icons.colorize;
       default: return Icons.auto_fix_high;
     }
   }

@@ -13,7 +13,7 @@ import 'engine_bridge_provider.dart';
 // Re-export the bridge-generated DTOs so the rest of the app can
 // reference them without knowing the bridge internals.
 import 'package:editors_pro/src/rust/api/bridge_api.dart'
-    show BridgeProjectSettings, ClipInfo, FontInfo, MediaAssetInfo, ProjectInfo;
+    show BridgeExportSettings, BridgeExportResult, BridgeProjectSettings, ClipInfo, EffectInfo, FontInfo, GpuInfo, MediaAssetInfo, ProjectInfo, TranscriptionSegmentInfo;
 
 /// Editor state
 class EditorState {
@@ -36,6 +36,14 @@ class EditorState {
   final double masterVolume;
   /// Whether the editor is currently fetching frames in the playback loop
   final bool isDecodingFrame;
+  /// Whether GPU rendering is available on this device
+  final bool gpuAvailable;
+  /// Detailed GPU adapter information (null when GPU is unavailable)
+  final GpuInfo? gpuInfo;
+  /// Whether a hardware encoder is available for accelerated export
+  final bool hardwareEncoderAvailable;
+  /// Whether GPU acceleration is currently enabled by the user
+  final bool gpuAccelerationEnabled;
 
   const EditorState({
     this.isPlaying = false,
@@ -54,6 +62,10 @@ class EditorState {
     this.isAudioPlaying = false,
     this.masterVolume = 1.0,
     this.isDecodingFrame = false,
+    this.gpuAvailable = false,
+    this.gpuInfo,
+    this.hardwareEncoderAvailable = false,
+    this.gpuAccelerationEnabled = true,
   });
 
   EditorState copyWith({
@@ -74,6 +86,11 @@ class EditorState {
     bool? isAudioPlaying,
     double? masterVolume,
     bool? isDecodingFrame,
+    bool? gpuAvailable,
+    GpuInfo? gpuInfo,
+    bool clearGpuInfo = false,
+    bool? hardwareEncoderAvailable,
+    bool? gpuAccelerationEnabled,
   }) {
     return EditorState(
       isPlaying: isPlaying ?? this.isPlaying,
@@ -92,6 +109,10 @@ class EditorState {
       isAudioPlaying: isAudioPlaying ?? this.isAudioPlaying,
       masterVolume: masterVolume ?? this.masterVolume,
       isDecodingFrame: isDecodingFrame ?? this.isDecodingFrame,
+      gpuAvailable: gpuAvailable ?? this.gpuAvailable,
+      gpuInfo: clearGpuInfo ? null : (gpuInfo ?? this.gpuInfo),
+      hardwareEncoderAvailable: hardwareEncoderAvailable ?? this.hardwareEncoderAvailable,
+      gpuAccelerationEnabled: gpuAccelerationEnabled ?? this.gpuAccelerationEnabled,
     );
   }
 }
@@ -131,6 +152,8 @@ class EditorNotifier extends StateNotifier<EditorState> {
     if (!_engineReady) return;
     await _syncDurationFromEngine();
     state = const EditorState();
+    // Check GPU availability on init
+    await checkGpuAvailability();
   }
 
   // ─── Playback ────────────────────────────────────────────────────
@@ -1007,6 +1030,176 @@ class EditorNotifier extends StateNotifier<EditorState> {
       _ref.read(engineStateRefresherProvider.notifier).refresh();
     } catch (_) {
       // Provider may not be mounted yet — safe to ignore.
+    }
+  }
+
+  // ─── GPU Acceleration (Phase 8) ──────────────────────────────────
+
+  /// Check GPU availability and update state.
+  ///
+  /// Queries the engine for GPU info and updates the editor state
+  /// with the results. Called during initialization and can be called
+  /// again to re-check after a GPU toggle.
+  Future<void> checkGpuAvailability() async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      final available = await api.isGpuAvailable();
+      final gpuInfo = await api.getGpuInfo();
+      state = state.copyWith(
+        gpuAvailable: available,
+        gpuInfo: gpuInfo,
+        hardwareEncoderAvailable: gpuInfo?.isHardwareEncoderAvailable ?? false,
+      );
+      developer.log(
+        'GPU availability: $available, HW encoder: ${gpuInfo?.isHardwareEncoderAvailable ?? false}',
+        name: 'EditorNotifier',
+      );
+    } catch (e) {
+      developer.log('checkGpuAvailability failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(gpuAvailable: false, clearGpuInfo: true);
+    }
+  }
+
+  /// Toggle GPU acceleration on or off.
+  ///
+  /// When [enabled] is `false`, the engine will use CPU-only rendering
+  /// even if a GPU is available. This is useful for debugging or when
+  /// GPU rendering produces incorrect results on a particular device.
+  Future<void> toggleGpuAcceleration(bool enabled) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.setGpuAcceleration(enabled: enabled);
+      state = state.copyWith(gpuAccelerationEnabled: enabled);
+      developer.log(
+        'GPU acceleration ${enabled ? "enabled" : "disabled"} by user',
+        name: 'EditorNotifier',
+      );
+    } catch (e) {
+      developer.log('toggleGpuAcceleration failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Toggle GPU acceleration failed: $e');
+    }
+  }
+
+  // ─── Chroma Key Operations (Phase 10.1) ────────────────────────────
+
+  /// Add a chroma key effect to a clip with the specified parameters.
+  ///
+  /// Returns the [EffectInfo] for the newly created effect, or `null`
+  /// on failure. After adding the effect, the engine state is refreshed
+  /// so the UI reflects the new effect in the inspector panel.
+  Future<EffectInfo?> addChromaKeyEffect(
+    String clipId, {
+    double targetHue = 120.0,
+    double hueTolerance = 30.0,
+    double saturationTolerance = 0.4,
+    double softness = 0.15,
+    double spillSuppression = 0.5,
+  }) async {
+    if (!_engineReady) return null;
+    try {
+      final service = EngineService.instance;
+      final result = await service.addChromaKeyEffect(
+        clipId,
+        targetHue,
+        hueTolerance,
+        saturationTolerance,
+        softness,
+        spillSuppression,
+      );
+      _refreshEngineState();
+      developer.log(
+        'addChromaKeyEffect: clipId=$clipId, targetHue=$targetHue',
+        name: 'EditorNotifier',
+      );
+      return result;
+    } catch (e) {
+      developer.log('addChromaKeyEffect failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Add chroma key effect failed: $e');
+      return null;
+    }
+  }
+
+  /// Pick a color from the preview frame at the given coordinates.
+  ///
+  /// Returns the RGB values as a list [r, g, b] in the range 0–255,
+  /// or `null` on failure. This is used by the eyedropper tool in the
+  /// chroma key UI to select the target color directly from the video.
+  Future<List<double>?> pickColorFromFrame(int timeMs, int x, int y) async {
+    if (!_engineReady) return null;
+    try {
+      final service = EngineService.instance;
+      final result = await service.pickColorFromFrame(timeMs, x, y);
+      developer.log(
+        'pickColorFromFrame: timeMs=$timeMs, x=$x, y=$y → $result',
+        name: 'EditorNotifier',
+      );
+      return result;
+    } catch (e) {
+      developer.log('pickColorFromFrame failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Pick color from frame failed: $e');
+      return null;
+    }
+  }
+
+  // ─── Transcription Operations (Phase 10.2) ────────────────────────
+
+  /// Transcribe audio from a media asset.
+  ///
+  /// Returns a list of [TranscriptionSegmentInfo] DTOs with timestamped
+  /// text segments, or an empty list on failure.
+  Future<List<TranscriptionSegmentInfo>> transcribeAudio(
+    String assetId,
+    String language,
+  ) async {
+    if (!_engineReady) return [];
+    try {
+      final service = EngineService.instance;
+      final segments = await service.transcribeAudio(assetId, language);
+      developer.log(
+        'transcribeAudio: assetId=$assetId, language=$language → ${segments.length} segments',
+        name: 'EditorNotifier',
+      );
+      return segments;
+    } catch (e) {
+      developer.log('transcribeAudio failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Transcription failed: $e');
+      return [];
+    }
+  }
+
+  /// Create text clips on a text track from a transcription result.
+  ///
+  /// Transcribes the audio from the given asset and creates text clips
+  /// on the specified track, one for each transcription segment.
+  /// Returns the IDs of the newly created text clips.
+  Future<List<String>> addSubtitlesFromTranscription(
+    String assetId,
+    String trackId,
+  ) async {
+    if (!_engineReady) return [];
+    try {
+      final service = EngineService.instance;
+      final clipIds = await service.addSubtitlesFromTranscription(
+        assetId,
+        trackId,
+      );
+      _refreshEngineState();
+      developer.log(
+        'addSubtitlesFromTranscription: assetId=$assetId, trackId=$trackId → ${clipIds.length} clips',
+        name: 'EditorNotifier',
+      );
+      return clipIds;
+    } catch (e) {
+      developer.log(
+        'addSubtitlesFromTranscription failed: $e',
+        name: 'EditorNotifier',
+      );
+      state = state.copyWith(
+        lastError: 'Add subtitles from transcription failed: $e',
+      );
+      return [];
     }
   }
 }

@@ -184,7 +184,8 @@ pub fn detect_speech_segments(
         } else if segment_start.is_some() {
             silence_count += window_size;
             if silence_count >= min_silence_samples {
-                let start_ms = (segment_start.unwrap() as f64 * 1000.0 / (sample_rate * channels as f64)) as u64;
+                let start_ms = (segment_start.unwrap() as f64 * 1000.0
+                    / (sample_rate * channels as f64)) as u64;
                 segments.push((start_ms, current_ms));
                 segment_start = None;
                 silence_count = 0;
@@ -257,7 +258,10 @@ mod tests {
         // With active trigger, main should be ducked
         // Check the last portion where ducking should be fully active
         let tail_start = main.samples.len() * 3 / 4;
-        let tail_avg: f32 = main.samples[tail_start..].iter().map(|s| s.abs()).sum::<f32>()
+        let tail_avg: f32 = main.samples[tail_start..]
+            .iter()
+            .map(|s| s.abs())
+            .sum::<f32>()
             / (main.samples.len() - tail_start) as f32;
 
         assert!(
@@ -276,6 +280,9 @@ mod tests {
         buffer.samples[half..].fill(0.5);
 
         let segments = detect_speech_segments(&buffer, 0.05, 50, 200);
-        assert!(!segments.is_empty(), "Should detect at least one speech segment");
+        assert!(
+            !segments.is_empty(),
+            "Should detect at least one speech segment"
+        );
     }
 }

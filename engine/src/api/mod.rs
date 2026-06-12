@@ -13,10 +13,12 @@ use std::path::PathBuf;
 use crate::audio::decoder::AudioDecoder;
 use crate::audio::ducking::DuckingConfig;
 use crate::audio::mixer::{AudioBuffer, AudioMixer, TrackAudioSource, VolumeEnvelope};
+use crate::audio::transcription::TranscriptionEngine;
 use crate::audio::waveform::WaveformData;
 use crate::decoder::hardware::HardwareDecoder;
 use crate::decoder::VideoInfo;
 use crate::effects::filters::FilterType;
+use crate::proxy::{ProxyManager, ProxyQuality};
 use crate::export_engine::{
     check_storage_space, ExportPipeline, ExportProgress, ExportResult, ExportSettings, ExportStage,
     VideoEncoder,
@@ -60,6 +62,14 @@ pub struct EditorsProEngine {
     audio_cache: std::collections::HashMap<String, AudioBuffer>,
     /// Ducking configurations per track
     ducking_configs: std::collections::HashMap<String, DuckingConfig>,
+    /// Proxy manager for tracking proxy files
+    proxy_manager: ProxyManager,
+    /// Cache directory for proxy files and other cached data
+    cache_dir: String,
+    /// Whether to automatically generate proxies when importing high-res media
+    auto_proxy_enabled: bool,
+    /// Transcription engine for audio-to-text conversion (Whisper placeholder)
+    transcription_engine: TranscriptionEngine,
 }
 
 impl EditorsProEngine {
@@ -77,6 +87,10 @@ impl EditorsProEngine {
             export_canceled: std::sync::atomic::AtomicBool::new(false),
             audio_cache: std::collections::HashMap::new(),
             ducking_configs: std::collections::HashMap::new(),
+            proxy_manager: ProxyManager::new(ProxyQuality::P480),
+            cache_dir: String::new(),
+            auto_proxy_enabled: true,
+            transcription_engine: TranscriptionEngine::new(),
         }
     }
 
@@ -148,7 +162,36 @@ impl EditorsProEngine {
         }
 
         let asset_info = MediaAssetInfo::from_asset(&asset);
+        let asset_id = asset.id.clone();
         project.add_media_asset(asset);
+
+        // Auto-proxy: if the resolution exceeds the threshold, generate
+        // a proxy in the background.  We only check video assets that
+        // have resolution metadata.
+        if self.auto_proxy_enabled {
+            if let (Some(w), Some(h)) = (asset_info.width, asset_info.height) {
+                if self.proxy_manager.should_generate_proxy(w, h) {
+                    log::info!(
+                        "Auto-proxy: asset {} ({}x{}) exceeds threshold, generating proxy…",
+                        asset_id, w, h
+                    );
+                    match self.generate_proxy(&asset_id, file_path) {
+                        Ok(proxy_path) => {
+                            log::info!(
+                                "Auto-proxy: generated proxy for asset {} at {}",
+                                asset_id, proxy_path
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Auto-proxy: failed to generate proxy for asset {}: {}",
+                                asset_id, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         log::info!("Imported media: {}", file_path);
         Ok(asset_info)
@@ -606,15 +649,20 @@ impl EditorsProEngine {
     ) -> Result<EffectInfo, String> {
         let project = self.project.as_mut().ok_or("No project open")?;
 
-        // Parse the filter type
-        let filter_type = crate::effects::filters::FilterType::all_filters()
-            .iter()
-            .find(|ft| ft.display_name().eq_ignore_ascii_case(filter_type_name))
-            .ok_or_else(|| format!("Unknown filter type: {}", filter_type_name))?
-            .clone();
-
-        // Create the effect
-        let mut effect = filter_type.to_effect();
+        // Create the effect based on the type name
+        let mut effect = if filter_type_name.eq_ignore_ascii_case("Chroma Key") {
+            // Special handling for Chroma Key effect
+            let config = crate::effects::chroma_key::ChromaKeyConfig::default();
+            crate::effects::chroma_key::create_chroma_key_effect(&config)
+        } else {
+            // Standard filter types
+            let filter_type = crate::effects::filters::FilterType::all_filters()
+                .iter()
+                .find(|ft| ft.display_name().eq_ignore_ascii_case(filter_type_name))
+                .ok_or_else(|| format!("Unknown filter type: {}", filter_type_name))?
+                .clone();
+            filter_type.to_effect()
+        };
         // Assign the next order number
         let (_, clip) = project
             .timeline()
@@ -672,6 +720,120 @@ impl EditorsProEngine {
         Ok(clip.effects.iter().map(EffectInfo::from_effect).collect())
     }
 
+    /// Add a chroma key effect to a clip with the specified parameters.
+    ///
+    /// Creates a `ChromaKeyConfig` from the given parameters and adds it
+    /// as a `ChromaKey` effect to the specified clip.
+    pub fn add_chroma_key_effect(
+        &mut self,
+        clip_id: &str,
+        target_hue: f32,
+        hue_tolerance: f32,
+        saturation_tolerance: f32,
+        softness: f32,
+        spill_suppression: f32,
+    ) -> Result<EffectInfo, String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+
+        let config = crate::effects::chroma_key::ChromaKeyConfig {
+            target_hue,
+            hue_tolerance,
+            saturation_tolerance,
+            softness,
+            spill_suppression,
+        };
+        let mut effect = crate::effects::chroma_key::create_chroma_key_effect(&config);
+
+        // Assign the next order number
+        let (_, clip) = project
+            .timeline()
+            .find_clip(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+        effect.order = clip.effects.len() as u32;
+
+        let effect_info = EffectInfo::from_effect(&effect);
+
+        let command = AddEffectCommand::new(clip_id.to_string(), effect);
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
+
+        log::info!(
+            "Added chroma key effect to clip {} (hue={:.1}, tol={:.1}, sat_tol={:.2}, soft={:.2}, spill={:.2})",
+            clip_id, target_hue, hue_tolerance, saturation_tolerance, softness, spill_suppression
+        );
+        Ok(effect_info)
+    }
+
+    /// Pick a color from the preview frame at the given coordinates.
+    ///
+    /// Decodes a frame at the specified time and samples the pixel at
+    /// (x, y), returning the RGB values (0–255). This is used by the
+    /// eyedropper tool in the chroma key UI to select the target color
+    /// directly from the video frame.
+    pub fn pick_color_from_frame(
+        &mut self,
+        time_ms: u64,
+        x: u32,
+        y: u32,
+    ) -> Result<(f32, f32, f32), String> {
+        // Decode the frame at the given time
+        let frame_data = self
+            .get_frame(time_ms)
+            .map_err(|e| format!("Failed to decode frame at {}ms: {}", time_ms, e))?;
+
+        // The frame data is RGBA, so we need to find the pixel at (x, y)
+        let width = frame_data.width as usize;
+        let height = frame_data.height as usize;
+
+        if x as usize >= width || y as usize >= height {
+            return Err(format!(
+                "Coordinates ({}, {}) out of frame bounds ({}, {})",
+                x, y, width, height
+            ));
+        }
+
+        let pixel_index = (y as usize * width + x as usize) * 4;
+        let r = frame_data.data[pixel_index] as f32;
+        let g = frame_data.data[pixel_index + 1] as f32;
+        let b = frame_data.data[pixel_index + 2] as f32;
+
+        log::debug!(
+            "Picked color at ({}, {}) time {}ms: RGB({:.0}, {:.0}, {:.0})",
+            x, y, time_ms, r, g, b
+        );
+
+        Ok((r, g, b))
+    }
+
+    /// Transcribe audio from a media asset using the TranscriptionEngine.
+    ///
+    /// Uses the engine's simulation mode for development (real Whisper
+    /// integration will replace the simulation when whisper-rs is added).
+    /// Returns a `TranscriptionResult` with timestamped segments.
+    pub fn transcribe_audio(
+        &mut self,
+        asset_id: &str,
+        language: &str,
+    ) -> Result<crate::audio::transcription::TranscriptionResult, String> {
+        let project = self.project.as_ref().ok_or("No project open")?;
+        let asset = project
+            .find_media_asset(asset_id)
+            .ok_or_else(|| format!("Asset {} not found", asset_id))?;
+        let file_path = asset.file_path.clone();
+        drop(project); // Release the borrow
+
+        let config = crate::audio::transcription::TranscriptionConfig {
+            language: if language.is_empty() {
+                "auto".to_string()
+            } else {
+                language.to_string()
+            },
+            ..Default::default()
+        };
+
+        self.transcription_engine.transcribe(&file_path, &config, None)
+    }
+
     /// Toggle the enabled state of an effect on a clip
     pub fn toggle_effect(&mut self, clip_id: &str, effect_id: &str) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
@@ -691,7 +853,7 @@ impl EditorsProEngine {
 
     /// Get the available filter catalog
     pub fn get_filter_catalog(&self) -> Vec<FilterTypeInfo> {
-        crate::effects::filters::FilterType::all_filters()
+        let mut catalog: Vec<FilterTypeInfo> = crate::effects::filters::FilterType::all_filters()
             .iter()
             .map(|ft| FilterTypeInfo {
                 name: ft.display_name().to_string(),
@@ -710,7 +872,30 @@ impl EditorsProEngine {
                     })
                     .collect(),
             })
-            .collect()
+            .collect();
+
+        // Add chroma key to the effect catalog
+        let chroma_key_config = crate::effects::chroma_key::ChromaKeyConfig::default();
+        let chroma_key_effect = crate::effects::chroma_key::create_chroma_key_effect(&chroma_key_config);
+        catalog.push(FilterTypeInfo {
+            name: "Chroma Key".to_string(),
+            icon: "chroma_key".to_string(),
+            parameters: chroma_key_effect
+                .parameters
+                .iter()
+                .map(|p| EffectParameterInfo {
+                    name: p.name.clone(),
+                    display_name: p.display_name.clone(),
+                    value: p.value,
+                    min_value: p.min_value,
+                    max_value: p.max_value,
+                    default_value: p.default_value,
+                    step: p.step,
+                })
+                .collect(),
+        });
+
+        catalog
     }
 
     /// Get the available filter presets
@@ -1500,6 +1685,214 @@ impl EditorsProEngine {
         let monitor = MemoryMonitor::new();
         monitor.should_release_caches()
     }
+
+    // ─── GPU Acceleration (Phase 8) ──────────────────────────────────
+
+    /// Check if GPU rendering is available.
+    ///
+    /// Returns `true` when the preview renderer has successfully
+    /// initialized its wgpu device and GPU effects pipelines.
+    pub fn is_gpu_available(&self) -> bool {
+        self.renderer.is_gpu_accelerated()
+    }
+
+    /// Get detailed GPU adapter information.
+    ///
+    /// Returns an `EngineGpuInfo` struct describing the available GPU
+    /// adapter, backend type, VRAM, and which effects have GPU pipelines.
+    pub fn get_gpu_info(&self) -> EngineGpuInfo {
+        EngineGpuInfo {
+            available: self.renderer.is_gpu_accelerated(),
+            adapter_name: self.renderer.gpu_adapter_name().unwrap_or_default(),
+            backend: self.renderer.gpu_backend_name().unwrap_or_default(),
+            vram_bytes: 0, // VRAM query not yet implemented in wgpu
+            supported_effects: self.renderer.gpu_accelerated_effects().into_iter().map(String::from).collect(),
+            is_hardware_encoder_available: false, // HW encoder detection not yet implemented
+        }
+    }
+
+    /// Export the project using a hardware encoder when available.
+    ///
+    /// Currently falls back to the software encoder. Once hardware
+    /// encoding (NVENC, VideoToolbox, etc.) is integrated, this will
+    /// use the hardware path automatically.
+    pub fn export_video_hardware(
+        &mut self,
+        output_path: &str,
+        settings: ExportSettings,
+        progress_callback: &dyn Fn(ExportProgress),
+    ) -> Result<ExportResult, String> {
+        // For now, delegate to the software encoder.
+        // Phase 8+: will attempt HW encoder first and fall back.
+        log::info!("export_video_hardware: using encoder (HW path pending)");
+        self.export_video(output_path, settings, progress_callback)
+    }
+
+    /// Toggle GPU acceleration on or off.
+    ///
+    /// When `enabled` is `false`, the engine will use CPU-only rendering
+    /// even if a GPU is available. When `true`, GPU rendering is used
+    /// if available.
+    pub fn set_gpu_acceleration(&mut self, enabled: bool) -> Result<(), String> {
+        if enabled && !self.renderer.is_gpu_accelerated() {
+            log::warn!("GPU acceleration requested but GPU is not available");
+            return Err("GPU acceleration is not available on this device".to_string());
+        }
+        self.renderer.set_gpu_enabled(enabled);
+        if enabled {
+            log::info!("GPU acceleration ENABLED by user");
+        } else {
+            log::info!("GPU acceleration DISABLED by user (CPU-only mode)");
+        }
+        Ok(())
+    }
+
+    // ─── Proxy Workflow (Phase 10) ────────────────────────────────────
+
+    /// Generate a proxy for the given asset.
+    ///
+    /// Creates a lower-resolution copy of the source video for smooth
+    /// editing. The proxy is stored in the cache directory.
+    /// Returns the path to the generated proxy file.
+    pub fn generate_proxy(
+        &mut self,
+        asset_id: &str,
+        source_path: &str,
+    ) -> Result<String, String> {
+        let cache_dir = if self.cache_dir.is_empty() {
+            // Use a default cache directory
+            let dir = std::env::temp_dir().join("editors-pro").join("cache");
+            let dir_str = dir.to_string_lossy().to_string();
+            self.cache_dir = dir_str.clone();
+            dir_str
+        } else {
+            self.cache_dir.clone()
+        };
+
+        let quality = self.proxy_manager.quality();
+        let metadata = crate::proxy::generator::generate_proxy(
+            source_path,
+            asset_id,
+            quality,
+            &cache_dir,
+        )?;
+
+        let proxy_path = metadata.proxy_path.clone();
+        self.proxy_manager.register_proxy(metadata);
+
+        log::info!("Generated proxy for asset {} at {}", asset_id, proxy_path);
+        Ok(proxy_path)
+    }
+
+    /// Get the proxy path for an asset, if one has been generated.
+    ///
+    /// Returns `None` if no proxy exists for this asset.
+    pub fn get_proxy_path(&self, asset_id: &str) -> Option<String> {
+        self.proxy_manager.get_proxy_path(asset_id).map(String::from)
+    }
+
+    /// Set the proxy quality setting.
+    ///
+    /// Valid values: "off", "360p", "480p", "720p".
+    pub fn set_proxy_quality(&mut self, quality: &str) -> Result<(), String> {
+        let pq = crate::proxy::ProxyQuality::from_str_lossy(quality)
+            .ok_or_else(|| format!("Unknown proxy quality: {}", quality))?;
+        self.proxy_manager.set_quality(pq);
+        log::info!("Proxy quality set to {}", pq.display_name());
+        Ok(())
+    }
+
+    /// Get the current proxy quality setting.
+    pub fn get_proxy_quality(&self) -> String {
+        self.proxy_manager.quality().display_name().to_string()
+    }
+
+    /// Set the cache directory for proxy files.
+    pub fn set_cache_dir(&mut self, path: &str) {
+        self.cache_dir = path.to_string();
+    }
+
+    /// Clear all proxy files from the cache directory.
+    ///
+    /// Returns the total bytes freed.
+    pub fn clear_proxy_cache(&mut self) -> Result<u64, String> {
+        let cache_dir = if self.cache_dir.is_empty() {
+            let dir = std::env::temp_dir().join("editors-pro").join("cache");
+            dir.to_string_lossy().to_string()
+        } else {
+            self.cache_dir.clone()
+        };
+
+        let bytes_freed = crate::proxy::generator::clear_proxy_cache(&cache_dir)?;
+        self.proxy_manager.clear();
+        log::info!("Cleared proxy cache: {} bytes freed", bytes_freed);
+        Ok(bytes_freed)
+    }
+
+    /// Get the total size of all proxy files in the cache.
+    pub fn get_proxy_cache_size(&self) -> Result<u64, String> {
+        let cache_dir = if self.cache_dir.is_empty() {
+            let dir = std::env::temp_dir().join("editors-pro").join("cache");
+            dir.to_string_lossy().to_string()
+        } else {
+            self.cache_dir.clone()
+        };
+
+        crate::proxy::generator::get_total_proxy_cache_size(&cache_dir)
+    }
+
+    /// Get the number of active proxies.
+    pub fn proxy_count(&self) -> usize {
+        self.proxy_manager.active_proxy_count()
+    }
+
+    /// Get the preview path for an asset (proxy if available, original otherwise).
+    pub fn preview_path(&self, asset_id: &str, original_path: &str) -> String {
+        self.proxy_manager.preview_path(asset_id, original_path).to_string()
+    }
+
+    /// Enable or disable automatic proxy generation on media import.
+    pub fn set_auto_proxy(&mut self, enabled: bool) {
+        self.auto_proxy_enabled = enabled;
+        log::info!("Auto-proxy {}", if enabled { "enabled" } else { "disabled" });
+    }
+
+    /// Check whether automatic proxy generation is enabled.
+    pub fn is_auto_proxy_enabled(&self) -> bool {
+        self.auto_proxy_enabled
+    }
+
+    /// Get proxy information for all assets that have proxies.
+    ///
+    /// Returns a list of (asset_id, proxy_path, original_path, quality) tuples.
+    pub fn get_all_proxy_info(&self) -> Vec<(String, String, String, String)> {
+        self.proxy_manager
+            .proxies_iter()
+            .map(|(asset_id, meta)| {
+                (
+                    asset_id.clone(),
+                    meta.proxy_path.clone(),
+                    meta.original_path.clone(),
+                    meta.quality.display_name().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// Get the proxy metadata for a specific asset.
+    pub fn get_proxy_metadata(&self, asset_id: &str) -> Option<&crate::proxy::ProxyMetadata> {
+        self.proxy_manager.get_proxy_metadata(asset_id)
+    }
+
+    /// Get a reference to the proxy manager.
+    pub fn proxy_manager_ref(&self) -> &ProxyManager {
+        &self.proxy_manager
+    }
+
+    /// Get a mutable reference to the proxy manager.
+    pub fn proxy_manager_mut(&mut self) -> &mut ProxyManager {
+        &mut self.proxy_manager
+    }
 }
 
 // Helper trait to access timeline on Project
@@ -1838,4 +2231,14 @@ pub struct KeyframeInfo {
     pub time_ms: u64,
     pub value: f32,
     pub easing_name: String,
+}
+
+/// Internal GPU info returned by the engine (before conversion to bridge DTO)
+pub struct EngineGpuInfo {
+    pub available: bool,
+    pub adapter_name: String,
+    pub backend: String,
+    pub vram_bytes: u64,
+    pub supported_effects: Vec<String>,
+    pub is_hardware_encoder_available: bool,
 }
