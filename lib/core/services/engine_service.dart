@@ -24,7 +24,7 @@ class EngineService {
   EditorsProEngineApi? _api;
   bool _initialized = false;
   bool _initializing = false;
-  final Completer<void> _initCompleter = Completer<void>();
+  Completer<void>? _initCompleter;
 
   /// Whether the engine has been successfully initialized.
   bool get isInitialized => _initialized;
@@ -52,12 +52,13 @@ class EngineService {
     if (_initialized) return true;
 
     // If initialization is already in progress, wait for it.
-    if (_initializing) {
-      await _initCompleter.future;
+    if (_initializing && _initCompleter != null) {
+      await _initCompleter!.future;
       return _initialized;
     }
 
     _initializing = true;
+    _initCompleter = Completer<void>();
 
     try {
       developer.log('Initializing RustLib…', name: 'EngineService');
@@ -70,9 +71,23 @@ class EngineService {
         name: 'EngineService',
       );
 
-      // Create the API wrapper and initialize the native engine.
-      final engineApi = EditorsProEngineApi();
-      await engineApi.initialize();
+      // Get the API wrapper from the RustLib instance (which was
+      // initialized above).  The noOp fallback is used when the
+      // native library is not available.
+      final engineApi = RustLib.instance.api;
+
+      // If the engine is in noOp mode, skip native initialization.
+      if (engineApi.isEngineAvailable) {
+        await engineApi.initialize();
+      } else {
+        developer.log(
+          'Engine is in noOp mode — skipping native initialization',
+          name: 'EngineService',
+        );
+        // Don't mark as initialized since the engine isn't really available.
+        _initializing = false;
+        return false;
+      }
 
       _api = engineApi;
       _initialized = true;
@@ -82,8 +97,8 @@ class EngineService {
         name: 'EngineService',
       );
 
-      if (!_initCompleter.isCompleted) {
-        _initCompleter.complete();
+      if (!(_initCompleter?.isCompleted ?? true)) {
+        _initCompleter!.complete();
       }
 
       return true;
@@ -95,8 +110,8 @@ class EngineService {
         stackTrace: st,
       );
 
-      if (!_initCompleter.isCompleted) {
-        _initCompleter.completeError(e, st);
+      if (!(_initCompleter?.isCompleted ?? true)) {
+        _initCompleter!.completeError(e, st);
       }
 
       _initializing = false;
@@ -111,5 +126,6 @@ class EngineService {
     _api = null;
     _initialized = false;
     _initializing = false;
+    _initCompleter = null;
   }
 }

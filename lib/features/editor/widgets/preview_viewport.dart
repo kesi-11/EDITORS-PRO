@@ -9,7 +9,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/extensions/context_extensions.dart';
 import '../../../core/services/engine_service.dart';
+import '../../../data/models/project_model.dart';
+import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
+import 'text_overlay_handle.dart';
+import 'transform_handles.dart';
 
 /// Video preview viewport — displays the current frame rendered by the
 /// Rust engine and provides playback controls.
@@ -170,6 +174,12 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                         child: _buildPreviewContent(context, editorState),
                       ),
 
+                      // Text overlay handles for selected text clips
+                      _buildTextOverlayHandles(context, editorState),
+
+                      // Transform handles for selected clips (move, scale, rotate)
+                      _buildTransformHandles(context, editorState),
+
                       // Playback controls overlay
                       if (!editorState.isPlaying)
                         Center(
@@ -179,7 +189,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                               width: 64,
                               height: 64,
                               decoration: BoxDecoration(
-                                color: AppTheme.primary.withValues(alpha: 0.8),
+                                color: AppTheme.primary.withOpacity(0.8),
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
@@ -223,7 +233,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                             height: 14,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: AppTheme.primary.withValues(alpha: 0.6),
+                              color: AppTheme.primary.withOpacity(0.6),
                             ),
                           ),
                         ),
@@ -287,6 +297,128 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Build text overlay handles for any selected text clip.
+  ///
+  /// When a text clip is selected, this renders a draggable bounding box
+  /// with resize handles on the preview viewport.
+  Widget _buildTextOverlayHandles(BuildContext context, EditorState editorState) {
+    final project = ref.watch(currentProjectProvider);
+    if (project == null || editorState.selectedClipId == null) {
+      return const SizedBox.shrink();
+    }
+
+    // Find the selected clip and check if it's on a text track
+    ClipModel? selectedClip;
+    TrackModel? selectedTrack;
+    for (final track in project.tracks) {
+      for (final clip in track.clips) {
+        if (clip.id == editorState.selectedClipId) {
+          selectedClip = clip;
+          selectedTrack = track;
+          break;
+        }
+      }
+      if (selectedClip != null) break;
+    }
+
+    if (selectedClip == null || selectedTrack?.trackType != TrackType.text) {
+      return const SizedBox.shrink();
+    }
+
+    // Create a TextOverlayData from the clip model
+    final overlayData = TextOverlayData(
+      clipId: selectedClip.id,
+      text: selectedClip.assetId.startsWith('text_') ? 'Text' : selectedClip.assetId,
+      positionX: 0.5,
+      positionY: 0.5,
+      width: 0.4,
+      height: 0.1,
+      isSelected: true,
+    );
+
+    return TextOverlayHandle(
+      data: overlayData,
+      onPositionChanged: (clipId, posX, posY) {
+        ref.read(editorProvider.notifier).updateTextPosition(
+              clipId: clipId,
+              positionX: posX,
+              positionY: posY,
+            );
+      },
+      onTap: () {
+        // Keep the clip selected (already is)
+      },
+    );
+  }
+
+  /// Build transform handles for the selected clip.
+  ///
+  /// When a clip is selected and has keyframe support, this renders
+  /// move/scale/rotate handles on the preview viewport.
+  Widget _buildTransformHandles(BuildContext context, EditorState editorState) {
+    final project = ref.watch(currentProjectProvider);
+    if (project == null || editorState.selectedClipId == null) {
+      return const SizedBox.shrink();
+    }
+
+    // Don't show transform handles for text clips (those use TextOverlayHandle)
+    ClipModel? selectedClip;
+    TrackModel? selectedTrack;
+    for (final track in project.tracks) {
+      for (final clip in track.clips) {
+        if (clip.id == editorState.selectedClipId) {
+          selectedClip = clip;
+          selectedTrack = track;
+          break;
+        }
+      }
+      if (selectedClip != null) break;
+    }
+
+    if (selectedClip == null) return const SizedBox.shrink();
+    if (selectedTrack?.trackType == TrackType.text) return const SizedBox.shrink();
+
+    // Calculate clip bounds relative to the preview area
+    // Use a default centered rect for video/image clips
+    // In a full implementation, this would be derived from keyframe data
+    final bounds = Rect.fromCenter(
+      center: const Offset(160, 90), // Center of 16:9 preview at 320x180
+      width: 200,
+      height: 112,
+    );
+
+    return TransformHandles(
+      bounds: bounds,
+      rotation: 0.0,
+      isSelected: true,
+      onMove: (delta) {
+        // Move the clip position via keyframe or direct property
+        developer.log(
+          'Transform move: delta=${delta.dx},${delta.dy}',
+          name: 'PreviewViewport',
+        );
+      },
+      onScaleStart: (handleType) {
+        developer.log(
+          'Transform scale start: $handleType',
+          name: 'PreviewViewport',
+        );
+      },
+      onScaleUpdate: (delta) {
+        developer.log(
+          'Transform scale update: delta=${delta.dx},${delta.dy}',
+          name: 'PreviewViewport',
+        );
+      },
+      onRotate: (angleDelta) {
+        developer.log(
+          'Transform rotate: ${angleDelta.toStringAsFixed(3)} rad',
+          name: 'PreviewViewport',
+        );
+      },
     );
   }
 

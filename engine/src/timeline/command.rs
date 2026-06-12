@@ -229,7 +229,7 @@ impl Command for MoveClipCommand {
 
         self.old_track_id = Some(current_track_id.clone());
 
-        let clip = timeline.find_clip(&self.clip_id)
+        let (_, clip) = timeline.find_clip(&self.clip_id)
             .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
 
         self.old_start_ms = Some(clip.start_ms);
@@ -703,6 +703,297 @@ impl Command for AddTransitionCommand {
 
     fn description(&self) -> String {
         "Add transition".to_string()
+    }
+}
+
+/// Command to set a clip's speed curve
+#[derive(Debug, Clone)]
+pub struct SetSpeedCurveCommand {
+    pub clip_id: String,
+    pub new_curve: Option<super::speed_curve::SpeedCurve>,
+    pub old_curve: Option<super::speed_curve::SpeedCurve>,
+}
+
+impl SetSpeedCurveCommand {
+    pub fn new(clip_id: String, curve: super::speed_curve::SpeedCurve) -> Self {
+        Self {
+            clip_id,
+            new_curve: Some(curve),
+            old_curve: None,
+        }
+    }
+}
+
+impl Command for SetSpeedCurveCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        // Store old curve for undo
+        self.old_curve = Some(clip.speed_curve.clone());
+
+        // Apply new curve
+        let new_curve = self.new_curve.take().ok_or("No speed curve to set")?;
+        clip.set_speed_curve(new_curve);
+
+        // Recalculate timeline duration since speed affects clip duration
+        timeline.recalculate_duration();
+
+        Ok(CommandResult {
+            success: true,
+            message: "Speed curve set".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let old_curve = self.old_curve.take().ok_or("No old speed curve stored")?;
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        // Store the current curve for redo
+        self.new_curve = Some(clip.speed_curve.clone());
+        clip.set_speed_curve(old_curve);
+        timeline.recalculate_duration();
+
+        Ok(CommandResult {
+            success: true,
+            message: "Speed curve change undone".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Set speed curve".to_string()
+    }
+}
+
+/// Command to add a keyframe to a clip's property track
+#[derive(Debug, Clone)]
+pub struct AddKeyframeCommand {
+    pub clip_id: String,
+    pub property: String,
+    pub keyframe: Option<super::keyframe::Keyframe>,
+    pub keyframe_id: String,
+}
+
+impl AddKeyframeCommand {
+    pub fn new(clip_id: String, property: String, keyframe: super::keyframe::Keyframe) -> Self {
+        let keyframe_id = keyframe.id.clone();
+        Self {
+            clip_id,
+            property,
+            keyframe: Some(keyframe),
+            keyframe_id,
+        }
+    }
+}
+
+impl Command for AddKeyframeCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let keyframe = self.keyframe.take().ok_or("No keyframe to add")?;
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        // If a keyframe already exists at the same time, store it for undo
+        if let Some(track) = clip.keyframe_track(&self.property) {
+            if let Some(existing) = track.keyframes.iter().find(|k| k.time_ms == keyframe.time_ms) {
+                self.keyframe = Some(existing.clone());
+            } else {
+                self.keyframe = Some(keyframe.clone());
+            }
+        }
+
+        // Re-borrow to add the keyframe
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        clip.add_keyframe(&self.property, keyframe)?;
+
+        Ok(CommandResult {
+            success: true,
+            message: format!("Keyframe added to {}", self.property),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        // Remove the keyframe we added
+        let removed = clip.remove_keyframe(&self.property, &self.keyframe_id)?;
+        if !removed {
+            return Err(format!("Keyframe {} not found for undo", self.keyframe_id));
+        }
+
+        Ok(CommandResult {
+            success: true,
+            message: "Keyframe addition undone".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Add keyframe".to_string()
+    }
+}
+
+/// Command to remove a keyframe from a clip's property track
+#[derive(Debug, Clone)]
+pub struct RemoveKeyframeCommand {
+    pub clip_id: String,
+    pub property: String,
+    pub keyframe_id: String,
+    pub removed_keyframe: Option<super::keyframe::Keyframe>,
+}
+
+impl RemoveKeyframeCommand {
+    pub fn new(clip_id: String, property: String, keyframe_id: String) -> Self {
+        Self {
+            clip_id,
+            property,
+            keyframe_id,
+            removed_keyframe: None,
+        }
+    }
+}
+
+impl Command for RemoveKeyframeCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        // Find and store the keyframe before removing
+        if let Some(track) = clip.keyframe_track(&self.property) {
+            if let Some(kf) = track.get(&self.keyframe_id) {
+                self.removed_keyframe = Some(kf.clone());
+            }
+        }
+
+        // Remove the keyframe
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        let removed = clip.remove_keyframe(&self.property, &self.keyframe_id)?;
+        if !removed {
+            return Err(format!("Keyframe {} not found on clip {}", self.keyframe_id, self.clip_id));
+        }
+
+        Ok(CommandResult {
+            success: true,
+            message: "Keyframe removed".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let keyframe = self.removed_keyframe.take().ok_or("No keyframe to restore")?;
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        clip.add_keyframe(&self.property, keyframe)?;
+
+        Ok(CommandResult {
+            success: true,
+            message: "Keyframe removal undone".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Remove keyframe".to_string()
+    }
+}
+
+/// Command to update a keyframe's value and/or easing
+#[derive(Debug, Clone)]
+pub struct UpdateKeyframeCommand {
+    pub clip_id: String,
+    pub property: String,
+    pub keyframe_id: String,
+    pub new_value: Option<f32>,
+    pub new_easing: Option<super::speed_curve::EasingType>,
+    pub old_value: Option<f32>,
+    pub old_easing: Option<super::speed_curve::EasingType>,
+}
+
+impl UpdateKeyframeCommand {
+    pub fn new(
+        clip_id: String,
+        property: String,
+        keyframe_id: String,
+        value: Option<f32>,
+        easing: Option<super::speed_curve::EasingType>,
+    ) -> Self {
+        Self {
+            clip_id,
+            property,
+            keyframe_id,
+            new_value: value,
+            new_easing: easing,
+            old_value: None,
+            old_easing: None,
+        }
+    }
+}
+
+impl Command for UpdateKeyframeCommand {
+    fn execute(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+
+        // Store old values for undo
+        if let Some(track) = clip.keyframe_track(&self.property) {
+            if let Some(kf) = track.get(&self.keyframe_id) {
+                self.old_value = Some(kf.value);
+                self.old_easing = Some(kf.easing);
+            }
+        }
+
+        // Apply the update
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        let updated = clip.update_keyframe(
+            &self.property,
+            &self.keyframe_id,
+            self.new_value,
+            self.new_easing,
+        )?;
+        if !updated {
+            return Err(format!("Keyframe {} not found", self.keyframe_id));
+        }
+
+        Ok(CommandResult {
+            success: true,
+            message: "Keyframe updated".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn undo(&mut self, timeline: &mut Timeline) -> Result<CommandResult, String> {
+        let old_value = self.old_value.ok_or("No old value stored")?;
+        let old_easing = self.old_easing.ok_or("No old easing stored")?;
+
+        let clip = timeline.find_clip_mut(&self.clip_id)
+            .ok_or_else(|| format!("Clip {} not found", self.clip_id))?;
+        let updated = clip.update_keyframe(
+            &self.property,
+            &self.keyframe_id,
+            Some(old_value),
+            Some(old_easing),
+        )?;
+        if !updated {
+            return Err(format!("Keyframe {} not found for undo", self.keyframe_id));
+        }
+
+        Ok(CommandResult {
+            success: true,
+            message: "Keyframe update undone".to_string(),
+            affected_clip_ids: vec![self.clip_id.clone()],
+        })
+    }
+
+    fn description(&self) -> String {
+        "Update keyframe".to_string()
     }
 }
 

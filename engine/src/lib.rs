@@ -10,6 +10,8 @@ pub mod effects;
 pub mod export_engine;
 pub mod project;
 pub mod renderer;
+pub mod subtitle;
+pub mod system;
 pub mod timeline;
 
 use log::LevelFilter;
@@ -23,7 +25,10 @@ pub fn init_engine() -> Result<(), EngineError> {
         .filter_level(LevelFilter::Info)
         .try_init();
 
-    log::info!("EDITORS-PRO Engine v{} initializing", env!("CARGO_PKG_VERSION"));
+    log::info!(
+        "EDITORS-PRO Engine v{} initializing",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Initialize FFmpeg libraries
     ffmpeg_next::init().map_err(|e| {

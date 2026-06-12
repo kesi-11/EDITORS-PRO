@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../../core/services/engine_service.dart';
 import '../../../core/services/export_service.dart';
+import '../../../src/rust/api/bridge_api.dart';
 
 /// Export state that tracks the current status, progress, and result.
 class ExportState {
@@ -246,7 +247,7 @@ class ExportNotifier extends StateNotifier<ExportState> {
   }
 
   /// Build BridgeExportSettings from the UI parameters.
-  dynamic _buildSettings({
+  BridgeExportSettings _buildSettings({
     required String preset,
     required String codec,
     required String format,
@@ -265,19 +266,19 @@ class ExportNotifier extends StateNotifier<ExportState> {
 
     final (width, height, bitrate) = presetMap[preset] ?? (1920, 1080, 10000);
 
-    return {
-      'width': customWidth ?? width,
-      'height': customHeight ?? height,
-      'fps': 30.0,
-      'bitrate_kbps': customBitrate ?? bitrate,
-      'codec': codec,
-      'format': format,
-      'audio_bitrate_kbps': 128,
-      'audio_sample_rate': 44100,
-      'audio_channels': 2,
-      'include_audio': true,
-      'two_pass': false,
-    };
+    return BridgeExportSettings(
+      width: customWidth ?? width,
+      height: customHeight ?? height,
+      fps: 30.0,
+      bitrateKbps: customBitrate ?? bitrate,
+      codec: codec,
+      format: format,
+      audioBitrateKbps: 128,
+      audioSampleRate: 44100,
+      audioChannels: 2,
+      includeAudio: true,
+      twoPass: false,
+    );
   }
 }
 

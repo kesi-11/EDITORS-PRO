@@ -10,18 +10,26 @@
 
 use std::sync::Mutex;
 
+use flutter_rust_bridge::frb;
+
 use super::{
-    ClipInfo, EditorsProEngine, EffectInfo, EffectParameterInfo, FilterPresetInfo,
-    FilterTypeInfo, MediaAssetInfo, ProjectInfo, TrackInfo, TimelineState,
-    TransitionInfo, TransitionTypeInfo,
+    ClipInfo, EditorsProEngine, EffectInfo, EffectParameterInfo, FilterPresetInfo, FilterTypeInfo,
+    FontInfo, MediaAssetInfo, ProjectInfo, SubtitleEntry, TimelineState, TrackInfo, TransitionInfo,
+    TransitionTypeInfo,
 };
 use crate::audio::ducking::DuckingConfig;
-use crate::export_engine::{ExportProgress, ExportResult, ExportSettings, ExportStage, OutputFormat, VideoCodec};
+use crate::export_engine::{
+    ExportProgress, ExportResult, ExportSettings, ExportStage, OutputFormat, VideoCodec,
+};
 use crate::project::ProjectSettings;
+use crate::timeline::speed_curve::{EasingType, SpeedCurve, SpeedSegment};
 use crate::timeline::track::TrackType;
 
 /// Re-export DTOs for the bridge
-pub use super::{ClipInfo as BridgeClipInfo, MediaAssetInfo as BridgeMediaAssetInfo, ProjectInfo as BridgeProjectInfo, TrackInfo as BridgeTrackInfo};
+pub use super::{
+    ClipInfo as BridgeClipInfo, MediaAssetInfo as BridgeMediaAssetInfo,
+    ProjectInfo as BridgeProjectInfo, TrackInfo as BridgeTrackInfo,
+};
 
 /// Bridge-compatible project settings
 ///
@@ -144,10 +152,12 @@ impl From<ExportResult> for BridgeExportResult {
 /// Wraps `EditorsProEngine` in a `Mutex` so that every method can
 /// take `&self`, satisfying flutter_rust_bridge v2's requirement that
 /// the API struct is shared (not exclusively borrowed).
+#[frb]
 pub struct EditorsProEngineApi {
     inner: Mutex<EditorsProEngine>,
 }
 
+#[frb]
 impl EditorsProEngineApi {
     /// Create a new engine API instance.
     ///
@@ -165,7 +175,10 @@ impl EditorsProEngineApi {
     /// Must be called once before any other operations.
     /// Sets up logging and FFmpeg libraries.
     pub fn initialize(&self) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.initialize().map_err(|e| format!("{}", e))
     }
 
@@ -177,7 +190,10 @@ impl EditorsProEngineApi {
         name: String,
         settings: Option<BridgeProjectSettings>,
     ) -> Result<ProjectInfo, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let project_settings = settings.map(ProjectSettings::from);
         engine
             .create_project(&name, project_settings)
@@ -189,7 +205,10 @@ impl EditorsProEngineApi {
     /// The file at `file_path` must be accessible from the native side.
     /// Returns a `MediaAssetInfo` DTO with metadata extracted from the file.
     pub fn import_media(&self, file_path: String) -> Result<MediaAssetInfo, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.import_media(&file_path)
     }
 
@@ -197,11 +216,7 @@ impl EditorsProEngineApi {
     ///
     /// `track_type` must be one of "Video", "Audio", "Text", or "Effect".
     /// Returns a `TrackInfo` DTO for the new track.
-    pub fn add_track(
-        &self,
-        track_type: String,
-        name: Option<String>,
-    ) -> Result<TrackInfo, String> {
+    pub fn add_track(&self, track_type: String, name: Option<String>) -> Result<TrackInfo, String> {
         let tt = match track_type.as_str() {
             "Video" => TrackType::Video,
             "Audio" => TrackType::Audio,
@@ -209,7 +224,10 @@ impl EditorsProEngineApi {
             "Effect" => TrackType::Effect,
             other => return Err(format!("Unknown track type: {}", other)),
         };
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.add_track(tt, name)
     }
 
@@ -226,7 +244,10 @@ impl EditorsProEngineApi {
         start_ms: u64,
         duration_ms: u64,
     ) -> Result<ClipInfo, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.add_clip(&track_id, &asset_id, start_ms, duration_ms)
     }
 
@@ -237,7 +258,10 @@ impl EditorsProEngineApi {
         trim_start_ms: u64,
         trim_end_ms: u64,
     ) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.trim_clip(&clip_id, trim_start_ms, trim_end_ms)
     }
 
@@ -249,7 +273,10 @@ impl EditorsProEngineApi {
         clip_id: String,
         time_ms: u64,
     ) -> Result<(ClipInfo, ClipInfo), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.split_clip(&clip_id, time_ms)
     }
 
@@ -262,13 +289,19 @@ impl EditorsProEngineApi {
         new_start_ms: u64,
         new_track_id: Option<String>,
     ) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.move_clip(&clip_id, new_start_ms, new_track_id)
     }
 
     /// Remove a clip from the timeline.
     pub fn remove_clip(&self, clip_id: String) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.remove_clip(&clip_id)
     }
 
@@ -281,7 +314,10 @@ impl EditorsProEngineApi {
     /// side because Flutter does not have a built-in RGBA → widget
     /// decoder.
     pub fn get_frame(&self, time_ms: u64) -> Result<Vec<u8>, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
 
         // The engine returns a FrameData struct with width, height, and RGBA data.
         let frame_data = engine.get_frame(time_ms).map_err(|e| format!("{}", e))?;
@@ -302,7 +338,10 @@ impl EditorsProEngineApi {
         output_path: String,
         settings: BridgeExportSettings,
     ) -> Result<BridgeExportResult, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let export_settings = ExportSettings::from(settings);
 
         let result = engine.export_video(&output_path, export_settings, &|_progress| {
@@ -312,27 +351,49 @@ impl EditorsProEngineApi {
         Ok(BridgeExportResult::from(result))
     }
 
-    /// Export the project with progress reporting via a callback.
+    /// Export the project with progress reporting via a StreamSink.
     ///
-    /// This method runs the encoding loop on the calling thread but
-    /// invokes the `progress_callback` for each frame, allowing
-    /// Flutter to update its UI. The callback is invoked inside the
-    /// Mutex lock, so it should be lightweight (e.g., just store the
-    /// progress in a shared variable or send it through a channel).
+    /// This is the flutter_rust_bridge-compatible version of export.
+    /// Progress items are streamed to the Dart side as a `Stream<BridgeExportProgress>`.
+    /// The export runs on the calling thread; for non-blocking behavior,
+    /// call this from a background isolate.
+    pub fn export_video_streaming(
+        &self,
+        output_path: String,
+        settings: BridgeExportSettings,
+        progress_sink: flutter_rust_bridge::StreamSink<BridgeExportProgress>,
+    ) -> Result<BridgeExportResult, String> {
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        let export_settings = ExportSettings::from(settings);
+
+        let result = engine.export_video(&output_path, export_settings, &|progress| {
+            let bridge_progress = BridgeExportProgress::from(progress);
+            let _ = progress_sink.add(bridge_progress);
+        })?;
+
+        Ok(BridgeExportResult::from(result))
+    }
+
+    /// Export the project with progress reporting via a simple polling approach.
     ///
-    /// For the StreamSink-based version (recommended for flutter_rust_bridge),
-    /// use `export_video_streaming()` which returns progress items as a Stream.
+    /// This is the fallback for when StreamSink is not available (e.g., tests).
+    /// Start the export, then poll `get_export_progress()` for updates.
     pub fn export_video_with_callback(
         &self,
         output_path: String,
         settings: BridgeExportSettings,
-        progress_callback: impl Fn(BridgeExportProgress),
     ) -> Result<BridgeExportResult, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let export_settings = ExportSettings::from(settings);
 
-        let result = engine.export_video(&output_path, export_settings, &|progress| {
-            progress_callback(BridgeExportProgress::from(progress));
+        let result = engine.export_video(&output_path, export_settings, &|_progress| {
+            // No-op for synchronous export without progress reporting
         })?;
 
         Ok(BridgeExportResult::from(result))
@@ -344,32 +405,47 @@ impl EditorsProEngineApi {
     /// and will abort early if set. This is safe to call from any
     /// thread (including the Flutter UI thread).
     pub fn cancel_export(&self) -> Result<(), String> {
-        let engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.cancel_export();
         Ok(())
     }
 
     /// Undo the last action.
     pub fn undo(&self) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.undo()
     }
 
     /// Redo the last undone action.
     pub fn redo(&self) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.redo()
     }
 
     /// Save the current project to an `.epp` file.
     pub fn save_project(&self, path: String) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.save_project(&path)
     }
 
     /// Load a project from an `.epp` file.
     pub fn load_project(&self, path: String) -> Result<ProjectInfo, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.load_project(&path)
     }
 
@@ -433,13 +509,19 @@ impl EditorsProEngineApi {
     ///
     /// Volume is clamped to 0.0–2.0 (0.0 = mute, 1.0 = normal, 2.0 = double).
     pub fn set_track_volume(&self, track_id: String, volume: f32) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.set_track_volume(&track_id, volume)
     }
 
     /// Toggle track visibility (mute/unmute for audio).
     pub fn toggle_track_visibility(&self, track_id: String) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.toggle_track_visibility(&track_id)
     }
 
@@ -453,7 +535,10 @@ impl EditorsProEngineApi {
         start_ms: u64,
         duration_ms: u64,
     ) -> Result<Vec<f32>, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.get_audio_samples_range(&asset_id, start_ms, duration_ms)
     }
 
@@ -461,12 +546,11 @@ impl EditorsProEngineApi {
     ///
     /// Returns interleaved f32 PCM samples for the mixed output.
     /// Respects each track's volume, visibility, and ducking settings.
-    pub fn mix_audio_at_time(
-        &self,
-        start_ms: u64,
-        duration_ms: u64,
-    ) -> Result<Vec<f32>, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+    pub fn mix_audio_at_time(&self, start_ms: u64, duration_ms: u64) -> Result<Vec<f32>, String> {
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let mixed = engine.mix_audio_at_time(start_ms, duration_ms)?;
         Ok(mixed.samples)
     }
@@ -477,7 +561,10 @@ impl EditorsProEngineApi {
     /// rendering a waveform visualization. The `num_bins` parameter
     /// controls the resolution (typically matches the pixel width).
     pub fn get_waveform(&self, asset_id: String, num_bins: u32) -> Result<Vec<f32>, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let waveform = engine.get_waveform(&asset_id, num_bins)?;
         Ok(waveform.peaks)
     }
@@ -492,7 +579,10 @@ impl EditorsProEngineApi {
         enabled: bool,
         duck_level: f32,
     ) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.set_ducking(track_id, enabled, duck_level)
     }
 
@@ -544,19 +634,122 @@ impl EditorsProEngineApi {
 
     // ─── Effect Operations ─────────────────────────────────────────────
 
+    /// Add a text clip to a text track.
+    ///
+    /// Creates a new clip on the specified text track with the given
+    /// text content, font, color, and position.
+    /// Returns a `ClipInfo` DTO describing the newly created text clip.
+    pub fn add_text_clip(
+        &self,
+        track_id: String,
+        text: String,
+        font_family: String,
+        font_size: f32,
+        color_hex: String,
+        position_x: f32,
+        position_y: f32,
+        start_ms: u64,
+        duration_ms: u64,
+    ) -> Result<ClipInfo, String> {
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.add_text_clip(
+            &track_id,
+            &text,
+            &font_family,
+            font_size,
+            &color_hex,
+            position_x,
+            position_y,
+            start_ms,
+            duration_ms,
+        )
+    }
+
+    /// Set text position on a text clip.
+    ///
+    /// Updates the x/y position of a text clip. Position values are
+    /// normalized (0.0 to 1.0) relative to the frame dimensions.
+    pub fn set_text_position(
+        &self,
+        clip_id: String,
+        position_x: f32,
+        position_y: f32,
+    ) -> Result<(), String> {
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.set_text_position(&clip_id, position_x, position_y)
+    }
+
+    /// Set text style on a text clip.
+    ///
+    /// Updates the font family, font size, and color of a text clip.
+    pub fn set_text_style(
+        &self,
+        clip_id: String,
+        font_family: String,
+        font_size: f32,
+        color_hex: String,
+    ) -> Result<(), String> {
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.set_text_style(&clip_id, &font_family, font_size, &color_hex)
+    }
+
+    /// Get the list of available fonts.
+    ///
+    /// Returns a list of `FontInfo` objects describing each font
+    /// available for use in text overlays.
+    pub fn get_available_fonts(&self) -> Vec<FontInfo> {
+        match self.inner.lock() {
+            Ok(engine) => engine.get_available_fonts(),
+            Err(_) => vec![],
+        }
+    }
+
+    /// Import subtitles from an SRT file.
+    ///
+    /// Parses the given `.srt` file and returns a list of
+    /// `SubtitleEntry` objects with timing and text data.
+    pub fn import_subtitles(&self, file_path: String) -> Result<Vec<SubtitleEntry>, String> {
+        let engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.import_subtitles(&file_path)
+    }
+
+    // ─── Effect Operations ─────────────────────────────────────────────
+
     /// Add a filter effect to a clip.
     ///
     /// `filter_type_name` must match one of the display names from
     /// `get_filter_catalog()` (e.g., "Brightness", "Contrast", etc.).
     /// Returns an `EffectInfo` DTO describing the newly added effect.
-    pub fn add_effect(&self, clip_id: String, filter_type_name: String) -> Result<EffectInfo, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+    pub fn add_effect(
+        &self,
+        clip_id: String,
+        filter_type_name: String,
+    ) -> Result<EffectInfo, String> {
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.add_effect(&clip_id, &filter_type_name)
     }
 
     /// Remove an effect from a clip by its effect ID.
     pub fn remove_effect(&self, clip_id: String, effect_id: String) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.remove_effect(&clip_id, &effect_id)
     }
 
@@ -571,19 +764,28 @@ impl EditorsProEngineApi {
         param_name: String,
         value: f32,
     ) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.set_effect_parameter(&clip_id, &effect_id, &param_name, value)
     }
 
     /// Get the effects applied to a clip.
     pub fn get_clip_effects(&self, clip_id: String) -> Result<Vec<EffectInfo>, String> {
-        let engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.get_clip_effects(&clip_id)
     }
 
     /// Toggle the enabled/disabled state of an effect on a clip.
     pub fn toggle_effect(&self, clip_id: String, effect_id: String) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.toggle_effect(&clip_id, &effect_id)
     }
 
@@ -608,7 +810,10 @@ impl EditorsProEngineApi {
 
     /// Apply a filter preset to a clip (replaces all existing effects).
     pub fn apply_filter_preset(&self, clip_id: String, preset_id: String) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.apply_filter_preset(&clip_id, &preset_id)
     }
 
@@ -627,19 +832,29 @@ impl EditorsProEngineApi {
         duration_ms: u64,
         direction: String,
     ) -> Result<TransitionInfo, String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.add_transition(&clip_id, &transition_type, duration_ms, &direction)
     }
 
     /// Get the transition on a clip (in-point or out-point).
-    pub fn get_clip_transition(&self, clip_id: String, direction: String) -> Option<TransitionInfo> {
+    pub fn get_clip_transition(
+        &self,
+        clip_id: String,
+        direction: String,
+    ) -> Option<TransitionInfo> {
         let engine = self.inner.lock().ok()?;
         engine.get_clip_transition(&clip_id, &direction)
     }
 
     /// Remove a transition from a clip.
     pub fn remove_transition(&self, clip_id: String, direction: String) -> Result<(), String> {
-        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         engine.remove_transition(&clip_id, &direction)
     }
 
@@ -648,6 +863,149 @@ impl EditorsProEngineApi {
         match self.inner.lock() {
             Ok(engine) => engine.get_transition_catalog(),
             Err(_) => vec![],
+        }
+    }
+
+    // ─── Speed Curve & Keyframe Operations ────────────────────────────
+
+    /// Set the speed curve for a clip.
+    ///
+    /// The speed curve defines variable playback speed within the clip,
+    /// allowing smooth speed ramps (e.g., slow-motion to normal to fast-forward).
+    /// Pass a `BridgeSpeedCurve` with one or more `BridgeSpeedSegment` entries.
+    pub fn set_clip_speed_curve(&self, clip_id: String, curve: BridgeSpeedCurve) -> Result<(), String> {
+        let speed_curve = SpeedCurve::from(curve);
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.set_clip_speed_curve(&clip_id, speed_curve)
+    }
+
+    /// Add a keyframe to a clip's property track.
+    ///
+    /// `property` must be one of: "position_x", "position_y", "scale",
+    /// "rotation", "opacity".
+    /// `easing` must be one of: "Linear", "Ease In", "Ease Out",
+    /// "Ease In-Out", "Cubic Bezier".
+    /// Returns the keyframe ID on success.
+    pub fn add_keyframe(
+        &self,
+        clip_id: String,
+        property: String,
+        time_ms: u64,
+        value: f32,
+        easing: String,
+    ) -> Result<String, String> {
+        let easing_type = crate::timeline::speed_curve::EasingType::from_str_lossy(&easing)
+            .ok_or_else(|| format!("Unknown easing type: {}", easing))?;
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.add_keyframe(&clip_id, &property, time_ms, value, easing_type)
+    }
+
+    /// Remove a keyframe from a clip's property track.
+    pub fn remove_keyframe(
+        &self,
+        clip_id: String,
+        property: String,
+        keyframe_id: String,
+    ) -> Result<(), String> {
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.remove_keyframe(&clip_id, &property, &keyframe_id)
+    }
+
+    /// Update a keyframe's value and/or easing.
+    ///
+    /// Pass `None` (empty string for easing) to leave a value unchanged.
+    pub fn update_keyframe(
+        &self,
+        clip_id: String,
+        property: String,
+        keyframe_id: String,
+        value: Option<f32>,
+        easing: Option<String>,
+    ) -> Result<(), String> {
+        let easing_type = easing
+            .as_deref()
+            .and_then(|s| crate::timeline::speed_curve::EasingType::from_str_lossy(s));
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.update_keyframe(&clip_id, &property, &keyframe_id, value, easing_type)
+    }
+
+    /// Get all keyframes for a clip's property track.
+    ///
+    /// Returns a list of `KeyframeInfo` objects with id, time, value,
+    /// and easing name.
+    pub fn get_keyframes(
+        &self,
+        clip_id: String,
+        property: String,
+    ) -> Result<Vec<super::KeyframeInfo>, String> {
+        let engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.get_keyframes(&clip_id, &property)
+    }
+
+    /// Get the speed curve for a clip.
+    pub fn get_clip_speed_curve(
+        &self,
+        clip_id: String,
+    ) -> Result<super::SpeedCurveInfo, String> {
+        let engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.get_clip_speed_curve(&clip_id)
+    }
+
+    /// Get current system metrics for memory monitoring.
+    ///
+    /// Returns RSS, peak memory, available system memory, pressure level,
+    /// and cache statistics. Use this to implement adaptive quality
+    /// and proactive cache eviction in the Flutter layer.
+    pub fn get_system_metrics(&self) -> crate::system::SystemMetrics {
+        let engine = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))
+            .unwrap_or_else(|_| {
+                // If lock is poisoned, return zeroed metrics
+                crate::system::SystemMetrics {
+                    memory_rss_bytes: 0,
+                    memory_peak_bytes: 0,
+                    system_available_bytes: 0,
+                    system_total_bytes: 0,
+                    pressure_level: crate::system::MemoryPressureLevel::Normal,
+                    cached_frames: 0,
+                    cached_audio_buffers: 0,
+                }
+            });
+        engine.get_system_metrics()
+    }
+
+    /// Check if memory pressure is detected.
+    ///
+    /// Returns `true` if the engine is under warning or critical memory
+    /// pressure, suggesting that caches should be released.
+    pub fn is_memory_pressure(&self) -> bool {
+        let engine = self
+            .inner
+            .lock()
+            .map_err(|_| false);
+        match engine {
+            Ok(e) => e.is_memory_pressure(),
+            Err(_) => false,
         }
     }
 }
@@ -701,12 +1059,7 @@ fn encode_rgba_to_png(rgba_data: &[u8], width: u32, height: u32) -> Result<Vec<u
 
     let mut png_buf = std::io::Cursor::new(Vec::with_capacity(expected_size / 4));
     image::codecs::png::PngEncoder::new(&mut png_buf)
-        .write_image(
-            rgba_data,
-            width,
-            height,
-            image::ExtendedColorType::Rgba8,
-        )
+        .write_image(rgba_data, width, height, image::ExtendedColorType::Rgba8)
         .map_err(|e| format!("PNG encoding failed: {}", e))?;
 
     Ok(png_buf.into_inner())
@@ -753,4 +1106,40 @@ pub struct BridgeAudioInfo {
     pub channels: u32,
     pub duration_ms: u64,
     pub codec_name: String,
+}
+
+/// Bridge-compatible speed segment
+///
+/// Represents a single segment of a speed curve with start/end times
+/// and speed values, plus an easing function name.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgeSpeedSegment {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub start_speed: f32,
+    pub end_speed: f32,
+    pub easing_name: String,
+}
+
+/// Bridge-compatible speed curve
+///
+/// A speed curve is composed of one or more speed segments that define
+/// variable playback speed within a clip. Use this to create smooth
+/// speed ramps (e.g., slow-motion to normal to fast-forward).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgeSpeedCurve {
+    pub segments: Vec<BridgeSpeedSegment>,
+}
+
+impl From<BridgeSpeedCurve> for SpeedCurve {
+    fn from(bc: BridgeSpeedCurve) -> Self {
+        let segments: Vec<SpeedSegment> = bc.segments.into_iter().map(|seg| {
+            let easing = EasingType::from_str_lossy(&seg.easing_name)
+                .unwrap_or(EasingType::Linear);
+            SpeedSegment::new(seg.start_ms, seg.end_ms, seg.start_speed, seg.end_speed, easing)
+        }).collect();
+        let mut curve = SpeedCurve::constant(1.0);
+        curve.segments = segments;
+        curve
+    }
 }

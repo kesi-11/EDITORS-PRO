@@ -36,8 +36,9 @@ rayon = "1.10"
 # Image processing (for thumbnail generation)
 image = "0.25"
 
-# GPU compute (Phase 3 - placeholder)
-# wgpu = "22.0"
+# GPU compute — wgpu for compute shader effects (Vulkan on Android, Metal on iOS)
+wgpu = { version = "22.0", features = ["webgpu"] }
+pollster = "0.3"
 
 # Audio processing (Phase 2+)
 # cpal = "0.15"
@@ -52,13 +53,11 @@ zip = "2.2"
 # Memory-aligned data for GPU interop
 bytemuck = "1.16"
 
-# Flutter Rust Bridge (for StreamSink support in export progress)
-# Only needed when using StreamSink<T> in bridge_api.rs
-flutter_rust_bridge = { version = "2.9", optional = true }
+# Flutter Rust Bridge (required for StreamSink support in bridge_api.rs)
+flutter_rust_bridge = "2.9"
 
 [features]
 default = []
-streaming = ["flutter_rust_bridge"]
 
 # Android NDK bindings (for MediaCodec hardware acceleration)
 [target.'cfg(target_os = "android")'.dependencies]

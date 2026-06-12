@@ -433,7 +433,7 @@ class _SettingsSlider extends StatelessWidget {
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children [
+          children: [
               Text(label, style: context.textTheme.bodyMedium),
               Text(
                 '${value.round()} $unit',

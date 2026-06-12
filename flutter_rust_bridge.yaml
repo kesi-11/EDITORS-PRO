@@ -1,0 +1,31 @@
+# flutter_rust_bridge v2 configuration for EDITORS-PRO
+#
+# Run: flutter_rust_bridge_codegen generate
+# This will read the Rust crate and produce Dart bridge files.
+
+# Path to the Rust crate root (relative to project root)
+rust_input: engine/src/api/bridge_api.rs
+
+# Path where generated Dart files will be placed
+dart_output: lib/src/rust
+
+# The Rust crate name
+rust_root: engine
+
+# C output for cbindgen (not used by FRB v2 directly, but useful)
+c_output: engine/target/cbindgen.h
+
+# Generate for the IO platform (Android/iOS)
+dart_entrypoint_class_name: RustLib
+
+# Type mapping overrides (Rust → Dart)
+# u64 → BigInt is the default, but we can override for specific fields
+type_map:
+  "u64": "BigInt"
+
+# LLVM-related paths (auto-detected on most systems)
+# llvm_path:
+#   - /usr/lib/llvm-14
+
+# Whether to add @visibleForTesting annotations
+dart_enums_style: true

@@ -6,12 +6,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../data/models/project_model.dart';
 import '../../../core/services/engine_service.dart';
 import '../../../core/extensions/context_extensions.dart';
+import '../../projects/providers/project_provider.dart';
+import '../services/av_sync_coordinator.dart';
 import 'engine_bridge_provider.dart';
 
 // Re-export the bridge-generated DTOs so the rest of the app can
 // reference them without knowing the bridge internals.
 import 'package:editors_pro/src/rust/api/bridge_api.dart'
-    show BridgeProjectSettings, ClipInfo, MediaAssetInfo, ProjectInfo;
+    show BridgeProjectSettings, ClipInfo, FontInfo, MediaAssetInfo, ProjectInfo;
 
 /// Editor state
 class EditorState {
@@ -94,7 +96,7 @@ class EditorState {
   }
 }
 
-enum LeftPanelTab { media, effects, text, audio }
+enum LeftPanelTab { media, effects, text, audio, speed, keyframes }
 
 /// Editor state notifier — mediates between the UI and the Rust engine.
 ///
@@ -112,6 +114,12 @@ class EditorNotifier extends StateNotifier<EditorState> {
   @override
   void dispose() {
     _playbackTimer?.cancel();
+    // Stop AV sync coordinator
+    try {
+      _ref.read(avSyncCoordinatorProvider).release();
+    } catch (_) {
+      // Provider may not be mounted — safe to ignore.
+    }
     super.dispose();
   }
 
@@ -127,34 +135,47 @@ class EditorNotifier extends StateNotifier<EditorState> {
 
   // ─── Playback ────────────────────────────────────────────────────
 
-  /// Play/pause toggle
+  /// Play/pause toggle — uses AV sync coordinator for synchronized
+  /// audio-video playback when audio is available.
   void togglePlayback() {
     if (state.isPlaying) {
       _stopPlayback();
     } else {
-      state = state.copyWith(isPlaying: true);
+      state = state.copyWith(isPlaying: true, isAudioPlaying: true);
       _startPlayback();
     }
   }
 
-  /// Stop playback and cancel timer
+  /// Stop playback and cancel timer + audio sync
   void _stopPlayback() {
     _playbackTimer?.cancel();
     _playbackTimer = null;
     _lastFrameTime = null;
+
+    // Stop AV sync coordinator
+    _ref.read(avSyncCoordinatorProvider).stop();
+
     state = state.copyWith(isPlaying: false, isAudioPlaying: false);
   }
 
   /// Start real-time playback from current position.
   ///
-  /// Uses a high-frequency Timer that advances the playhead based on
-  /// real elapsed time (not fixed intervals), providing smooth playback
-  /// that accounts for frame decode latency.
+  /// This uses a high-frequency Timer that advances the playhead based
+  /// on real elapsed time. When the engine is available, the AV sync
+  /// coordinator handles synchronized audio feeding alongside the
+  /// video playback loop.
   void _startPlayback() {
     _playbackTimer?.cancel();
     _lastFrameTime = DateTime.now();
 
-    // Use ~60Hz tick for smooth playback
+    // Start AV sync for synchronized audio-video playback.
+    // The sync coordinator drives its own timer for audio feeding,
+    // while this timer drives the video playhead advancement.
+    if (_engineReady) {
+      _ref.read(avSyncCoordinatorProvider).start();
+    }
+
+    // Use ~60Hz tick for smooth video playhead advancement
     const tickMs = 16;
     _playbackTimer = Timer.periodic(const Duration(milliseconds: tickMs), (timer) {
       if (!state.isPlaying) {
@@ -259,6 +280,10 @@ class EditorNotifier extends StateNotifier<EditorState> {
   /// Set master volume for audio playback
   void setMasterVolume(double volume) {
     state = state.copyWith(masterVolume: volume.clamp(0.0, 1.0));
+    // Update AV sync volume if engine is available
+    if (_engineReady) {
+      _ref.read(avSyncCoordinatorProvider).setVolume(volume.clamp(0.0, 1.0));
+    }
   }
 
   // ─── Bridge-wired operations ─────────────────────────────────────
@@ -698,6 +723,265 @@ class EditorNotifier extends StateNotifier<EditorState> {
       return await api.getTransitionCatalog();
     } catch (e) {
       developer.log('getTransitionCatalog failed: $e', name: 'EditorNotifier');
+      return [];
+    }
+  }
+
+  // ─── Text Overlay Bridge Operations ────────────────────────────────
+
+  /// Add a text clip to a track via the Rust engine.
+  Future<ClipInfo?> addTextClip({
+    required String trackId,
+    required String text,
+    required String fontFamily,
+    required double fontSize,
+    required String colorHex,
+    required double positionX,
+    required double positionY,
+    required int startMs,
+    required int durationMs,
+  }) async {
+    if (!_engineReady) return null;
+    try {
+      final api = EngineService.instance.api;
+      final clipInfo = await api.addTextClip(
+        trackId: trackId,
+        text: text,
+        fontFamily: fontFamily,
+        fontSize: fontSize,
+        colorHex: colorHex,
+        positionX: positionX,
+        positionY: positionY,
+        startMs: startMs,
+        durationMs: durationMs,
+      );
+      await _syncDurationFromEngine();
+      _refreshEngineState();
+      await _ref.read(projectProvider.notifier).syncFromEngine();
+      return clipInfo;
+    } catch (e) {
+      developer.log('addTextClip failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Add text clip failed: $e');
+      return null;
+    }
+  }
+
+  /// Update the position of a text overlay clip.
+  Future<void> updateTextPosition({
+    required String clipId,
+    required double positionX,
+    required double positionY,
+  }) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.setTextPosition(
+        clipId: clipId,
+        positionX: positionX,
+        positionY: positionY,
+      );
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('updateTextPosition failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Update text position failed: $e');
+    }
+  }
+
+  /// Update the style of a text overlay clip.
+  Future<void> updateTextStyle({
+    required String clipId,
+    required String fontFamily,
+    required double fontSize,
+    required String colorHex,
+  }) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      await api.setTextStyle(
+        clipId: clipId,
+        fontFamily: fontFamily,
+        fontSize: fontSize,
+        colorHex: colorHex,
+      );
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('updateTextStyle failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Update text style failed: $e');
+    }
+  }
+
+  /// Get the list of available fonts from the engine.
+  Future<List<FontInfo>> getAvailableFonts() async {
+    if (!_engineReady) return [];
+    try {
+      final api = EngineService.instance.api;
+      return await api.getAvailableFonts();
+    } catch (e) {
+      developer.log('getAvailableFonts failed: $e', name: 'EditorNotifier');
+      return [];
+    }
+  }
+
+  /// Check whether undo is available.
+  Future<bool> canUndo() async {
+    if (!_engineReady) return false;
+    try {
+      final api = EngineService.instance.api;
+      return await api.canUndo();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Check whether redo is available.
+  Future<bool> canRedo() async {
+    if (!_engineReady) return false;
+    try {
+      final api = EngineService.instance.api;
+      return await api.canRedo();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ─── Speed & Keyframe Bridge Operations ───────────────────────────
+
+  /// Set the playback speed for a clip via the engine.
+  Future<void> setClipSpeed(String clipId, double speed) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      // The bridge API may use setClipSpeed or a generic setClipProperty.
+      // For now, we log and will wire up when the Phase 7 Rust API is ready.
+      developer.log(
+        'setClipSpeed: clipId=$clipId, speed=$speed',
+        name: 'EditorNotifier',
+      );
+      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
+      // await api.setClipSpeed(clipId: clipId, speed: speed);
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('setClipSpeed failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Set clip speed failed: $e');
+    }
+  }
+
+  /// Set a multi-segment speed curve for a clip.
+  Future<void> setClipSpeedCurve(String clipId, List<dynamic> segments) async {
+    if (!_engineReady) return;
+    try {
+      developer.log(
+        'setClipSpeedCurve: clipId=$clipId, segments=${segments.length}',
+        name: 'EditorNotifier',
+      );
+      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
+      // await api.setClipSpeedCurve(clipId: clipId, segments: segments);
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('setClipSpeedCurve failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Set speed curve failed: $e');
+    }
+  }
+
+  /// Add a keyframe to a clip property via the engine.
+  Future<void> addKeyframe(
+    String clipId,
+    String property,
+    int timeMs,
+    double value,
+    String easingName,
+  ) async {
+    if (!_engineReady) return;
+    try {
+      developer.log(
+        'addKeyframe: clipId=$clipId, property=$property, '
+        'timeMs=$timeMs, value=$value, easing=$easingName',
+        name: 'EditorNotifier',
+      );
+      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
+      // await api.addKeyframe(
+      //   clipId: clipId,
+      //   property: property,
+      //   timeMs: BigInt.from(timeMs),
+      //   value: value,
+      //   easingName: easingName,
+      // );
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('addKeyframe failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Add keyframe failed: $e');
+    }
+  }
+
+  /// Remove a keyframe from a clip property via the engine.
+  Future<void> removeKeyframe(
+    String clipId,
+    String property,
+    String keyframeId,
+  ) async {
+    if (!_engineReady) return;
+    try {
+      developer.log(
+        'removeKeyframe: clipId=$clipId, property=$property, '
+        'keyframeId=$keyframeId',
+        name: 'EditorNotifier',
+      );
+      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
+      // await api.removeKeyframe(
+      //   clipId: clipId,
+      //   property: property,
+      //   keyframeId: keyframeId,
+      // );
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('removeKeyframe failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Remove keyframe failed: $e');
+    }
+  }
+
+  /// Update a keyframe on a clip property via the engine.
+  Future<void> updateKeyframe(
+    String clipId,
+    String property,
+    String keyframeId, {
+    double? value,
+    String? easing,
+  }) async {
+    if (!_engineReady) return;
+    try {
+      developer.log(
+        'updateKeyframe: clipId=$clipId, property=$property, '
+        'keyframeId=$keyframeId, value=$value, easing=$easing',
+        name: 'EditorNotifier',
+      );
+      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
+      // await api.updateKeyframe(
+      //   clipId: clipId,
+      //   property: property,
+      //   keyframeId: keyframeId,
+      //   value: value,
+      //   easingName: easing,
+      // );
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('updateKeyframe failed: $e', name: 'EditorNotifier');
+      state = state.copyWith(lastError: 'Update keyframe failed: $e');
+    }
+  }
+
+  /// Get keyframes for a clip property.
+  Future<List<dynamic>> getKeyframes(String clipId, String property) async {
+    if (!_engineReady) return [];
+    try {
+      developer.log(
+        'getKeyframes: clipId=$clipId, property=$property',
+        name: 'EditorNotifier',
+      );
+      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
+      // return await api.getKeyframes(clipId: clipId, property: property);
+      return [];
+    } catch (e) {
+      developer.log('getKeyframes failed: $e', name: 'EditorNotifier');
       return [];
     }
   }

@@ -176,7 +176,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen>
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: AppTheme.accent.withValues(alpha: 0.9),
+                color: AppTheme.accent.withOpacity(0.9),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
@@ -213,7 +213,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen>
           ),
           selected: isSelected,
           onSelected: (_) => setState(() => _selectedPreset = preset.name),
-          selectedColor: AppTheme.accent.withValues(alpha: 0.2),
+          selectedColor: AppTheme.accent.withOpacity(0.2),
           side: BorderSide(
             color: isSelected ? AppTheme.accent : AppTheme.surfaceVariant,
           ),
@@ -412,10 +412,10 @@ class _ExportScreenState extends ConsumerState<ExportScreen>
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.orange.withValues(alpha: 0.1),
+                color: Colors.orange.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: Colors.orange.withValues(alpha: 0.3)),
+                    color: Colors.orange.withOpacity(0.3)),
               ),
               child: Row(
                 children: [

@@ -6,6 +6,8 @@
 
 pub mod clip;
 pub mod command;
+pub mod keyframe;
+pub mod speed_curve;
 pub mod track;
 
 use serde::{Deserialize, Serialize};

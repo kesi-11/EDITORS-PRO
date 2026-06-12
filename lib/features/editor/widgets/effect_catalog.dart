@@ -185,7 +185,7 @@ class _FilterCard extends StatelessWidget {
           color: AppTheme.surfaceVariant,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: enabled ? AppTheme.textDisabled.withValues(alpha: 0.2) : Colors.transparent,
+            color: enabled ? AppTheme.textDisabled.withOpacity(0.2) : Colors.transparent,
             width: 1,
           ),
         ),

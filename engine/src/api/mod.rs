@@ -4,34 +4,39 @@
 //! All methods are designed to be called via flutter_rust_bridge and
 //! return serializable results.
 
-pub mod commands;
 pub mod bridge_api;
+pub mod commands;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::audio::decoder::AudioDecoder;
+use crate::audio::ducking::DuckingConfig;
+use crate::audio::mixer::{AudioBuffer, AudioMixer, TrackAudioSource, VolumeEnvelope};
+use crate::audio::waveform::WaveformData;
 use crate::decoder::hardware::HardwareDecoder;
 use crate::decoder::VideoInfo;
 use crate::effects::filters::FilterType;
 use crate::export_engine::{
-    check_storage_space, ExportPipeline, ExportProgress, ExportResult, ExportSettings,
-    ExportStage, VideoEncoder,
+    check_storage_space, ExportPipeline, ExportProgress, ExportResult, ExportSettings, ExportStage,
+    VideoEncoder,
 };
 use crate::project::format::EppFormat;
 use crate::project::{MediaAsset, MediaType, Project, ProjectSettings};
 use crate::renderer::PreviewRenderer;
 use crate::timeline::clip::Clip;
-use crate::audio::decoder::AudioDecoder;
-use crate::audio::ducking::DuckingConfig;
-use crate::audio::mixer::{AudioBuffer, AudioMixer, TrackAudioSource, VolumeEnvelope};
-use crate::audio::waveform::WaveformData;
 use crate::timeline::command::{
-    AddClipCommand, AddEffectCommand, AddTransitionCommand, Command, CommandHistory,
-    MoveClipCommand, RemoveClipCommand, RemoveEffectCommand, SetEffectParameterCommand,
+    AddClipCommand, AddEffectCommand, AddKeyframeCommand, AddTransitionCommand, Command,
+    CommandHistory, MoveClipCommand, RemoveClipCommand, RemoveEffectCommand,
+    RemoveKeyframeCommand, SetEffectParameterCommand, SetSpeedCurveCommand,
     SetTrackVolumeCommand, SplitClipCommand, ToggleTrackVisibilityCommand, TrimClipCommand,
+    UpdateKeyframeCommand,
 };
+use crate::timeline::keyframe::{Keyframe, KEYFRAME_PROPERTIES};
+use crate::timeline::speed_curve::{EasingType, SpeedCurve, SpeedSegment};
 use crate::timeline::track::TrackType;
 use crate::timeline::Timeline;
+use crate::system::SystemMetrics;
 use crate::EngineError;
 
 /// The main engine API that Flutter interacts with
@@ -84,9 +89,15 @@ impl EditorsProEngine {
     }
 
     /// Create a new project
-    pub fn create_project(&mut self, name: &str, settings: Option<ProjectSettings>) -> Result<ProjectInfo, EngineError> {
+    pub fn create_project(
+        &mut self,
+        name: &str,
+        settings: Option<ProjectSettings>,
+    ) -> Result<ProjectInfo, EngineError> {
         if !self.initialized {
-            return Err(EngineError::InvalidState("Engine not initialized".to_string()));
+            return Err(EngineError::InvalidState(
+                "Engine not initialized".to_string(),
+            ));
         }
 
         let mut project = match settings {
@@ -95,9 +106,15 @@ impl EditorsProEngine {
         };
 
         // Add default tracks
-        project.timeline_mut().add_track(TrackType::Video, Some("Video 1".to_string()));
-        project.timeline_mut().add_track(TrackType::Audio, Some("Audio 1".to_string()));
-        project.timeline_mut().add_track(TrackType::Text, Some("Text".to_string()));
+        project
+            .timeline_mut()
+            .add_track(TrackType::Video, Some("Video 1".to_string()));
+        project
+            .timeline_mut()
+            .add_track(TrackType::Audio, Some("Audio 1".to_string()));
+        project
+            .timeline_mut()
+            .add_track(TrackType::Text, Some("Text".to_string()));
 
         let info = ProjectInfo::from_project(&project);
         self.project = Some(project);
@@ -138,7 +155,11 @@ impl EditorsProEngine {
     }
 
     /// Add a track to the timeline
-    pub fn add_track(&mut self, track_type: TrackType, name: Option<String>) -> Result<TrackInfo, String> {
+    pub fn add_track(
+        &mut self,
+        track_type: TrackType,
+        name: Option<String>,
+    ) -> Result<TrackInfo, String> {
         let project = self.project.as_mut().ok_or("No project open")?;
         project.timeline_mut().add_track(track_type, name);
 
@@ -158,7 +179,8 @@ impl EditorsProEngine {
         // Verify asset exists and determine clip duration
         let clip_duration = {
             let project = self.project.as_ref().ok_or("No project open")?;
-            let asset = project.find_media_asset(asset_id)
+            let asset = project
+                .find_media_asset(asset_id)
                 .ok_or_else(|| format!("Asset {} not found", asset_id))?;
             if duration_ms > 0 {
                 duration_ms
@@ -172,7 +194,8 @@ impl EditorsProEngine {
 
         let project = self.project.as_mut().ok_or("No project open")?;
         let command = AddClipCommand::new(track_id.to_string(), clip);
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
 
         log::info!("Added clip on track {} at {}ms", track_id, start_ms);
         Ok(clip_info)
@@ -187,19 +210,26 @@ impl EditorsProEngine {
     ) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
         let command = TrimClipCommand::new(clip_id.to_string(), trim_start_ms, trim_end_ms);
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
         Ok(())
     }
 
     /// Split a clip at the given timestamp
-    pub fn split_clip(&mut self, clip_id: &str, time_ms: u64) -> Result<(ClipInfo, ClipInfo), String> {
+    pub fn split_clip(
+        &mut self,
+        clip_id: &str,
+        time_ms: u64,
+    ) -> Result<(ClipInfo, ClipInfo), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
         let command = SplitClipCommand::new(clip_id.to_string(), time_ms);
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
 
         // Get the resulting clips
         let clips = project.timeline().get_clips_at_time(time_ms);
-        let results: Vec<ClipInfo> = clips.iter()
+        let results: Vec<ClipInfo> = clips
+            .iter()
             .filter(|(_, c)| c.start_ms == time_ms || c.end_ms() > time_ms)
             .map(|(_, c)| ClipInfo::from_clip(c))
             .collect();
@@ -212,10 +242,16 @@ impl EditorsProEngine {
     }
 
     /// Move a clip to a new position
-    pub fn move_clip(&mut self, clip_id: &str, new_start_ms: u64, new_track_id: Option<String>) -> Result<(), String> {
+    pub fn move_clip(
+        &mut self,
+        clip_id: &str,
+        new_start_ms: u64,
+        new_track_id: Option<String>,
+    ) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
         let command = MoveClipCommand::new(clip_id.to_string(), new_start_ms, new_track_id);
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
         Ok(())
     }
 
@@ -223,7 +259,8 @@ impl EditorsProEngine {
     pub fn remove_clip(&mut self, clip_id: &str) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
         let command = RemoveClipCommand::new(clip_id.to_string());
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
         Ok(())
     }
 
@@ -234,17 +271,22 @@ impl EditorsProEngine {
     /// the result.
     pub fn get_frame(&mut self, time_ms: u64) -> Result<crate::decoder::FrameData, EngineError> {
         if !self.initialized {
-            return Err(EngineError::InvalidState("Engine not initialized".to_string()));
+            return Err(EngineError::InvalidState(
+                "Engine not initialized".to_string(),
+            ));
         }
 
         // First, gather the information we need from the project (immutable borrow)
         let frame_request = {
-            let project = self.project.as_ref()
+            let project = self
+                .project
+                .as_ref()
                 .ok_or_else(|| EngineError::InvalidState("No project open".to_string()))?;
 
             // Find the active video clip at this time
             let video_clips = project.timeline().tracks_of_type(TrackType::Video);
-            let active_clip = video_clips.iter()
+            let active_clip = video_clips
+                .iter()
                 .flat_map(|t| t.clips.iter())
                 .find(|c| c.contains_time(time_ms));
 
@@ -257,7 +299,7 @@ impl EditorsProEngine {
         // Now decode the frame (mutable borrow of self.decoder)
         let video_frame = if let Some((clip, Some(file_path))) = frame_request {
             let relative_time = time_ms - clip.start_ms;
-            let source_time = clip.trim_start_ms + (relative_time as f32 * clip.speed) as u64;
+            let source_time = clip.trim_start_ms + (relative_time as f32 * clip.speed_at(relative_time)) as u64;
 
             // Check whether the decoder already has the correct file open.
             // If the file path differs from the currently-open file, close
@@ -274,18 +316,28 @@ impl EditorsProEngine {
                 self.current_file_path = None;
 
                 // Open the new file.
-                self.decoder.open(&file_path).map_err(|e| EngineError::DecoderError(e))?;
+                self.decoder
+                    .open(&file_path)
+                    .map_err(|e| EngineError::DecoderError(e))?;
                 self.current_file_path = Some(file_path);
             }
-            Some(self.decoder.decode_frame_at(source_time).map_err(|e| EngineError::DecoderError(e))?)
+            Some(
+                self.decoder
+                    .decode_frame_at(source_time)
+                    .map_err(|e| EngineError::DecoderError(e))?,
+            )
         } else {
             None
         };
 
         // Compose the frame with all layers
-        let project = self.project.as_ref()
+        let project = self
+            .project
+            .as_ref()
             .ok_or_else(|| EngineError::InvalidState("No project open".to_string()))?;
-        let composed = self.renderer.compose_frame(project.timeline(), time_ms, video_frame);
+        let composed = self
+            .renderer
+            .compose_frame(project.timeline(), time_ms, video_frame);
 
         Ok(composed)
     }
@@ -339,7 +391,8 @@ impl EditorsProEngine {
         }
 
         // ── Encoding ───────────────────────────────────────────────
-        self.export_canceled.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.export_canceled
+            .store(false, std::sync::atomic::Ordering::Relaxed);
 
         let mut encoder = VideoEncoder::new(&settings)?;
         encoder.open(output_path)?;
@@ -348,8 +401,15 @@ impl EditorsProEngine {
 
         for frame_num in 0..total_frames {
             // Check for cancellation
-            if self.export_canceled.load(std::sync::atomic::Ordering::Relaxed) {
-                log::info!("Export canceled by user at frame {}/{}", frame_num, total_frames);
+            if self
+                .export_canceled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                log::info!(
+                    "Export canceled by user at frame {}/{}",
+                    frame_num,
+                    total_frames
+                );
                 encoder.cancel();
                 return Err("Export canceled".to_string());
             }
@@ -363,7 +423,9 @@ impl EditorsProEngine {
             let rgba_frame = self.render_export_frame(time_ms)?;
 
             // Resize to output dimensions if needed
-            let resized = self.renderer.resize_frame(&rgba_frame, settings.width, settings.height);
+            let resized = self
+                .renderer
+                .resize_frame(&rgba_frame, settings.width, settings.height);
 
             // Encode the frame
             if let Err(e) = encoder.encode_rgba_frame(&resized.data, frame_num as i64) {
@@ -403,7 +465,8 @@ impl EditorsProEngine {
     /// The encoding loop checks this flag before each frame and will
     /// abort early if set. This is safe to call from any thread.
     pub fn cancel_export(&self) {
-        self.export_canceled.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.export_canceled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         log::info!("Export cancellation requested");
     }
 
@@ -417,7 +480,8 @@ impl EditorsProEngine {
             let project = self.project.as_ref().ok_or("No project open")?;
 
             let video_clips = project.timeline().tracks_of_type(TrackType::Video);
-            let active_clip = video_clips.iter()
+            let active_clip = video_clips
+                .iter()
                 .flat_map(|t| t.clips.iter())
                 .find(|c| c.contains_time(time_ms));
 
@@ -430,7 +494,7 @@ impl EditorsProEngine {
         // Decode the video frame
         let video_frame = if let Some((clip, Some(file_path))) = frame_request {
             let relative_time = time_ms - clip.start_ms;
-            let source_time = clip.trim_start_ms + (relative_time as f32 * clip.speed) as u64;
+            let source_time = clip.trim_start_ms + (relative_time as f32 * clip.speed_at(relative_time)) as u64;
 
             let needs_reopen = match &self.current_file_path {
                 Some(current) => current != &file_path,
@@ -443,14 +507,20 @@ impl EditorsProEngine {
                 self.decoder.open(&file_path).map_err(|e| e.to_string())?;
                 self.current_file_path = Some(file_path);
             }
-            Some(self.decoder.decode_frame_at(source_time).map_err(|e| e.to_string())?)
+            Some(
+                self.decoder
+                    .decode_frame_at(source_time)
+                    .map_err(|e| e.to_string())?,
+            )
         } else {
             None
         };
 
         // Compose the frame
         let project = self.project.as_ref().ok_or("No project open")?;
-        let composed = self.renderer.compose_frame(project.timeline(), time_ms, video_frame);
+        let composed = self
+            .renderer
+            .compose_frame(project.timeline(), time_ms, video_frame);
 
         Ok(composed)
     }
@@ -494,7 +564,10 @@ impl EditorsProEngine {
 
     /// Get the timeline duration
     pub fn get_timeline_duration(&self) -> u64 {
-        self.project.as_ref().map(|p| p.timeline().duration_ms).unwrap_or(0)
+        self.project
+            .as_ref()
+            .map(|p| p.timeline().duration_ms)
+            .unwrap_or(0)
     }
 
     /// Check if undo is available
@@ -526,11 +599,16 @@ impl EditorsProEngine {
     // ─── Effect Operations ──────────────────────────────────────────────
 
     /// Add a filter effect to a clip
-    pub fn add_effect(&mut self, clip_id: &str, filter_type_name: &str) -> Result<EffectInfo, String> {
+    pub fn add_effect(
+        &mut self,
+        clip_id: &str,
+        filter_type_name: &str,
+    ) -> Result<EffectInfo, String> {
         let project = self.project.as_mut().ok_or("No project open")?;
 
         // Parse the filter type
-        let filter_type = crate::effects::filters::FilterType::all_filters().iter()
+        let filter_type = crate::effects::filters::FilterType::all_filters()
+            .iter()
             .find(|ft| ft.display_name().eq_ignore_ascii_case(filter_type_name))
             .ok_or_else(|| format!("Unknown filter type: {}", filter_type_name))?
             .clone();
@@ -538,14 +616,17 @@ impl EditorsProEngine {
         // Create the effect
         let mut effect = filter_type.to_effect();
         // Assign the next order number
-        let clip = project.timeline().find_clip(clip_id)
+        let (_, clip) = project
+            .timeline()
+            .find_clip(clip_id)
             .ok_or_else(|| format!("Clip {} not found", clip_id))?;
         effect.order = clip.effects.len() as u32;
 
         let effect_info = EffectInfo::from_effect(&effect);
 
         let command = AddEffectCommand::new(clip_id.to_string(), effect);
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
 
         log::info!("Added {} effect to clip {}", filter_type_name, clip_id);
         Ok(effect_info)
@@ -555,7 +636,8 @@ impl EditorsProEngine {
     pub fn remove_effect(&mut self, clip_id: &str, effect_id: &str) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
         let command = RemoveEffectCommand::new(clip_id.to_string(), effect_id.to_string());
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
         log::info!("Removed effect {} from clip {}", effect_id, clip_id);
         Ok(())
     }
@@ -575,14 +657,17 @@ impl EditorsProEngine {
             param_name.to_string(),
             value,
         );
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
         Ok(())
     }
 
     /// Get the effects applied to a clip
     pub fn get_clip_effects(&self, clip_id: &str) -> Result<Vec<EffectInfo>, String> {
         let project = self.project.as_ref().ok_or("No project open")?;
-        let clip = project.timeline().find_clip(clip_id)
+        let (_, clip) = project
+            .timeline()
+            .find_clip(clip_id)
             .ok_or_else(|| format!("Clip {} not found", clip_id))?;
         Ok(clip.effects.iter().map(EffectInfo::from_effect).collect())
     }
@@ -590,9 +675,13 @@ impl EditorsProEngine {
     /// Toggle the enabled state of an effect on a clip
     pub fn toggle_effect(&mut self, clip_id: &str, effect_id: &str) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
-        let clip = project.timeline_mut().find_clip_mut(clip_id)
+        let clip = project
+            .timeline_mut()
+            .find_clip_mut(clip_id)
             .ok_or_else(|| format!("Clip {} not found", clip_id))?;
-        let effect = clip.effects.iter_mut()
+        let effect = clip
+            .effects
+            .iter_mut()
             .find(|e| e.id == effect_id)
             .ok_or_else(|| format!("Effect {} not found", effect_id))?;
         effect.toggle_enabled();
@@ -602,12 +691,15 @@ impl EditorsProEngine {
 
     /// Get the available filter catalog
     pub fn get_filter_catalog(&self) -> Vec<FilterTypeInfo> {
-        crate::effects::filters::FilterType::all_filters().iter().map(|ft| {
-            FilterTypeInfo {
+        crate::effects::filters::FilterType::all_filters()
+            .iter()
+            .map(|ft| FilterTypeInfo {
                 name: ft.display_name().to_string(),
                 icon: ft.icon().to_string(),
-                parameters: ft.default_parameters().iter().map(|p| {
-                    EffectParameterInfo {
+                parameters: ft
+                    .default_parameters()
+                    .iter()
+                    .map(|p| EffectParameterInfo {
                         name: p.name.clone(),
                         display_name: p.display_name.clone(),
                         value: p.value,
@@ -615,42 +707,47 @@ impl EditorsProEngine {
                         max_value: p.max_value,
                         default_value: p.default_value,
                         step: p.step,
-                    }
-                }).collect(),
-            }
-        }).collect()
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
     /// Get the available filter presets
     pub fn get_filter_presets(&self) -> Vec<FilterPresetInfo> {
-        crate::effects::filters::FilterPreset::built_in_presets().iter().map(|p| {
-            FilterPresetInfo {
+        crate::effects::filters::FilterPreset::built_in_presets()
+            .iter()
+            .map(|p| FilterPresetInfo {
                 id: p.id.clone(),
                 name: p.name.clone(),
                 description: p.description.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     /// Apply a filter preset to a clip (replaces all existing effects)
     pub fn apply_filter_preset(&mut self, clip_id: &str, preset_id: &str) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
 
-        let preset = crate::effects::filters::FilterPreset::built_in_presets().iter()
+        let preset = crate::effects::filters::FilterPreset::built_in_presets()
+            .iter()
             .find(|p| p.id == preset_id)
             .ok_or_else(|| format!("Preset {} not found", preset_id))?;
 
         let effects = preset.to_effects();
 
         // Remove all existing effects first
-        let clip = project.timeline_mut().find_clip_mut(clip_id)
+        let clip = project
+            .timeline_mut()
+            .find_clip_mut(clip_id)
             .ok_or_else(|| format!("Clip {} not found", clip_id))?;
         clip.effects.clear();
 
         // Add the preset effects
         for effect in effects {
             let command = AddEffectCommand::new(clip_id.to_string(), effect);
-            self.command_history.execute(Box::new(command), project.timeline_mut())?;
+            self.command_history
+                .execute(Box::new(command), project.timeline_mut())?;
         }
 
         log::info!("Applied preset {} to clip {}", preset_id, clip_id);
@@ -677,12 +774,17 @@ impl EditorsProEngine {
             .ok_or_else(|| format!("Unknown transition type: {}", transition_type))?;
 
         // Find the neighboring clip for the transition
-        let clip = project.timeline().find_clip(clip_id)
+        let (_, clip) = project
+            .timeline()
+            .find_clip(clip_id)
             .ok_or_else(|| format!("Clip {} not found", clip_id))?;
 
         let neighbor_id = if direction == "in" {
             // Find the clip that ends before this clip starts
-            project.timeline().tracks.iter()
+            project
+                .timeline()
+                .tracks
+                .iter()
                 .flat_map(|t| t.clips.iter())
                 .filter(|c| c.end_ms() <= clip.start_ms)
                 .max_by_key(|c| c.end_ms())
@@ -690,7 +792,10 @@ impl EditorsProEngine {
                 .unwrap_or_default()
         } else {
             // Find the clip that starts after this clip ends
-            project.timeline().tracks.iter()
+            project
+                .timeline()
+                .tracks
+                .iter()
                 .flat_map(|t| t.clips.iter())
                 .filter(|c| c.start_ms >= clip.end_ms())
                 .min_by_key(|c| c.start_ms)
@@ -706,16 +811,22 @@ impl EditorsProEngine {
         } else {
             AddTransitionCommand::new_out(clip_id.to_string(), transition)
         };
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
 
-        log::info!("Added {} transition to clip {} ({})", transition_type, clip_id, direction);
+        log::info!(
+            "Added {} transition to clip {} ({})",
+            transition_type,
+            clip_id,
+            direction
+        );
         Ok(info)
     }
 
     /// Get the transition on a clip (in-point or out-point)
     pub fn get_clip_transition(&self, clip_id: &str, direction: &str) -> Option<TransitionInfo> {
         let project = self.project.as_ref()?;
-        let clip = project.timeline().find_clip(clip_id)?;
+        let (_, clip) = project.timeline().find_clip(clip_id)?;
         let transition = if direction == "in" {
             clip.transition_in.as_ref()
         } else {
@@ -727,7 +838,9 @@ impl EditorsProEngine {
     /// Remove a transition from a clip
     pub fn remove_transition(&mut self, clip_id: &str, direction: &str) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
-        let clip = project.timeline_mut().find_clip_mut(clip_id)
+        let clip = project
+            .timeline_mut()
+            .find_clip_mut(clip_id)
             .ok_or_else(|| format!("Clip {} not found", clip_id))?;
 
         if direction == "in" {
@@ -742,13 +855,193 @@ impl EditorsProEngine {
 
     /// Get the available transition types
     pub fn get_transition_catalog(&self) -> Vec<TransitionTypeInfo> {
-        crate::effects::transitions::TransitionType::all_transitions().iter().map(|tt| {
-            TransitionTypeInfo {
+        crate::effects::transitions::TransitionType::all_transitions()
+            .iter()
+            .map(|tt| TransitionTypeInfo {
                 name: tt.display_name().to_string(),
                 icon: tt.icon().to_string(),
                 default_duration_ms: tt.default_duration_ms(),
-            }
-        }).collect()
+            })
+            .collect()
+    }
+
+    // ─── Text Clip Operations ──────────────────────────────────────────
+
+    /// Add a text clip to a text track
+    pub fn add_text_clip(
+        &mut self,
+        track_id: &str,
+        text: &str,
+        font_family: &str,
+        font_size: f32,
+        color_hex: &str,
+        position_x: f32,
+        position_y: f32,
+        start_ms: u64,
+        duration_ms: u64,
+    ) -> Result<ClipInfo, String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+
+        // Verify the track exists and is a text track
+        let track = project
+            .timeline()
+            .find_track(track_id)
+            .ok_or_else(|| format!("Track {} not found", track_id))?;
+        if track.track_type != TrackType::Text {
+            return Err(format!("Track {} is not a text track", track_id));
+        }
+
+        // Create a new clip with text overlay data stored in properties
+        let mut clip = Clip::new("__text__", start_ms, duration_ms);
+
+        // Store text properties in the clip's custom properties map
+        clip.set_property(
+            "text_type".into(),
+            serde_json::Value::String("text_overlay".into()),
+        );
+        clip.set_property("content".into(), serde_json::Value::String(text.into()));
+        clip.set_property(
+            "font_family".into(),
+            serde_json::Value::String(font_family.into()),
+        );
+        clip.set_property("font_size".into(), serde_json::json!(font_size));
+        clip.set_property(
+            "color_hex".into(),
+            serde_json::Value::String(color_hex.into()),
+        );
+        clip.set_property("position_x".into(), serde_json::json!(position_x));
+        clip.set_property("position_y".into(), serde_json::json!(position_y));
+
+        let clip_info = ClipInfo::from_clip(&clip);
+        let command = AddClipCommand::new(track_id.to_string(), clip);
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
+
+        log::info!(
+            "Added text clip '{}' to track {} at {}ms",
+            text,
+            track_id,
+            start_ms
+        );
+        Ok(clip_info)
+    }
+
+    /// Set text position on a text clip
+    pub fn set_text_position(
+        &mut self,
+        clip_id: &str,
+        position_x: f32,
+        position_y: f32,
+    ) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let clip = project
+            .timeline_mut()
+            .find_clip_mut(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+
+        // Verify this is a text clip
+        let is_text = clip
+            .get_property("text_type")
+            .map(|v| v.as_str() == Some("text_overlay"))
+            .unwrap_or(false);
+        if !is_text {
+            return Err(format!("Clip {} is not a text clip", clip_id));
+        }
+
+        clip.set_property("position_x".into(), serde_json::json!(position_x));
+        clip.set_property("position_y".into(), serde_json::json!(position_y));
+
+        log::info!(
+            "Set text position on clip {} to ({:.2}, {:.2})",
+            clip_id,
+            position_x,
+            position_y
+        );
+        Ok(())
+    }
+
+    /// Set text style on a text clip
+    pub fn set_text_style(
+        &mut self,
+        clip_id: &str,
+        font_family: &str,
+        font_size: f32,
+        color_hex: &str,
+    ) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let clip = project
+            .timeline_mut()
+            .find_clip_mut(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+
+        // Verify this is a text clip
+        let is_text = clip
+            .get_property("text_type")
+            .map(|v| v.as_str() == Some("text_overlay"))
+            .unwrap_or(false);
+        if !is_text {
+            return Err(format!("Clip {} is not a text clip", clip_id));
+        }
+
+        clip.set_property(
+            "font_family".into(),
+            serde_json::Value::String(font_family.into()),
+        );
+        clip.set_property("font_size".into(), serde_json::json!(font_size));
+        clip.set_property(
+            "color_hex".into(),
+            serde_json::Value::String(color_hex.into()),
+        );
+
+        log::info!(
+            "Set text style on clip {}: family={}, size={:.1}, color={}",
+            clip_id,
+            font_family,
+            font_size,
+            color_hex
+        );
+        Ok(())
+    }
+
+    /// Get available fonts
+    pub fn get_available_fonts(&self) -> Vec<FontInfo> {
+        vec![
+            FontInfo {
+                name: "DejaVu Sans".into(),
+                family: "sans-serif".into(),
+                style: "Regular".into(),
+                is_builtin: true,
+            },
+            FontInfo {
+                name: "DejaVu Sans Bold".into(),
+                family: "sans-serif".into(),
+                style: "Bold".into(),
+                is_builtin: true,
+            },
+            FontInfo {
+                name: "DejaVu Serif".into(),
+                family: "serif".into(),
+                style: "Regular".into(),
+                is_builtin: true,
+            },
+            FontInfo {
+                name: "DejaVu Serif Bold".into(),
+                family: "serif".into(),
+                style: "Bold".into(),
+                is_builtin: true,
+            },
+            FontInfo {
+                name: "DejaVu Sans Mono".into(),
+                family: "monospace".into(),
+                style: "Regular".into(),
+                is_builtin: true,
+            },
+        ]
+    }
+
+    /// Import subtitles from an SRT file
+    pub fn import_subtitles(&self, file_path: &str) -> Result<Vec<SubtitleEntry>, String> {
+        crate::subtitle::parser::parse_srt_file(file_path)
     }
 
     // ─── Audio Operations ─────────────────────────────────────────────
@@ -757,7 +1050,8 @@ impl EditorsProEngine {
     pub fn set_track_volume(&mut self, track_id: &str, volume: f32) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
         let command = SetTrackVolumeCommand::new(track_id.to_string(), volume);
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
         log::info!("Set track {} volume to {:.2}", track_id, volume);
         Ok(())
     }
@@ -766,7 +1060,8 @@ impl EditorsProEngine {
     pub fn toggle_track_visibility(&mut self, track_id: &str) -> Result<(), String> {
         let project = self.project.as_mut().ok_or("No project open")?;
         let command = ToggleTrackVisibilityCommand::new(track_id.to_string());
-        self.command_history.execute(Box::new(command), project.timeline_mut())?;
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
         Ok(())
     }
 
@@ -784,7 +1079,8 @@ impl EditorsProEngine {
         // Find the asset's file path
         let file_path = {
             let project = self.project.as_ref().ok_or("No project open")?;
-            let asset = project.find_media_asset(asset_id)
+            let asset = project
+                .find_media_asset(asset_id)
                 .ok_or_else(|| format!("Asset {} not found", asset_id))?;
             asset.file_path.clone()
         };
@@ -794,15 +1090,20 @@ impl EditorsProEngine {
         let project = self.project.as_ref().ok_or("No project open")?;
         let sample_rate = project.settings.sample_rate;
 
-        let audio = self.audio_decoder.decode_all(sample_rate, 2)?;
+        let decoded = self.audio_decoder.decode_all(sample_rate, 2)?;
         self.audio_decoder.close();
+
+        // Convert DecodedAudio → AudioBuffer via the From impl
+        let audio: AudioBuffer = decoded.into();
 
         // Cache the result
         self.audio_cache.insert(asset_id.to_string(), audio.clone());
 
         log::info!(
             "Decoded audio for asset {}: {} samples ({}ms)",
-            asset_id, audio.samples.len(), audio.duration_ms
+            asset_id,
+            audio.samples.len(),
+            audio.duration_ms
         );
 
         Ok(audio)
@@ -832,7 +1133,9 @@ impl EditorsProEngine {
         let project = self.project.as_ref().ok_or("No project open")?;
 
         // Collect audio tracks and their clips
-        let audio_tracks: Vec<_> = project.timeline().tracks_of_type(TrackType::Audio)
+        let audio_tracks: Vec<_> = project
+            .timeline()
+            .tracks_of_type(TrackType::Audio)
             .into_iter()
             .filter(|t| t.visible)
             .collect();
@@ -871,7 +1174,9 @@ impl EditorsProEngine {
         }
 
         // Also include audio from video tracks
-        let video_tracks: Vec<_> = project.timeline().tracks_of_type(TrackType::Video)
+        let video_tracks: Vec<_> = project
+            .timeline()
+            .tracks_of_type(TrackType::Video)
             .into_iter()
             .filter(|t| t.visible)
             .collect();
@@ -911,8 +1216,7 @@ impl EditorsProEngine {
         for (track_id, config) in &self.ducking_configs {
             if config.enabled {
                 // Find the trigger track (voiceover)
-                let trigger_track = project.timeline().tracks.iter()
-                    .find(|t| &t.id == track_id);
+                let trigger_track = project.timeline().tracks.iter().find(|t| &t.id == track_id);
                 if let Some(trigger) = trigger_track {
                     // Collect trigger audio
                     for clip in &trigger.clips {
@@ -922,8 +1226,10 @@ impl EditorsProEngine {
                             continue;
                         }
                         if let Ok(trigger_audio) = self.get_audio_samples(&clip.asset_id) {
-                            let source_start = clip.trim_start_ms + (clip_start.max(start_ms) - clip_start);
-                            let segment = trigger_audio.segment(source_start, source_start + duration_ms);
+                            let source_start =
+                                clip.trim_start_ms + (clip_start.max(start_ms) - clip_start);
+                            let segment =
+                                trigger_audio.segment(source_start, source_start + duration_ms);
                             let mut mixed_mut = mixed.clone();
                             crate::audio::ducking::apply_ducking(&mut mixed_mut, &segment, config);
                         }
@@ -942,12 +1248,8 @@ impl EditorsProEngine {
     /// the pixel width of the waveform display).
     pub fn get_waveform(&mut self, asset_id: &str, num_bins: u32) -> Result<WaveformData, String> {
         let audio = self.get_audio_samples(asset_id)?;
-        let waveform = WaveformData::from_samples(
-            &audio.samples,
-            audio.sample_rate,
-            audio.channels,
-            num_bins,
-        );
+        let waveform =
+            WaveformData::from_samples(&audio.samples, audio.sample_rate, audio.channels, num_bins);
         Ok(waveform)
     }
 
@@ -964,20 +1266,33 @@ impl EditorsProEngine {
         let project = self.project.as_ref().ok_or("No project open")?;
 
         // Verify track exists
-        project.timeline().find_track(&track_id)
+        project
+            .timeline()
+            .find_track(&track_id)
             .ok_or_else(|| format!("Track {} not found", track_id))?;
 
-        let config = self.ducking_configs.entry(track_id.clone()).or_insert_with(DuckingConfig::default);
+        let config = self
+            .ducking_configs
+            .entry(track_id.clone())
+            .or_insert_with(DuckingConfig::default);
         config.enabled = enabled;
         config.duck_level = duck_level.clamp(0.0, 1.0);
 
-        log::info!("Set ducking for track {}: enabled={}, level={:.2}", track_id, enabled, duck_level);
+        log::info!(
+            "Set ducking for track {}: enabled={}, level={:.2}",
+            track_id,
+            enabled,
+            duck_level
+        );
         Ok(())
     }
 
     /// Get the ducking configuration for a track
     pub fn get_ducking_config(&self, track_id: &str) -> DuckingConfig {
-        self.ducking_configs.get(track_id).cloned().unwrap_or_default()
+        self.ducking_configs
+            .get(track_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Get the full timeline state as a DTO for Flutter
@@ -987,36 +1302,203 @@ impl EditorsProEngine {
     pub fn get_timeline_state(&self) -> Option<TimelineState> {
         let project = self.project.as_ref()?;
 
-        let tracks: Vec<TrackStateDto> = project.timeline().tracks.iter().map(|t| {
-            let clips: Vec<ClipStateDto> = t.clips.iter().map(|c| ClipStateDto {
-                id: c.id.clone(),
-                asset_id: c.asset_id.clone(),
-                start_ms: c.start_ms,
-                duration_ms: c.effective_duration(),
-                trim_start_ms: c.trim_start_ms,
-                trim_end_ms: c.trim_end_ms,
-                speed: c.speed,
-                opacity: c.opacity,
-                effects: c.effects.iter().map(EffectInfo::from_effect).collect(),
-                transition_in: c.transition_in.as_ref().map(TransitionInfo::from_transition),
-                transition_out: c.transition_out.as_ref().map(TransitionInfo::from_transition),
-            }).collect();
+        let tracks: Vec<TrackStateDto> = project
+            .timeline()
+            .tracks
+            .iter()
+            .map(|t| {
+                let clips: Vec<ClipStateDto> = t
+                    .clips
+                    .iter()
+                    .map(|c| ClipStateDto {
+                        id: c.id.clone(),
+                        asset_id: c.asset_id.clone(),
+                        start_ms: c.start_ms,
+                        duration_ms: c.effective_duration(),
+                        trim_start_ms: c.trim_start_ms,
+                        trim_end_ms: c.trim_end_ms,
+                        speed: c.speed(),
+                        opacity: c.opacity,
+                        effects: c.effects.iter().map(EffectInfo::from_effect).collect(),
+                        transition_in: c
+                            .transition_in
+                            .as_ref()
+                            .map(TransitionInfo::from_transition),
+                        transition_out: c
+                            .transition_out
+                            .as_ref()
+                            .map(TransitionInfo::from_transition),
+                    })
+                    .collect();
 
-            TrackStateDto {
-                id: t.id.clone(),
-                name: t.name.clone(),
-                track_type: format!("{}", t.track_type),
-                clips,
-                locked: t.locked,
-                visible: t.visible,
-                volume: t.volume,
-            }
-        }).collect();
+                TrackStateDto {
+                    id: t.id.clone(),
+                    name: t.name.clone(),
+                    track_type: format!("{}", t.track_type),
+                    clips,
+                    locked: t.locked,
+                    visible: t.visible,
+                    volume: t.volume,
+                }
+            })
+            .collect();
 
         Some(TimelineState {
             tracks,
             duration_ms: project.timeline().duration_ms,
         })
+    }
+
+    // ─── Speed Curve & Keyframe Operations ────────────────────────────
+
+    /// Set the speed curve for a clip
+    pub fn set_clip_speed_curve(&mut self, clip_id: &str, curve: SpeedCurve) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let command = SetSpeedCurveCommand::new(clip_id.to_string(), curve);
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
+        log::info!("Set speed curve for clip {}", clip_id);
+        Ok(())
+    }
+
+    /// Add a keyframe to a clip's property track
+    ///
+    /// Returns the keyframe ID on success.
+    pub fn add_keyframe(
+        &mut self,
+        clip_id: &str,
+        property: &str,
+        time_ms: u64,
+        value: f32,
+        easing: EasingType,
+    ) -> Result<String, String> {
+        // Validate property name
+        if !KEYFRAME_PROPERTIES.contains(&property) {
+            return Err(format!(
+                "Invalid keyframe property '{}'. Must be one of: {:?}",
+                property, KEYFRAME_PROPERTIES
+            ));
+        }
+
+        let keyframe = Keyframe::new(time_ms, value, easing);
+        let keyframe_id = keyframe.id.clone();
+
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let command = AddKeyframeCommand::new(
+            clip_id.to_string(),
+            property.to_string(),
+            keyframe,
+        );
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
+
+        log::info!(
+            "Added keyframe to clip {} property {} at {}ms",
+            clip_id,
+            property,
+            time_ms
+        );
+        Ok(keyframe_id)
+    }
+
+    /// Remove a keyframe from a clip's property track
+    pub fn remove_keyframe(
+        &mut self,
+        clip_id: &str,
+        property: &str,
+        keyframe_id: &str,
+    ) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let command = RemoveKeyframeCommand::new(
+            clip_id.to_string(),
+            property.to_string(),
+            keyframe_id.to_string(),
+        );
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
+        log::info!(
+            "Removed keyframe {} from clip {} property {}",
+            keyframe_id,
+            clip_id,
+            property
+        );
+        Ok(())
+    }
+
+    /// Update a keyframe's value and/or easing
+    pub fn update_keyframe(
+        &mut self,
+        clip_id: &str,
+        property: &str,
+        keyframe_id: &str,
+        value: Option<f32>,
+        easing: Option<EasingType>,
+    ) -> Result<(), String> {
+        let project = self.project.as_mut().ok_or("No project open")?;
+        let command = UpdateKeyframeCommand::new(
+            clip_id.to_string(),
+            property.to_string(),
+            keyframe_id.to_string(),
+            value,
+            easing,
+        );
+        self.command_history
+            .execute(Box::new(command), project.timeline_mut())?;
+        log::info!(
+            "Updated keyframe {} on clip {} property {}",
+            keyframe_id,
+            clip_id,
+            property
+        );
+        Ok(())
+    }
+
+    /// Get all keyframes for a clip's property track
+    pub fn get_keyframes(
+        &self,
+        clip_id: &str,
+        property: &str,
+    ) -> Result<Vec<KeyframeInfo>, String> {
+        let project = self.project.as_ref().ok_or("No project open")?;
+        let (_, clip) = project
+            .timeline()
+            .find_clip(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+
+        let track = clip.keyframe_track(property)
+            .ok_or_else(|| format!("Unknown keyframe property: {}", property))?;
+
+        Ok(track.keyframes.iter().map(|kf| KeyframeInfo {
+            id: kf.id.clone(),
+            time_ms: kf.time_ms,
+            value: kf.value,
+            easing_name: kf.easing.display_name().to_string(),
+        }).collect())
+    }
+
+    /// Get the speed curve for a clip
+    pub fn get_clip_speed_curve(&self, clip_id: &str) -> Result<SpeedCurveInfo, String> {
+        let project = self.project.as_ref().ok_or("No project open")?;
+        let (_, clip) = project
+            .timeline()
+            .find_clip(clip_id)
+            .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+
+        Ok(SpeedCurveInfo::from_curve(&clip.speed_curve))
+    }
+
+    /// Get current system metrics for memory monitoring
+    pub fn get_system_metrics(&self) -> SystemMetrics {
+        use crate::system::memory::MemoryMonitor;
+        let mut monitor = MemoryMonitor::new();
+        monitor.collect_metrics(0, self.audio_cache.len())
+    }
+
+    /// Check if the engine should reduce quality due to memory pressure
+    pub fn is_memory_pressure(&self) -> bool {
+        use crate::system::memory::MemoryMonitor;
+        let monitor = MemoryMonitor::new();
+        monitor.should_release_caches()
     }
 }
 
@@ -1152,7 +1634,7 @@ impl ClipInfo {
             duration_ms: clip.duration_ms,
             trim_start_ms: clip.trim_start_ms,
             trim_end_ms: clip.trim_end_ms,
-            speed: clip.speed,
+            speed: clip.speed(),
             opacity: clip.opacity,
             effects_count: clip.effects.len(),
             has_transition_in: clip.transition_in.is_some(),
@@ -1219,15 +1701,19 @@ impl EffectInfo {
             effect_type: format!("{:?}", effect.effect_type),
             enabled: effect.enabled,
             order: effect.order,
-            parameters: effect.parameters.iter().map(|p| EffectParameterInfo {
-                name: p.name.clone(),
-                display_name: p.display_name.clone(),
-                value: p.value,
-                min_value: p.min_value,
-                max_value: p.max_value,
-                default_value: p.default_value,
-                step: p.step,
-            }).collect(),
+            parameters: effect
+                .parameters
+                .iter()
+                .map(|p| EffectParameterInfo {
+                    name: p.name.clone(),
+                    display_name: p.display_name.clone(),
+                    value: p.value,
+                    min_value: p.min_value,
+                    max_value: p.max_value,
+                    default_value: p.default_value,
+                    step: p.step,
+                })
+                .collect(),
         }
     }
 }
@@ -1288,4 +1774,68 @@ pub struct TransitionTypeInfo {
     pub name: String,
     pub icon: String,
     pub default_duration_ms: u64,
+}
+
+/// Font info DTO for text overlay support
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FontInfo {
+    pub name: String,
+    pub family: String,
+    pub style: String,
+    pub is_builtin: bool,
+}
+
+/// Subtitle entry DTO for importing subtitle files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubtitleEntry {
+    pub index: u32,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
+/// Speed segment info DTO for bridge transfer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeedSegmentInfo {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub start_speed: f32,
+    pub end_speed: f32,
+    pub easing_name: String,
+}
+
+impl SpeedSegmentInfo {
+    fn from_segment(seg: &SpeedSegment) -> Self {
+        Self {
+            start_ms: seg.start_ms,
+            end_ms: seg.end_ms,
+            start_speed: seg.start_speed,
+            end_speed: seg.end_speed,
+            easing_name: seg.easing.display_name().to_string(),
+        }
+    }
+}
+
+/// Speed curve info DTO for bridge transfer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeedCurveInfo {
+    pub segments: Vec<SpeedSegmentInfo>,
+}
+
+impl SpeedCurveInfo {
+    /// Create from a SpeedCurve
+    pub fn from_curve(curve: &SpeedCurve) -> Self {
+        Self {
+            segments: curve.segments.iter().map(SpeedSegmentInfo::from_segment).collect(),
+        }
+    }
+}
+
+/// Keyframe info DTO for bridge transfer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyframeInfo {
+    pub id: String,
+    pub time_ms: u64,
+    pub value: f32,
+    pub easing_name: String,
 }

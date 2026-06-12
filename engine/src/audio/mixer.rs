@@ -62,6 +62,50 @@ impl AudioBuffer {
         }
         (self.samples.iter().map(|s| s * s).sum::<f32>() / self.samples.len() as f32).sqrt()
     }
+
+    /// Get a segment of the audio between start_ms and end_ms
+    ///
+    /// Returns a new AudioBuffer containing only the samples
+    /// in the specified time range.
+    pub fn segment(&self, start_ms: u64, end_ms: u64) -> AudioBuffer {
+        if self.samples.is_empty() || self.sample_rate == 0 {
+            return AudioBuffer::new(self.sample_rate, self.channels, 0);
+        }
+
+        let start_sample = (start_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+        let end_sample = (end_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0) as usize;
+
+        let start = start_sample.min(self.samples.len());
+        let end = end_sample.min(self.samples.len());
+
+        let segment_duration = if end > start {
+            ((end - start) as f64 * 1000.0 / (self.sample_rate as f64 * self.channels as f64)) as u64
+        } else {
+            0
+        };
+
+        AudioBuffer {
+            samples: self.samples[start..end].to_vec(),
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            start_ms: self.start_ms + start_ms,
+            duration_ms: segment_duration,
+        }
+    }
+}
+
+impl From<crate::audio::decoder::DecodedAudio> for AudioBuffer {
+    /// Convert DecodedAudio from the FFmpeg decoder into an AudioBuffer
+    /// for use in the mixer and audio pipeline.
+    fn from(audio: crate::audio::decoder::DecodedAudio) -> Self {
+        AudioBuffer {
+            samples: audio.samples,
+            sample_rate: audio.sample_rate,
+            channels: audio.channels,
+            start_ms: 0,
+            duration_ms: audio.duration_ms,
+        }
+    }
 }
 
 /// Volume envelope for fade in/out effects

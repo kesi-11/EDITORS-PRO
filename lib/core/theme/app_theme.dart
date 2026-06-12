@@ -74,7 +74,7 @@ class AppTheme {
     ),
 
     // Card
-    cardTheme: CardThemeData(
+    cardTheme: CardTheme(
       color: cardColor,
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -187,7 +187,7 @@ class AppTheme {
     ),
 
     // Dialog
-    dialogTheme: DialogThemeData(
+    dialogTheme: DialogTheme(
       backgroundColor: surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radiusLarge),
@@ -205,7 +205,7 @@ class AppTheme {
     // Chip
     chipTheme: ChipThemeData(
       backgroundColor: surfaceVariant,
-      selectedColor: primary.withValues(alpha: 0.2),
+      selectedColor: primary.withOpacity(0.2),
       labelStyle: const TextStyle(color: textPrimary, fontSize: 12),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radiusSmall),
@@ -214,7 +214,7 @@ class AppTheme {
     ),
 
     // Tab Bar
-    tabBarTheme: TabBarThemeData(
+    tabBarTheme: TabBarTheme(
       labelColor: primary,
       unselectedLabelColor: textSecondary,
       indicatorColor: primary,

@@ -48,7 +48,7 @@ impl SoftwareDecoder {
 
         let frame_rate = video_stream.avg_frame_rate();
         let fps = frame_rate.numerator() as f32 / frame_rate.denominator().max(1) as f32;
-        let duration_ms = format_context.duration() as u64 * 1000 / ffmpeg::ffi::AV_TIME_BASE as u64;
+        let duration_ms = format_context.duration() as u64 * 1000 / ffmpeg::sys::AV_TIME_BASE as u64;
 
         let audio_stream = format_context.streams()
             .find(|s| s.parameters().medium() == ffmpeg::media::Type::Audio);

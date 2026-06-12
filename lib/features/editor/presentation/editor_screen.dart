@@ -21,6 +21,9 @@ import '../widgets/editor_toolbar.dart';
 import '../widgets/inspector_panel.dart';
 import '../widgets/effect_catalog.dart';
 import '../widgets/transition_picker.dart';
+import '../widgets/text_panel.dart';
+import '../widgets/speed_curve_editor.dart';
+import '../widgets/keyframe_graph_editor.dart';
 
 /// Main editor screen - the core editing experience
 class EditorScreen extends ConsumerStatefulWidget {
@@ -122,6 +125,18 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                   selected: state.leftPanelTab == LeftPanelTab.text,
                   onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.text),
                 ),
+                _TabButton(
+                  label: 'Speed',
+                  icon: Icons.speed,
+                  selected: state.leftPanelTab == LeftPanelTab.speed,
+                  onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.speed),
+                ),
+                _TabButton(
+                  label: 'Keys',
+                  icon: Icons.timeline,
+                  selected: state.leftPanelTab == LeftPanelTab.keyframes,
+                  onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.keyframes),
+                ),
               ],
             ),
           ),
@@ -145,6 +160,10 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         return _buildEffectsPanel(context);
       case LeftPanelTab.text:
         return _buildTextPanel(context);
+      case LeftPanelTab.speed:
+        return _buildSpeedPanel(context, state);
+      case LeftPanelTab.keyframes:
+        return _buildKeyframesPanel(context, state);
     }
   }
 
@@ -266,7 +285,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                       width: 48,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: AppTheme.audioTrackColor.withValues(alpha: 0.2),
+                        color: AppTheme.audioTrackColor.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: const Icon(
@@ -305,27 +324,113 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   }
 
   Widget _buildTextPanel(BuildContext context) {
-    final textPresets = [
-      ('Title', 'Large bold text', Icons.title, 72.0),
-      ('Subtitle', 'Medium text', Icons.subtitles, 36.0),
-      ('Caption', 'Small text with background', Icons.closed_caption, 24.0),
-      ('Lower Third', 'Name/title bar', Icons.text_fields, 28.0),
-    ];
+    return const TextPanel();
+  }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(8),
-      itemCount: textPresets.length,
-      itemBuilder: (context, index) {
-        final (name, description, icon, fontSize) = textPresets[index];
-        return Card(
-          child: ListTile(
-            leading: Icon(icon, color: AppTheme.textTrackColor),
-            title: Text(name, style: context.textTheme.titleSmall),
-            subtitle: Text(description, style: context.textTheme.bodySmall),
-            onTap: () => _addTextToTimeline(name, fontSize),
+  Widget _buildSpeedPanel(BuildContext context, EditorState state) {
+    // Find the selected clip to get clipId and duration
+    final project = ref.read(currentProjectProvider);
+    String? clipId;
+    int clipDurationMs = 5000; // default
+
+    if (state.selectedClipId != null && project != null) {
+      for (final track in project.tracks) {
+        for (final clip in track.clips) {
+          if (clip.id == state.selectedClipId) {
+            clipId = clip.id;
+            clipDurationMs = clip.durationMs;
+            break;
+          }
+        }
+        if (clipId != null) break;
+      }
+    }
+
+    if (clipId == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.speed, size: 48, color: AppTheme.textDisabled),
+              const SizedBox(height: 16),
+              Text(
+                'Select a Clip',
+                style: context.textTheme.titleSmall?.copyWith(
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Select a clip on the timeline\nto edit its speed curve',
+                style: context.textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(8),
+      child: SpeedCurveEditor(
+        clipId: clipId,
+        clipDurationMs: clipDurationMs,
+      ),
+    );
+  }
+
+  Widget _buildKeyframesPanel(BuildContext context, EditorState state) {
+    // Find the selected clip to get clipId and duration
+    final project = ref.read(currentProjectProvider);
+    String? clipId;
+    int clipDurationMs = 5000; // default
+
+    if (state.selectedClipId != null && project != null) {
+      for (final track in project.tracks) {
+        for (final clip in track.clips) {
+          if (clip.id == state.selectedClipId) {
+            clipId = clip.id;
+            clipDurationMs = clip.durationMs;
+            break;
+          }
+        }
+        if (clipId != null) break;
+      }
+    }
+
+    if (clipId == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.timeline, size: 48, color: AppTheme.textDisabled),
+              const SizedBox(height: 16),
+              Text(
+                'Select a Clip',
+                style: context.textTheme.titleSmall?.copyWith(
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Select a clip on the timeline\nto edit its keyframes',
+                style: context.textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return KeyframeGraphEditor(
+      clipId: clipId,
+      clipDurationMs: clipDurationMs,
     );
   }
 

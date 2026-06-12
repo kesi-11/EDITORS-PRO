@@ -6,6 +6,8 @@ import '../../../core/extensions/context_extensions.dart';
 import '../../../data/models/project_model.dart';
 import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
+import 'speed_curve_editor.dart';
+import 'keyframe_graph_editor.dart';
 
 /// Inspector panel - Shows properties of the selected clip or track
 class InspectorPanel extends ConsumerWidget {
@@ -67,7 +69,7 @@ class InspectorPanel extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: _trackColor(selectedTrack?.trackType).withValues(alpha: 0.15),
+              color: _trackColor(selectedTrack?.trackType).withOpacity(0.15),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
@@ -88,13 +90,18 @@ class InspectorPanel extends ConsumerWidget {
           _PropertyRow(label: 'Trim End', value: '${selectedClip.trimEndMs}ms'),
           const SizedBox(height: 16),
 
-          // Speed control
+          // Speed section (enhanced with presets and curve editor link)
           _SectionHeader(title: 'Speed'),
           const SizedBox(height: 8),
-          _SpeedControl(
+          _SpeedSection(
+            clipId: selectedClip.id,
             speed: selectedClip.speed,
-            onChanged: (value) {
-              // Will call engine to update clip speed
+            durationMs: selectedClip.durationMs,
+            onSpeedChanged: (value) {
+              ref.read(editorProvider.notifier).setClipSpeed(selectedClip.id, value);
+            },
+            onOpenCurveEditor: () {
+              ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.speed);
             },
           ),
           const SizedBox(height: 16),
@@ -106,6 +113,18 @@ class InspectorPanel extends ConsumerWidget {
             opacity: selectedClip.opacity,
             onChanged: (value) {
               // Will call engine to update clip opacity
+            },
+          ),
+          const SizedBox(height: 16),
+
+          // Keyframe section
+          _SectionHeader(title: 'Keyframes'),
+          const SizedBox(height: 8),
+          _KeyframeSection(
+            clipId: selectedClip.id,
+            durationMs: selectedClip.durationMs,
+            onOpenGraphEditor: () {
+              ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.keyframes);
             },
           ),
           const SizedBox(height: 16),
@@ -162,6 +181,17 @@ class InspectorPanel extends ConsumerWidget {
           _SectionHeader(title: 'Transitions'),
           const SizedBox(height: 8),
           _TransitionsSection(clipId: selectedClip.id),
+
+          // Text properties section (show for text track clips)
+          if (selectedTrack?.trackType == TrackType.text) ...[
+            const SizedBox(height: 16),
+            _SectionHeader(title: 'Text Properties'),
+            const SizedBox(height: 8),
+            _TextPropertiesSection(
+              clipId: selectedClip.id,
+              assetId: selectedClip.assetId,
+            ),
+          ],
         ],
       ),
     );
@@ -191,7 +221,7 @@ class InspectorPanel extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: _trackColor(track.trackType).withValues(alpha: 0.15),
+              color: _trackColor(track.trackType).withOpacity(0.15),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
@@ -689,7 +719,7 @@ class _AppliedEffectCard extends StatelessWidget {
                   icon: Icon(
                     Icons.delete_outline,
                     size: 16,
-                    color: AppTheme.error.withValues(alpha: 0.7),
+                    color: AppTheme.error.withOpacity(0.7),
                   ),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
@@ -874,4 +904,850 @@ class _TransitionsSection extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Text properties section — shows text content editor, font picker, font size
+/// slider, color picker, animation dropdown, and position X/Y fields when a
+/// text clip is selected.
+class _TextPropertiesSection extends ConsumerStatefulWidget {
+  final String clipId;
+  final String assetId;
+
+  const _TextPropertiesSection({
+    required this.clipId,
+    required this.assetId,
+  });
+
+  @override
+  ConsumerState<_TextPropertiesSection> createState() => _TextPropertiesSectionState();
+}
+
+class _TextPropertiesSectionState extends ConsumerState<_TextPropertiesSection> {
+  late TextEditingController _textController;
+  String _selectedFont = 'Inter';
+  double _fontSize = 36.0;
+  String _selectedColor = '#FFFFFF';
+  String _selectedAnimation = 'None';
+  double _positionX = 0.5;
+  double _positionY = 0.5;
+  List<Map<String, String>> _availableFonts = [];
+
+  static const List<Map<String, String>> _defaultFonts = [
+    {'name': 'Inter', 'family': 'Inter', 'style': 'Regular'},
+    {'name': 'Roboto', 'family': 'Roboto', 'style': 'Regular'},
+    {'name': 'Open Sans', 'family': 'Open Sans', 'style': 'Regular'},
+    {'name': 'Lato', 'family': 'Lato', 'style': 'Regular'},
+    {'name': 'Montserrat', 'family': 'Montserrat', 'style': 'Regular'},
+    {'name': 'Playfair Display', 'family': 'Playfair Display', 'style': 'Regular'},
+  ];
+
+  static const List<String> _animations = [
+    'None', 'Fade In', 'Fade Out', 'Typewriter', 'Slide In', 'Pop In',
+  ];
+
+  static const List<Map<String, String>> _presetColors = [
+    {'name': 'White', 'hex': '#FFFFFF'},
+    {'name': 'Black', 'hex': '#000000'},
+    {'name': 'Red', 'hex': '#FF0000'},
+    {'name': 'Green', 'hex': '#00FF00'},
+    {'name': 'Blue', 'hex': '#0000FF'},
+    {'name': 'Yellow', 'hex': '#FFFF00'},
+    {'name': 'Cyan', 'hex': '#00FFFF'},
+    {'name': 'Magenta', 'hex': '#FF00FF'},
+    {'name': 'Orange', 'hex': '#FF8800'},
+    {'name': 'Purple', 'hex': '#8800FF'},
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _textController = TextEditingController(
+      text: widget.assetId.startsWith('text_') ? 'Your Text' : '',
+    );
+    _loadFonts();
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadFonts() async {
+    try {
+      final fonts = await ref.read(editorProvider.notifier).getAvailableFonts();
+      if (mounted && fonts.isNotEmpty) {
+        setState(() {
+          _availableFonts = fonts
+              .map((f) => {
+                    'name': f.name,
+                    'family': f.family,
+                    'style': f.style,
+                  })
+              .toList();
+          if (_availableFonts.isNotEmpty) {
+            _selectedFont = _availableFonts.first['family']!;
+          }
+        });
+      } else {
+        setState(() {
+          _availableFonts = _defaultFonts;
+        });
+      }
+    } catch (_) {
+      setState(() {
+        _availableFonts = _defaultFonts;
+      });
+    }
+  }
+
+  Future<void> _updateTextStyle() async {
+    await ref.read(editorProvider.notifier).updateTextStyle(
+          clipId: widget.clipId,
+          fontFamily: _selectedFont,
+          fontSize: _fontSize,
+          colorHex: _selectedColor,
+        );
+  }
+
+  Future<void> _updateTextPosition() async {
+    await ref.read(editorProvider.notifier).updateTextPosition(
+          clipId: widget.clipId,
+          positionX: _positionX,
+          positionY: _positionY,
+        );
+  }
+
+  Color _parseHexColor(String hex) {
+    final hexStr = hex.replaceFirst('#', '');
+    return Color(int.parse('FF$hexStr', radix: 16));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Text content editor
+        TextField(
+          controller: _textController,
+          maxLines: 2,
+          minLines: 1,
+          style: context.textTheme.bodyMedium,
+          decoration: InputDecoration(
+            hintText: 'Text content...',
+            hintStyle: const TextStyle(color: AppTheme.textDisabled),
+            filled: true,
+            fillColor: AppTheme.surfaceVariant,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.all(10),
+          ),
+          onChanged: (_) => _updateTextStyle(),
+        ),
+        const SizedBox(height: 10),
+
+        // Font picker dropdown
+        Row(
+          children: [
+            SizedBox(
+              width: 60,
+              child: Text('Font', style: context.textTheme.bodySmall),
+            ),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceVariant,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _selectedFont,
+                    isExpanded: true,
+                    icon: const Icon(Icons.arrow_drop_down, size: 16, color: AppTheme.textSecondary),
+                    style: context.textTheme.bodySmall,
+                    dropdownColor: AppTheme.surfaceVariant,
+                    items: _availableFonts.map((font) {
+                      return DropdownMenuItem<String>(
+                        value: font['family'],
+                        child: Text(
+                          font['name']!,
+                          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _selectedFont = value);
+                        _updateTextStyle();
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // Font size slider
+        Row(
+          children: [
+            SizedBox(
+              width: 60,
+              child: Text('Size', style: context.textTheme.bodySmall),
+            ),
+            Expanded(
+              child: Slider(
+                value: _fontSize,
+                min: 8.0,
+                max: 120.0,
+                divisions: 56,
+                onChanged: (value) {
+                  setState(() => _fontSize = value);
+                  _updateTextStyle();
+                },
+              ),
+            ),
+            SizedBox(
+              width: 36,
+              child: Text(
+                _fontSize.round().toString(),
+                style: context.textTheme.labelSmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: AppTheme.textPrimary,
+                ),
+                textAlign: TextAlign.right,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // Color picker (simple preset colors)
+        Row(
+          children: [
+            SizedBox(
+              width: 60,
+              child: Text('Color', style: context.textTheme.bodySmall),
+            ),
+            Expanded(
+              child: Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: _presetColors.map((color) {
+                  final hex = color['hex']!;
+                  final isSelected = _selectedColor == hex;
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() => _selectedColor = hex);
+                      _updateTextStyle();
+                    },
+                    child: Container(
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        color: _parseHexColor(hex),
+                        borderRadius: BorderRadius.circular(3),
+                        border: Border.all(
+                          color: isSelected ? AppTheme.primary : const Color(0xFF2A2A3E),
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // Animation dropdown
+        Row(
+          children: [
+            SizedBox(
+              width: 60,
+              child: Text('Animate', style: context.textTheme.bodySmall),
+            ),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceVariant,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _selectedAnimation,
+                    isExpanded: true,
+                    icon: const Icon(Icons.animation, size: 14, color: AppTheme.textSecondary),
+                    style: context.textTheme.bodySmall,
+                    dropdownColor: AppTheme.surfaceVariant,
+                    items: _animations.map((anim) {
+                      return DropdownMenuItem<String>(
+                        value: anim,
+                        child: Text(
+                          anim,
+                          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _selectedAnimation = value);
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // Position X/Y fields
+        Row(
+          children: [
+            SizedBox(
+              width: 60,
+              child: Text('Pos X', style: context.textTheme.bodySmall),
+            ),
+            Expanded(
+              child: Slider(
+                value: _positionX,
+                min: 0.0,
+                max: 1.0,
+                divisions: 100,
+                onChanged: (value) {
+                  setState(() => _positionX = value);
+                },
+                onChangeEnd: (_) => _updateTextPosition(),
+              ),
+            ),
+            SizedBox(
+              width: 36,
+              child: Text(
+                _positionX.toStringAsFixed(2),
+                style: context.textTheme.labelSmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: AppTheme.textPrimary,
+                ),
+                textAlign: TextAlign.right,
+              ),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            SizedBox(
+              width: 60,
+              child: Text('Pos Y', style: context.textTheme.bodySmall),
+            ),
+            Expanded(
+              child: Slider(
+                value: _positionY,
+                min: 0.0,
+                max: 1.0,
+                divisions: 100,
+                onChanged: (value) {
+                  setState(() => _positionY = value);
+                },
+                onChangeEnd: (_) => _updateTextPosition(),
+              ),
+            ),
+            SizedBox(
+              width: 36,
+              child: Text(
+                _positionY.toStringAsFixed(2),
+                style: context.textTheme.labelSmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: AppTheme.textPrimary,
+                ),
+                textAlign: TextAlign.right,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Speed section — shows current speed, presets, and link to curve editor
+class _SpeedSection extends ConsumerStatefulWidget {
+  final String clipId;
+  final double speed;
+  final int durationMs;
+  final ValueChanged<double> onSpeedChanged;
+  final VoidCallback onOpenCurveEditor;
+
+  const _SpeedSection({
+    required this.clipId,
+    required this.speed,
+    required this.durationMs,
+    required this.onSpeedChanged,
+    required this.onOpenCurveEditor,
+  });
+
+  @override
+  ConsumerState<_SpeedSection> createState() => _SpeedSectionState();
+}
+
+class _SpeedSectionState extends ConsumerState<_SpeedSection> {
+  late double _speed;
+
+  static const List<double> _speedPresets = [0.25, 0.5, 1.0, 2.0, 4.0];
+
+  @override
+  void initState() {
+    super.initState();
+    _speed = widget.speed;
+  }
+
+  @override
+  void didUpdateWidget(covariant _SpeedSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.speed != widget.speed) {
+      _speed = widget.speed;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Current speed display + presets
+        Row(
+          children: [
+            Text(
+              '${_speed.toStringAsFixed(1)}x',
+              style: context.textTheme.titleSmall?.copyWith(
+                color: _speed == 1.0 ? AppTheme.textPrimary : AppTheme.primary,
+              ),
+            ),
+            const Spacer(),
+            // Speed presets
+            Wrap(
+              spacing: 4,
+              children: _speedPresets.map((s) {
+                final isSelected = (_speed - s).abs() < 0.01;
+                return ChoiceChip(
+                  label: Text('${s}x', style: const TextStyle(fontSize: 9)),
+                  selected: isSelected,
+                  onSelected: (_) {
+                    setState(() => _speed = s);
+                    widget.onSpeedChanged(s);
+                  },
+                  visualDensity: VisualDensity.compact,
+                  selectedColor: AppTheme.primary,
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+
+        // Speed slider
+        Slider(
+          value: _speed,
+          min: 0.1,
+          max: 8.0,
+          divisions: 79,
+          onChanged: (value) {
+            setState(() => _speed = value);
+          },
+          onChangeEnd: (value) {
+            widget.onSpeedChanged(value);
+          },
+        ),
+
+        // Open Speed Curve Editor button
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: widget.onOpenCurveEditor,
+            icon: const Icon(Icons.show_chart, size: 14),
+            label: const Text('Speed Curve Editor', style: TextStyle(fontSize: 11)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.primary,
+              side: const BorderSide(color: Color(0xFF2A2A3E)),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Keyframe section — shows keyframe indicators and graph editor link
+class _KeyframeSection extends ConsumerStatefulWidget {
+  final String clipId;
+  final int durationMs;
+  final VoidCallback onOpenGraphEditor;
+
+  const _KeyframeSection({
+    required this.clipId,
+    required this.durationMs,
+    required this.onOpenGraphEditor,
+  });
+
+  @override
+  ConsumerState<_KeyframeSection> createState() => _KeyframeSectionState();
+}
+
+class _KeyframeSectionState extends ConsumerState<_KeyframeSection> {
+  String _selectedProperty = 'position_x';
+  final Map<String, List<KeyframePoint>> _keyframeData = {};
+  String? _selectedKeyframeId;
+
+  static const Map<String, _KeyframePropertyConfig> _propertyConfigs = {
+    'position_x': _KeyframePropertyConfig(label: 'Pos X', color: Colors.blue),
+    'position_y': _KeyframePropertyConfig(label: 'Pos Y', color: Colors.green),
+    'scale': _KeyframePropertyConfig(label: 'Scale', color: Colors.orange),
+    'rotation': _KeyframePropertyConfig(label: 'Rotation', color: Colors.purple),
+    'opacity': _KeyframePropertyConfig(label: 'Opacity', color: Colors.red),
+  };
+
+  static const List<String> _easingTypes = [
+    'linear', 'ease_in', 'ease_out', 'ease_in_out',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    for (final prop in _propertyConfigs.keys) {
+      _keyframeData[prop] = [];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final keyframes = _keyframeData[_selectedProperty] ?? [];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Property selector
+        Row(
+          children: [
+            const Text(
+              'Property: ',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+            ),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceVariant,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _selectedProperty,
+                    isDense: true,
+                    isExpanded: true,
+                    dropdownColor: AppTheme.surfaceVariant,
+                    style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11),
+                    items: _propertyConfigs.entries.map((entry) {
+                      return DropdownMenuItem(
+                        value: entry.key,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: entry.value.color,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(entry.value.label),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value != null) setState(() => _selectedProperty = value);
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // Add keyframe button
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _addKeyframeAtPlayhead,
+                icon: const Icon(Icons.add_circle_outline, size: 14),
+                label: const Text('Add Keyframe', style: TextStyle(fontSize: 11)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.primary,
+                  side: const BorderSide(color: Color(0xFF2A2A3E)),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              onPressed: _deleteSelectedKeyframe,
+              icon: Icon(
+                Icons.remove_circle_outline,
+                size: 18,
+                color: _selectedKeyframeId != null ? Colors.redAccent : AppTheme.textDisabled,
+              ),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              tooltip: 'Delete keyframe',
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+
+        // Keyframe list
+        if (keyframes.isNotEmpty) ...[
+          Container(
+            constraints: const BoxConstraints(maxHeight: 120),
+            child: ListView.builder(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: keyframes.length,
+              itemBuilder: (context, index) {
+                final kf = keyframes[index];
+                final isSelected = kf.id == _selectedKeyframeId;
+                final config = _propertyConfigs[_selectedProperty]!;
+
+                return GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedKeyframeId = kf.id);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: isSelected ? AppTheme.primary.withOpacity(0.15) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(4),
+                      border: isSelected
+                          ? Border.all(color: AppTheme.primary.withOpacity(0.3))
+                          : null,
+                    ),
+                    child: Row(
+                      children: [
+                        // Diamond icon
+                        Icon(
+                          Icons.diamond,
+                          size: 10,
+                          color: config.color,
+                        ),
+                        const SizedBox(width: 6),
+                        // Time
+                        Text(
+                          '${(kf.timeMs / 1000.0).toStringAsFixed(2)}s',
+                          style: TextStyle(
+                            color: isSelected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // Value
+                        Expanded(
+                          child: Text(
+                            kf.value.toStringAsFixed(1),
+                            style: TextStyle(
+                              color: config.color,
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ),
+                        // Easing indicator
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppTheme.surfaceVariant,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            kf.easingName.replaceAll('_', ' ').toUpperCase(),
+                            style: const TextStyle(
+                              color: AppTheme.textDisabled,
+                              fontSize: 8,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ] else ...[
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'No keyframes yet',
+                style: context.textTheme.bodySmall?.copyWith(
+                  color: AppTheme.textDisabled,
+                ),
+              ),
+            ),
+          ),
+        ],
+
+        // Easing selector for selected keyframe
+        if (_selectedKeyframeId != null) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Text(
+                'Easing: ',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+              ),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceVariant,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _getSelectedKeyframe()?.easingName ?? 'linear',
+                      isDense: true,
+                      isExpanded: true,
+                      dropdownColor: AppTheme.surfaceVariant,
+                      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 10),
+                      items: _easingTypes.map((easing) {
+                        return DropdownMenuItem(
+                          value: easing,
+                          child: Text(easing.replaceAll('_', ' ').toUpperCase()),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          _updateKeyframeEasing(value);
+                        }
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+
+        const SizedBox(height: 6),
+
+        // Open Graph Editor button
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: widget.onOpenGraphEditor,
+            icon: const Icon(Icons.timeline, size: 14),
+            label: const Text('Open Graph Editor', style: TextStyle(fontSize: 11)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.primary,
+              side: const BorderSide(color: Color(0xFF2A2A3E)),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  KeyframePoint? _getSelectedKeyframe() {
+    if (_selectedKeyframeId == null) return null;
+    final keyframes = _keyframeData[_selectedProperty] ?? [];
+    return keyframes.where((kf) => kf.id == _selectedKeyframeId).firstOrNull;
+  }
+
+  void _addKeyframeAtPlayhead() {
+    final timeMs = ref.read(editorProvider).currentTimeMs;
+    final newId = 'kf_${DateTime.now().millisecondsSinceEpoch}';
+
+    setState(() {
+      _keyframeData[_selectedProperty]!.add(KeyframePoint(
+        id: newId,
+        timeMs: timeMs,
+        value: 0.0,
+        easingName: 'linear',
+      ));
+      _keyframeData[_selectedProperty]!.sort((a, b) => a.timeMs.compareTo(b.timeMs));
+      _selectedKeyframeId = newId;
+    });
+
+    ref.read(editorProvider.notifier).addKeyframe(
+      widget.clipId,
+      _selectedProperty,
+      timeMs,
+      0.0,
+      'linear',
+    );
+  }
+
+  void _deleteSelectedKeyframe() {
+    if (_selectedKeyframeId == null) return;
+    final keyframes = _keyframeData[_selectedProperty];
+    if (keyframes == null) return;
+
+    final toRemove = keyframes.where((kf) => kf.id == _selectedKeyframeId).firstOrNull;
+    if (toRemove != null) {
+      setState(() {
+        keyframes.remove(toRemove);
+        _selectedKeyframeId = null;
+      });
+      ref.read(editorProvider.notifier).removeKeyframe(
+        widget.clipId,
+        _selectedProperty,
+        toRemove.id,
+      );
+    }
+  }
+
+  void _updateKeyframeEasing(String easingName) {
+    if (_selectedKeyframeId == null) return;
+    final keyframes = _keyframeData[_selectedProperty];
+    if (keyframes == null) return;
+
+    final idx = keyframes.indexWhere((kf) => kf.id == _selectedKeyframeId);
+    if (idx < 0) return;
+
+    setState(() {
+      keyframes[idx] = keyframes[idx].copyWith(easingName: easingName);
+    });
+
+    ref.read(editorProvider.notifier).updateKeyframe(
+      widget.clipId,
+      _selectedProperty,
+      _selectedKeyframeId!,
+      value: keyframes[idx].value,
+      easing: easingName,
+    );
+  }
+}
+
+/// Configuration for a keyframe property in the inspector
+class _KeyframePropertyConfig {
+  final String label;
+  final Color color;
+
+  const _KeyframePropertyConfig({
+    required this.label,
+    required this.color,
+  });
 }

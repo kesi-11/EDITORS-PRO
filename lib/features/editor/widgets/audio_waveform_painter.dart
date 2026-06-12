@@ -39,7 +39,7 @@ class AudioWaveformPainter extends CustomPainter {
     // Draw center line
     if (showCenterLine) {
       final centerPaint = Paint()
-        ..color = color.withValues(alpha: 0.15)
+        ..color = color.withOpacity(0.15)
         ..strokeWidth = 1.0;
       canvas.drawLine(
         Offset(0, size.height / 2),
@@ -68,7 +68,7 @@ class AudioWaveformPainter extends CustomPainter {
       }
       rmsPath.close();
 
-      paint.color = color.withValues(alpha: 0.2);
+      paint.color = color.withOpacity(0.2);
       canvas.drawPath(rmsPath, paint);
     }
 

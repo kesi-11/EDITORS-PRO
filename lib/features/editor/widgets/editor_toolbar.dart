@@ -47,7 +47,7 @@ class EditorToolbar extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.15),
+              color: AppTheme.primary.withOpacity(0.15),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
@@ -242,7 +242,7 @@ class _PlaybackSpeedButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: currentSpeed != 1.0
-              ? AppTheme.primary.withValues(alpha: 0.2)
+              ? AppTheme.primary.withOpacity(0.2)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(4),
           border: Border.all(

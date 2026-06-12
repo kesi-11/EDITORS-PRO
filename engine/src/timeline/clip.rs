@@ -1,12 +1,15 @@
 //! Clip model - A segment of media on a track
 //!
 //! A clip represents a portion of a media asset placed on the timeline.
-//! It tracks the position, duration, trim points, speed, effects, and custom properties.
+//! It tracks the position, duration, trim points, speed curve, effects,
+//! keyframe animations, and custom properties.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::effects::{Effect, Transition};
+use super::keyframe::{ClipKeyframes, InterpolatedValues, Keyframe, KeyframeTrack};
+use super::speed_curve::{EasingType, SpeedCurve};
 
 /// A clip on the timeline representing a segment of media
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,8 +26,8 @@ pub struct Clip {
     pub trim_start_ms: u64,
     /// Trim from the end of the source media in milliseconds
     pub trim_end_ms: u64,
-    /// Playback speed multiplier (1.0 = normal, 0.5 = half, 2.0 = double)
-    pub speed: f32,
+    /// Speed curve for variable playback speed (replaces flat speed: f32)
+    pub speed_curve: SpeedCurve,
     /// Opacity level (0.0 = transparent, 1.0 = fully opaque)
     pub opacity: f32,
     /// Visual effects applied to this clip (ordered pipeline)
@@ -33,6 +36,8 @@ pub struct Clip {
     pub transition_in: Option<Transition>,
     /// Transition applied at the end of this clip (out-point)
     pub transition_out: Option<Transition>,
+    /// Keyframe animation tracks for this clip
+    pub keyframes: ClipKeyframes,
     /// Custom properties for text content, etc.
     pub properties: HashMap<String, serde_json::Value>,
 }
@@ -47,11 +52,12 @@ impl Clip {
             duration_ms,
             trim_start_ms: 0,
             trim_end_ms: 0,
-            speed: 1.0,
+            speed_curve: SpeedCurve::constant(1.0),
             opacity: 1.0,
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            keyframes: ClipKeyframes::new(),
             properties: HashMap::new(),
         }
     }
@@ -66,21 +72,32 @@ impl Clip {
             duration_ms: duration,
             trim_start_ms: source_start_ms,
             trim_end_ms: 0,
-            speed: 1.0,
+            speed_curve: SpeedCurve::constant(1.0),
             opacity: 1.0,
             effects: Vec::new(),
             transition_in: None,
             transition_out: None,
+            keyframes: ClipKeyframes::new(),
             properties: HashMap::new(),
         }
+    }
+
+    /// Get the effective speed at a given time (convenience accessor)
+    ///
+    /// For simple constant-speed clips, this returns the same value as
+    /// `speed_curve.average_speed()`.
+    pub fn speed(&self) -> f32 {
+        self.speed_curve.average_speed()
+    }
+
+    /// Get the speed at a specific point in the clip
+    pub fn speed_at(&self, relative_time_ms: u64) -> f32 {
+        self.speed_curve.evaluate_speed_at(relative_time_ms)
     }
 
     /// Calculate the effective duration considering speed
     /// When speed is 2x, a 10s source plays in 5s on the timeline
     pub fn effective_duration(&self) -> u64 {
-        if self.speed <= 0.0 {
-            return self.duration_ms;
-        }
         // The duration_ms already reflects the timeline duration
         // which accounts for speed changes
         self.duration_ms
@@ -88,8 +105,9 @@ impl Clip {
 
     /// Get the source media duration (before speed adjustment)
     pub fn source_duration_ms(&self) -> u64 {
-        if self.speed > 0.0 {
-            (self.duration_ms as f32 * self.speed) as u64
+        let avg_speed = self.speed_curve.average_speed();
+        if avg_speed > 0.0 {
+            (self.duration_ms as f32 * avg_speed) as u64
         } else {
             self.duration_ms
         }
@@ -129,14 +147,20 @@ impl Clip {
         Ok((left, right))
     }
 
-    /// Create a copy of this clip with a different speed
+    /// Create a copy of this clip with a different constant speed
     pub fn with_speed(&self, speed: f32) -> Self {
         let mut new_clip = self.clone();
-        new_clip.speed = speed.max(0.1); // Minimum 0.1x speed
+        let clamped_speed = speed.max(0.1); // Minimum 0.1x speed
+        new_clip.speed_curve = SpeedCurve::constant(clamped_speed);
         // Adjust timeline duration based on speed ratio
         let source_dur = self.source_duration_ms();
-        new_clip.duration_ms = (source_dur as f32 / speed) as u64;
+        new_clip.duration_ms = (source_dur as f32 / clamped_speed) as u64;
         new_clip
+    }
+
+    /// Set the speed curve for this clip
+    pub fn set_speed_curve(&mut self, curve: SpeedCurve) {
+        self.speed_curve = curve;
     }
 
     /// Create a copy with different trim points
@@ -156,8 +180,9 @@ impl Clip {
 
         // Recalculate timeline duration based on trimmed source and speed
         let trimmed_source = original_source - total_trim;
-        if new_clip.speed > 0.0 {
-            new_clip.duration_ms = (trimmed_source as f32 / new_clip.speed) as u64;
+        let avg_speed = new_clip.speed_curve.average_speed();
+        if avg_speed > 0.0 {
+            new_clip.duration_ms = (trimmed_source as f32 / avg_speed) as u64;
         }
 
         new_clip
@@ -229,6 +254,54 @@ impl Clip {
         }
         let relative = time_ms.saturating_sub(self.start_ms) as f32;
         (relative / self.effective_duration() as f32).clamp(0.0, 1.0)
+    }
+
+    // ─── Keyframe Operations ──────────────────────────────────────────
+
+    /// Add a keyframe to a property track
+    pub fn add_keyframe(&mut self, property: &str, keyframe: Keyframe) -> Result<(), String> {
+        let track = self.keyframes.track_for(property)
+            .ok_or_else(|| format!("Unknown keyframe property: {}", property))?;
+        track.add_keyframe(keyframe);
+        Ok(())
+    }
+
+    /// Remove a keyframe by ID from a property track
+    pub fn remove_keyframe(&mut self, property: &str, keyframe_id: &str) -> Result<bool, String> {
+        let track = self.keyframes.track_for(property)
+            .ok_or_else(|| format!("Unknown keyframe property: {}", property))?;
+        Ok(track.remove_keyframe(keyframe_id))
+    }
+
+    /// Update a keyframe's value and/or easing
+    pub fn update_keyframe(
+        &mut self,
+        property: &str,
+        keyframe_id: &str,
+        value: Option<f32>,
+        easing: Option<EasingType>,
+    ) -> Result<bool, String> {
+        let track = self.keyframes.track_for(property)
+            .ok_or_else(|| format!("Unknown keyframe property: {}", property))?;
+        Ok(track.update_keyframe(keyframe_id, value, easing))
+    }
+
+    /// Interpolate all keyframe properties at a given time
+    ///
+    /// Returns `InterpolatedValues` with position, scale, rotation, and opacity.
+    /// If no keyframes exist for a property, the default value is returned.
+    pub fn interpolate_at(&self, time_ms: u64) -> InterpolatedValues {
+        self.keyframes.interpolate_all(time_ms)
+    }
+
+    /// Check if this clip has any keyframe animations
+    pub fn has_keyframes(&self) -> bool {
+        self.keyframes.has_any_keyframes()
+    }
+
+    /// Get a reference to a keyframe track by property name
+    pub fn keyframe_track(&self, property: &str) -> Option<&KeyframeTrack> {
+        self.keyframes.track_for_ref(property)
     }
 }
 

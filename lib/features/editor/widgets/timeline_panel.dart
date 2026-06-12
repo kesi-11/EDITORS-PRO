@@ -536,9 +536,9 @@ class _DraggableClipWidgetState extends State<_DraggableClipWidget> {
           borderRadius: BorderRadius.circular(4),
           border: isSelected
               ? Border.all(color: Colors.white, width: 2)
-              : Border.all(color: color.withValues(alpha: 0.3)),
+              : Border.all(color: color.withOpacity(0.3)),
           boxShadow: _isDragging
-              ? [BoxShadow(color: color.withValues(alpha: 0.4), blurRadius: 8, offset: const Offset(0, 2))]
+              ? [BoxShadow(color: color.withOpacity(0.4), blurRadius: 8, offset: const Offset(0, 2))]
               : null,
         ),
         child: Stack(
@@ -597,7 +597,7 @@ class _DraggableClipWidgetState extends State<_DraggableClipWidget> {
                 width: 6,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.8),
+                    color: Colors.white.withOpacity(0.8),
                     borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(4),
                       bottomLeft: Radius.circular(4),
@@ -613,7 +613,7 @@ class _DraggableClipWidgetState extends State<_DraggableClipWidget> {
                 width: 6,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.8),
+                    color: Colors.white.withOpacity(0.8),
                     borderRadius: const BorderRadius.only(
                       topRight: Radius.circular(4),
                       bottomRight: Radius.circular(4),

@@ -29,7 +29,7 @@ dependencies:
 
   # Path utilities
   path_provider: ^2.1.5
-  path: ^1.9.1
+  path: ^1.9.0
 
   # Permissions
   permission_handler: ^11.4.0
@@ -54,13 +54,13 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^5.0.0
 
   # Code generation
-  build_runner: ^2.4.14
+  build_runner: ^2.4.13
   freezed: ^2.5.7
-  json_serializable: ^6.9.4
-  riverpod_generator: ^2.6.3
+  json_serializable: ^6.8.0
+  riverpod_generator: ^2.6.2
   drift_dev: ^2.22.1
 
 flutter:

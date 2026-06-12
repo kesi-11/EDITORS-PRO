@@ -3,9 +3,9 @@ import 'dart:developer' as developer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../data/models/project_model.dart';
-import '../../core/services/project_repository.dart';
-import '../../core/services/engine_service.dart';
+import '../../../data/models/project_model.dart';
+import '../../../core/services/project_repository.dart';
+import '../../../core/services/engine_service.dart';
 
 /// Current project state
 class ProjectState {
