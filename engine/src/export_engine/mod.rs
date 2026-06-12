@@ -2,8 +2,25 @@
 //!
 //! Handles rendering the timeline and encoding the final video output
 //! with configurable resolution, bitrate, codec, and format settings.
+//!
+//! ## Phase 3 Implementation
+//!
+//! The export pipeline now supports real FFmpeg encoding with:
+//! - Frame-by-frame rendering from the timeline
+//! - RGBA → YUV420P color conversion
+//! - H.264/H.265/VP9/AV1 encoding via FFmpeg
+//! - Progress reporting via callback
+//! - Storage space validation
+//! - Audio passthrough (stream copy from source)
+
+pub mod encoder;
+
+#[cfg(test)]
+mod tests;
 
 use serde::{Deserialize, Serialize};
+
+pub use encoder::{convert_rgba_to_yuv420p, estimate_remaining, check_storage_space, VideoEncoder};
 
 /// Export configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +123,27 @@ impl ExportSettings {
             two_pass: false,
         }
     }
+
+    /// Get a preset by name. Returns None for unknown preset names.
+    pub fn preset_by_name(name: &str) -> Option<Self> {
+        match name {
+            "720p" => Some(Self::hd_720p()),
+            "1080p" => Some(Self::full_hd_1080p()),
+            "4K" => Some(Self::ultra_hd_4k()),
+            "Social Vertical" | "social_vertical" => Some(Self::social_vertical()),
+            "Social Square" | "social_square" => Some(Self::social_square()),
+            _ => None,
+        }
+    }
+
+    /// Get the estimated file size in bytes for a given duration.
+    pub fn estimated_file_size(&self, duration_ms: u64) -> u64 {
+        let duration_secs = duration_ms as f64 / 1000.0;
+        let video_bytes = (self.bitrate_kbps as f64 * 1000.0 / 8.0) * duration_secs;
+        let audio_bytes = (self.audio_bitrate_kbps as f64 * 1000.0 / 8.0) * duration_secs;
+        // Add 5% overhead for container format
+        ((video_bytes + audio_bytes) * 1.05) as u64
+    }
 }
 
 /// Video codec options
@@ -125,7 +163,7 @@ impl VideoCodec {
             VideoCodec::H265 => "libx265",
             VideoCodec::Vp9 => "libvpx-vp9",
             VideoCodec::Av1 => "libaom-av1",
-    }
+        }
     }
 
     pub fn display_name(&self) -> &str {
@@ -134,6 +172,17 @@ impl VideoCodec {
             VideoCodec::H265 => "H.265 (HEVC)",
             VideoCodec::Vp9 => "VP9",
             VideoCodec::Av1 => "AV1",
+        }
+    }
+
+    /// Parse a codec from a display name or identifier string.
+    pub fn from_str_lossy(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "h264" | "h.264" | "avc" | "libx264" => Some(VideoCodec::H264),
+            "h265" | "h.265" | "hevc" | "libx265" => Some(VideoCodec::H265),
+            "vp9" | "libvpx-vp9" => Some(VideoCodec::Vp9),
+            "av1" | "libaom-av1" => Some(VideoCodec::Av1),
+            _ => None,
         }
     }
 }
@@ -169,6 +218,18 @@ impl OutputFormat {
             OutputFormat::Gif => ".gif",
         }
     }
+
+    /// Parse a format from a display name or identifier string.
+    pub fn from_str_lossy(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "mp4" => Some(OutputFormat::Mp4),
+            "webm" => Some(OutputFormat::WebM),
+            "mov" => Some(OutputFormat::Mov),
+            "avi" => Some(OutputFormat::Avi),
+            "gif" => Some(OutputFormat::Gif),
+            _ => None,
+        }
+    }
 }
 
 /// Progress report during export
@@ -186,8 +247,71 @@ pub struct ExportProgress {
     pub stage: ExportStage,
 }
 
+impl ExportProgress {
+    /// Create a progress report for the preparing stage.
+    pub fn preparing() -> Self {
+        Self {
+            progress: 0.0,
+            current_frame: 0,
+            total_frames: 0,
+            estimated_seconds_remaining: 0,
+            stage: ExportStage::Preparing,
+        }
+    }
+
+    /// Create a progress report for the encoding stage.
+    pub fn encoding(current_frame: u64, total_frames: u64, start_time: std::time::Instant) -> Self {
+        let progress = if total_frames > 0 {
+            current_frame as f32 / total_frames as f32
+        } else {
+            0.0
+        };
+
+        Self {
+            progress,
+            current_frame,
+            total_frames,
+            estimated_seconds_remaining: estimate_remaining(current_frame, total_frames, start_time),
+            stage: ExportStage::Encoding,
+        }
+    }
+
+    /// Create a progress report for the finalizing stage.
+    pub fn finalizing() -> Self {
+        Self {
+            progress: 0.95,
+            current_frame: 0,
+            total_frames: 0,
+            estimated_seconds_remaining: 5,
+            stage: ExportStage::Finalizing,
+        }
+    }
+
+    /// Create a progress report for the completed stage.
+    pub fn complete() -> Self {
+        Self {
+            progress: 1.0,
+            current_frame: 0,
+            total_frames: 0,
+            estimated_seconds_remaining: 0,
+            stage: ExportStage::Complete,
+        }
+    }
+
+    /// Create a progress report for an error stage.
+    pub fn error(message: &str) -> Self {
+        Self {
+            progress: 0.0,
+            current_frame: 0,
+            total_frames: 0,
+            estimated_seconds_remaining: 0,
+            stage: ExportStage::Error(message.to_string()),
+        }
+    }
+}
+
 /// Stages of the export process
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportStage {
     Preparing,
@@ -195,7 +319,21 @@ pub enum ExportStage {
     Encoding,
     Finalizing,
     Complete,
-    Error,
+    Error(String),
+}
+
+impl ExportStage {
+    /// Get a human-readable name for the stage.
+    pub fn display_name(&self) -> &str {
+        match self {
+            ExportStage::Preparing => "Preparing",
+            ExportStage::Rendering => "Rendering",
+            ExportStage::Encoding => "Encoding",
+            ExportStage::Finalizing => "Finalizing",
+            ExportStage::Complete => "Complete",
+            ExportStage::Error(_) => "Error",
+        }
+    }
 }
 
 /// Export result
@@ -206,6 +344,33 @@ pub struct ExportResult {
     pub file_size_bytes: u64,
     pub duration_ms: u64,
     pub error_message: Option<String>,
+}
+
+impl ExportResult {
+    /// Create an error result.
+    pub fn error(message: &str, output_path: &str) -> Self {
+        Self {
+            success: false,
+            output_path: output_path.to_string(),
+            file_size_bytes: 0,
+            duration_ms: 0,
+            error_message: Some(message.to_string()),
+        }
+    }
+
+    /// Get the file size in a human-readable format.
+    pub fn file_size_human(&self) -> String {
+        let bytes = self.file_size_bytes as f64;
+        if bytes < 1024.0 {
+            format!("{} B", bytes as u64)
+        } else if bytes < 1024.0 * 1024.0 {
+            format!("{:.1} KB", bytes / 1024.0)
+        } else if bytes < 1024.0 * 1024.0 * 1024.0 {
+            format!("{:.1} MB", bytes / (1024.0 * 1024.0))
+        } else {
+            format!("{:.2} GB", bytes / (1024.0 * 1024.0 * 1024.0))
+        }
+    }
 }
 
 /// The export pipeline orchestrates the rendering and encoding process

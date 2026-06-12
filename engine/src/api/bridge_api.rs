@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use super::{
     ClipInfo, EditorsProEngine, MediaAssetInfo, ProjectInfo, TrackInfo,
 };
+use crate::export_engine::{ExportProgress, ExportResult, ExportSettings, ExportStage, OutputFormat, VideoCodec};
 use crate::project::ProjectSettings;
 use crate::timeline::track::TrackType;
 
@@ -41,6 +42,97 @@ impl From<BridgeProjectSettings> for ProjectSettings {
         settings.height = s.height;
         settings.fps = s.fps;
         settings
+    }
+}
+
+/// Bridge-compatible export settings
+///
+/// This is the Flutter-facing version of `ExportSettings` that is
+/// constructed from the export screen UI and passed across the bridge.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgeExportSettings {
+    pub width: u32,
+    pub height: u32,
+    pub fps: f32,
+    pub bitrate_kbps: u64,
+    pub codec: String,
+    pub format: String,
+    pub audio_bitrate_kbps: u32,
+    pub audio_sample_rate: u32,
+    pub audio_channels: u32,
+    pub include_audio: bool,
+    pub two_pass: bool,
+}
+
+impl From<BridgeExportSettings> for ExportSettings {
+    fn from(s: BridgeExportSettings) -> Self {
+        Self {
+            width: s.width,
+            height: s.height,
+            fps: s.fps,
+            bitrate_kbps: s.bitrate_kbps,
+            codec: VideoCodec::from_str_lossy(&s.codec).unwrap_or(VideoCodec::H264),
+            format: OutputFormat::from_str_lossy(&s.format).unwrap_or(OutputFormat::Mp4),
+            audio_bitrate_kbps: s.audio_bitrate_kbps,
+            audio_sample_rate: s.audio_sample_rate,
+            audio_channels: s.audio_channels,
+            include_audio: s.include_audio,
+            two_pass: s.two_pass,
+        }
+    }
+}
+
+/// Bridge-compatible export progress
+///
+/// Simplified version of `ExportProgress` that uses a String for the
+/// stage instead of the enum, which is easier to handle in Dart.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgeExportProgress {
+    /// Percentage complete (0.0 to 1.0)
+    pub progress: f32,
+    /// Current frame being processed
+    pub current_frame: u64,
+    /// Total frames to process
+    pub total_frames: u64,
+    /// Estimated time remaining in seconds
+    pub estimated_seconds_remaining: u64,
+    /// Current processing stage name
+    pub stage_name: String,
+}
+
+impl From<ExportProgress> for BridgeExportProgress {
+    fn from(p: ExportProgress) -> Self {
+        Self {
+            progress: p.progress,
+            current_frame: p.current_frame,
+            total_frames: p.total_frames,
+            estimated_seconds_remaining: p.estimated_seconds_remaining,
+            stage_name: p.stage.display_name().to_string(),
+        }
+    }
+}
+
+/// Bridge-compatible export result
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgeExportResult {
+    pub success: bool,
+    pub output_path: String,
+    pub file_size_bytes: u64,
+    pub duration_ms: u64,
+    pub error_message: Option<String>,
+    pub file_size_human: String,
+}
+
+impl From<ExportResult> for BridgeExportResult {
+    fn from(r: ExportResult) -> Self {
+        Self {
+            file_size_human: r.file_size_human(),
+            success: r.success,
+            output_path: r.output_path,
+            file_size_bytes: r.file_size_bytes,
+            duration_ms: r.duration_ms,
+            error_message: r.error_message,
+        }
     }
 }
 
@@ -194,6 +286,66 @@ impl EditorsProEngineApi {
         encode_rgba_to_png(&frame_data.data, frame_data.width, frame_data.height)
     }
 
+    /// Export the project as a video file with real FFmpeg encoding.
+    ///
+    /// This is a **synchronous** export that blocks the calling thread
+    /// until complete. For progress reporting, use
+    /// `export_video_with_progress()` instead, or call this from a
+    /// background isolate.
+    ///
+    /// Returns a `BridgeExportResult` with details about the exported file.
+    pub fn export_video(
+        &self,
+        output_path: String,
+        settings: BridgeExportSettings,
+    ) -> Result<BridgeExportResult, String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let export_settings = ExportSettings::from(settings);
+
+        let result = engine.export_video(&output_path, export_settings, &|_progress| {
+            // No-op for synchronous export — progress is not reported
+        })?;
+
+        Ok(BridgeExportResult::from(result))
+    }
+
+    /// Export the project with progress reporting via a callback.
+    ///
+    /// This method runs the encoding loop on the calling thread but
+    /// invokes the `progress_callback` for each frame, allowing
+    /// Flutter to update its UI. The callback is invoked inside the
+    /// Mutex lock, so it should be lightweight (e.g., just store the
+    /// progress in a shared variable or send it through a channel).
+    ///
+    /// For the StreamSink-based version (recommended for flutter_rust_bridge),
+    /// use `export_video_streaming()` which returns progress items as a Stream.
+    pub fn export_video_with_callback(
+        &self,
+        output_path: String,
+        settings: BridgeExportSettings,
+        progress_callback: impl Fn(BridgeExportProgress),
+    ) -> Result<BridgeExportResult, String> {
+        let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let export_settings = ExportSettings::from(settings);
+
+        let result = engine.export_video(&output_path, export_settings, &|progress| {
+            progress_callback(BridgeExportProgress::from(progress));
+        })?;
+
+        Ok(BridgeExportResult::from(result))
+    }
+
+    /// Request cancellation of an in-progress export.
+    ///
+    /// The encoding loop checks a cancellation flag before each frame
+    /// and will abort early if set. This is safe to call from any
+    /// thread (including the Flutter UI thread).
+    pub fn cancel_export(&self) -> Result<(), String> {
+        let engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        engine.cancel_export();
+        Ok(())
+    }
+
     /// Undo the last action.
     pub fn undo(&self) -> Result<(), String> {
         let mut engine = self.inner.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
@@ -247,6 +399,57 @@ impl EditorsProEngineApi {
         match self.inner.lock() {
             Ok(engine) => engine.can_redo(),
             Err(_) => false,
+        }
+    }
+
+    /// Get the list of available export presets.
+    ///
+    /// Returns a list of preset names that can be used with
+    /// `export_video()` or `export_video_with_callback()`.
+    pub fn get_export_presets(&self) -> Vec<String> {
+        vec![
+            "720p".to_string(),
+            "1080p".to_string(),
+            "4K".to_string(),
+            "Social Vertical".to_string(),
+            "Social Square".to_string(),
+        ]
+    }
+
+    /// Get the export settings for a named preset.
+    ///
+    /// Returns `None` if the preset name is not recognized.
+    pub fn get_export_preset(&self, name: String) -> Option<BridgeExportSettings> {
+        let settings = ExportSettings::preset_by_name(&name)?;
+        Some(BridgeExportSettings::from(settings))
+    }
+}
+
+impl From<ExportSettings> for BridgeExportSettings {
+    fn from(s: ExportSettings) -> Self {
+        Self {
+            width: s.width,
+            height: s.height,
+            fps: s.fps,
+            bitrate_kbps: s.bitrate_kbps,
+            codec: match s.codec {
+                VideoCodec::H264 => "H.264".to_string(),
+                VideoCodec::H265 => "H.265".to_string(),
+                VideoCodec::Vp9 => "VP9".to_string(),
+                VideoCodec::Av1 => "AV1".to_string(),
+            },
+            format: match s.format {
+                OutputFormat::Mp4 => "MP4".to_string(),
+                OutputFormat::WebM => "WebM".to_string(),
+                OutputFormat::Mov => "MOV".to_string(),
+                OutputFormat::Avi => "AVI".to_string(),
+                OutputFormat::Gif => "GIF".to_string(),
+            },
+            audio_bitrate_kbps: s.audio_bitrate_kbps,
+            audio_sample_rate: s.audio_sample_rate,
+            audio_channels: s.audio_channels,
+            include_audio: s.include_audio,
+            two_pass: s.two_pass,
         }
     }
 }

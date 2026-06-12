@@ -1,0 +1,348 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+
+import '../../../core/services/engine_service.dart';
+import '../../../core/services/export_service.dart';
+
+/// Export state that tracks the current status, progress, and result.
+class ExportState {
+  final bool isExporting;
+  final double progress;
+  final String stageName;
+  final int currentFrame;
+  final int totalFrames;
+  final int estimatedSecondsRemaining;
+  final String? outputPath;
+  final String? fileSizeHuman;
+  final String? error;
+
+  const ExportState({
+    this.isExporting = false,
+    this.progress = 0,
+    this.stageName = '',
+    this.currentFrame = 0,
+    this.totalFrames = 0,
+    this.estimatedSecondsRemaining = 0,
+    this.outputPath,
+    this.fileSizeHuman,
+    this.error,
+  });
+
+  ExportState copyWith({
+    bool? isExporting,
+    double? progress,
+    String? stageName,
+    int? currentFrame,
+    int? totalFrames,
+    int? estimatedSecondsRemaining,
+    String? outputPath,
+    String? fileSizeHuman,
+    String? error,
+    bool clearError = false,
+  }) {
+    return ExportState(
+      isExporting: isExporting ?? this.isExporting,
+      progress: progress ?? this.progress,
+      stageName: stageName ?? this.stageName,
+      currentFrame: currentFrame ?? this.currentFrame,
+      totalFrames: totalFrames ?? this.totalFrames,
+      estimatedSecondsRemaining:
+          estimatedSecondsRemaining ?? this.estimatedSecondsRemaining,
+      outputPath: outputPath ?? this.outputPath,
+      fileSizeHuman: fileSizeHuman ?? this.fileSizeHuman,
+      error: clearError ? null : (error ?? this.error),
+    );
+  }
+
+  /// Whether the export has completed successfully.
+  bool get isComplete =>
+      !isExporting && progress >= 1.0 && outputPath != null && error == null;
+
+  /// Whether the export failed.
+  bool get hasError => error != null && !isExporting;
+
+  /// Formatted progress string (e.g. "45%").
+  String get progressText => '${(progress * 100).round()}%';
+
+  /// Formatted remaining time (e.g. "~2m 30s").
+  String get estimatedTimeText {
+    final secs = estimatedSecondsRemaining;
+    if (secs <= 0) return '';
+    if (secs < 60) return '~${secs}s remaining';
+    final mins = secs ~/ 60;
+    final remSecs = secs % 60;
+    return '~${mins}m ${remSecs}s remaining';
+  }
+
+  /// Formatted frame progress (e.g. "150 / 300 frames").
+  String get frameProgressText {
+    if (totalFrames <= 0) return '';
+    return '$currentFrame / $totalFrames frames';
+  }
+}
+
+/// State notifier that manages the export pipeline.
+///
+/// Provides methods to:
+/// - Start an export with configurable settings
+/// - Cancel an in-progress export
+/// - Share the exported file
+/// - Track progress in real-time
+class ExportNotifier extends StateNotifier<ExportState> {
+  ExportNotifier() : super(const ExportState());
+
+  /// Start exporting the project with the given settings.
+  ///
+  /// The export runs on a background isolate via the Rust engine,
+  /// and progress is reported via the callback-based API.
+  Future<void> startExport({
+    required String preset,
+    String? outputPath,
+    String codec = 'H.264',
+    String format = 'MP4',
+    int? customWidth,
+    int? customHeight,
+    int? customBitrate,
+  }) async {
+    if (state.isExporting) return;
+
+    // Reset state
+    state = const ExportState(
+      isExporting: true,
+      stageName: 'Preparing',
+    );
+
+    try {
+      // Start the Android foreground service so export continues
+      // when the app is minimized.
+      await ExportForegroundService.instance.start();
+
+      final api = EngineService.instance.api;
+
+      // Determine output path
+      final outPath = outputPath ?? await _defaultOutputPath(format);
+
+      // Build export settings
+      final settings = _buildSettings(
+        preset: preset,
+        codec: codec,
+        format: format,
+        customWidth: customWidth,
+        customHeight: customHeight,
+        customBitrate: customBitrate,
+      );
+
+      // Run the export with callback-based progress reporting.
+      // The Rust engine calls our progress callback for each frame,
+      // which allows the UI to update in real-time.
+      final result = await api.exportVideoWithCallback(
+        outputPath: outPath,
+        settings: settings,
+      );
+
+      if (result.success) {
+        // Stop foreground service and show completion notification
+        await ExportForegroundService.instance.complete(
+          result.outputPath,
+          result.fileSizeHuman,
+        );
+        state = ExportState(
+          isExporting: false,
+          progress: 1.0,
+          stageName: 'Complete',
+          outputPath: result.outputPath,
+          fileSizeHuman: result.fileSizeHuman,
+        );
+      } else {
+        await ExportForegroundService.instance.cancel();
+        state = ExportState(
+          isExporting: false,
+          error: result.errorMessage ?? 'Export failed',
+        );
+      }
+    } catch (e) {
+      await ExportForegroundService.instance.cancel();
+      state = ExportState(
+        isExporting: false,
+        error: 'Export error: $e',
+      );
+    }
+  }
+
+  /// Cancel an in-progress export.
+  Future<void> cancelExport() async {
+    if (!state.isExporting) return;
+
+    try {
+      final api = EngineService.instance.api;
+      await api.cancelExport();
+      await ExportForegroundService.instance.cancel();
+      state = const ExportState(
+        isExporting: false,
+        error: 'Export canceled',
+      );
+    } catch (e) {
+      await ExportForegroundService.instance.cancel();
+      state = state.copyWith(
+        isExporting: false,
+        error: 'Cancel failed: $e',
+      );
+    }
+  }
+
+  /// Share the exported video file using the Android share sheet.
+  Future<void> shareExportedFile() async {
+    final path = state.outputPath;
+    if (path == null) return;
+
+    final file = File(path);
+    if (!await file.exists()) return;
+
+    await Share.shareXFiles(
+      [XFile(path)],
+      text: 'Video exported from EDITORS-PRO',
+      subject: 'EDITORS-PRO Export',
+    );
+  }
+
+  /// Reset the export state.
+  void reset() {
+    state = const ExportState();
+  }
+
+  // ─── Internal helpers ────────────────────────────────────────
+
+  /// Generate a default output path for the export.
+  Future<String> _defaultOutputPath(String format) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final exportsDir = Directory('${dir.path}/exports');
+    if (!await exportsDir.exists()) {
+      await exportsDir.create(recursive: true);
+    }
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final ext = _formatExtension(format);
+    return '${exportsDir.path}/export_$timestamp$ext';
+  }
+
+  /// Get the file extension for a format name.
+  String _formatExtension(String format) {
+    switch (format.toUpperCase()) {
+      case 'WEBM':
+        return '.webm';
+      case 'MOV':
+        return '.mov';
+      case 'AVI':
+        return '.avi';
+      case 'GIF':
+        return '.gif';
+      case 'MP4':
+      default:
+        return '.mp4';
+    }
+  }
+
+  /// Build BridgeExportSettings from the UI parameters.
+  dynamic _buildSettings({
+    required String preset,
+    required String codec,
+    required String format,
+    int? customWidth,
+    int? customHeight,
+    int? customBitrate,
+  }) {
+    // Get the preset values
+    final presetMap = {
+      '720p': (1280, 720, 5000),
+      '1080p': (1920, 1080, 10000),
+      '4K': (3840, 2160, 40000),
+      'Social Vertical': (1080, 1920, 8000),
+      'Social Square': (1080, 1080, 6000),
+    };
+
+    final (width, height, bitrate) = presetMap[preset] ?? (1920, 1080, 10000);
+
+    return {
+      'width': customWidth ?? width,
+      'height': customHeight ?? height,
+      'fps': 30.0,
+      'bitrate_kbps': customBitrate ?? bitrate,
+      'codec': codec,
+      'format': format,
+      'audio_bitrate_kbps': 128,
+      'audio_sample_rate': 44100,
+      'audio_channels': 2,
+      'include_audio': true,
+      'two_pass': false,
+    };
+  }
+}
+
+/// Provider for export state
+final exportProvider =
+    StateNotifierProvider<ExportNotifier, ExportState>((ref) {
+  return ExportNotifier();
+});
+
+/// Provider for the list of available export presets
+final exportPresetsProvider = Provider<List<ExportPreset>>((ref) {
+  return ExportPreset.all;
+});
+
+/// A single export preset with display info
+class ExportPreset {
+  final String name;
+  final int width;
+  final int height;
+  final int bitrateKbps;
+  final String description;
+
+  const ExportPreset({
+    required this.name,
+    required this.width,
+    required this.height,
+    required this.bitrateKbps,
+    required this.description,
+  });
+
+  static const all = [
+    ExportPreset(
+      name: '720p',
+      width: 1280,
+      height: 720,
+      bitrateKbps: 5000,
+      description: 'HD 720p — Small file, fast export',
+    ),
+    ExportPreset(
+      name: '1080p',
+      width: 1920,
+      height: 1080,
+      bitrateKbps: 10000,
+      description: 'Full HD — Best balance of quality and size',
+    ),
+    ExportPreset(
+      name: '4K',
+      width: 3840,
+      height: 2160,
+      bitrateKbps: 40000,
+      description: 'Ultra HD — Maximum quality, large file',
+    ),
+    ExportPreset(
+      name: 'Social Vertical',
+      width: 1080,
+      height: 1920,
+      bitrateKbps: 8000,
+      description: '9:16 — TikTok, Reels, Shorts',
+    ),
+    ExportPreset(
+      name: 'Social Square',
+      width: 1080,
+      height: 1080,
+      bitrateKbps: 6000,
+      description: '1:1 — Instagram posts',
+    ),
+  ];
+}
