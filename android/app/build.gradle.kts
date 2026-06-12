@@ -48,9 +48,10 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        // Support for all common ABIs
+        // arm64-v8a only for initial release (covers 99% of modern Android devices)
+        // armeabi-v7a and x86_64 can be added in follow-up releases if needed
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
 
         // Rust library loading

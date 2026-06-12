@@ -25,7 +25,6 @@
         android:label="EDITORS-PRO"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true"
         android:largeHeap="true"
         android:hardwareAccelerated="true"
         android:allowBackup="true">

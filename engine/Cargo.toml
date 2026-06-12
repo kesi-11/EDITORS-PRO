@@ -49,6 +49,14 @@ zip = "2.2"
 # Memory-aligned data for GPU interop
 bytemuck = "1.16"
 
+# Flutter Rust Bridge (for StreamSink support in export progress)
+# Only needed when using StreamSink<T> in bridge_api.rs
+flutter_rust_bridge = { version = "2.9", optional = true }
+
+[features]
+default = []
+streaming = ["flutter_rust_bridge"]
+
 # Android NDK bindings (for MediaCodec hardware acceleration)
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-sys = "0.6"

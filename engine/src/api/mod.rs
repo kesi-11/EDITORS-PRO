@@ -5,6 +5,7 @@
 //! return serializable results.
 
 pub mod commands;
+pub mod bridge_api;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -32,6 +33,10 @@ pub struct EditorsProEngine {
     renderer: PreviewRenderer,
     command_history: CommandHistory,
     initialized: bool,
+    /// The file path of the video currently loaded in the decoder.
+    /// Used to detect clip-switching so the decoder is re-opened when
+    /// the user scrubs to a different clip.
+    current_file_path: Option<String>,
 }
 
 impl EditorsProEngine {
@@ -43,6 +48,7 @@ impl EditorsProEngine {
             renderer: PreviewRenderer::new(1920, 1080),
             command_history: CommandHistory::new(),
             initialized: false,
+            current_file_path: None,
         }
     }
 
@@ -198,8 +204,12 @@ impl EditorsProEngine {
         Ok(())
     }
 
-    /// Get a rendered frame at the specified timestamp for preview
-    pub fn get_frame(&mut self, time_ms: u64) -> Result<Vec<u8>, EngineError> {
+    /// Get a rendered frame at the specified timestamp for preview.
+    ///
+    /// Returns the full [`FrameData`] including width, height, and raw
+    /// RGBA pixel data. Callers that only need the bytes can destructure
+    /// the result.
+    pub fn get_frame(&mut self, time_ms: u64) -> Result<crate::decoder::FrameData, EngineError> {
         if !self.initialized {
             return Err(EngineError::InvalidState("Engine not initialized".to_string()));
         }
@@ -226,8 +236,23 @@ impl EditorsProEngine {
             let relative_time = time_ms - clip.start_ms;
             let source_time = clip.trim_start_ms + (relative_time as f32 * clip.speed) as u64;
 
-            if self.decoder.get_video_info().is_none() {
+            // Check whether the decoder already has the correct file open.
+            // If the file path differs from the currently-open file, close
+            // the decoder and re-open the new file. This fixes the bug where
+            // scrubbing between different clips would not re-open the decoder.
+            let needs_reopen = match &self.current_file_path {
+                Some(current) => current != &file_path,
+                None => true,
+            };
+
+            if needs_reopen {
+                // Close the previous decoder to release FFmpeg resources.
+                self.decoder.close();
+                self.current_file_path = None;
+
+                // Open the new file.
                 self.decoder.open(&file_path).map_err(|e| EngineError::DecoderError(e))?;
+                self.current_file_path = Some(file_path);
             }
             Some(self.decoder.decode_frame_at(source_time).map_err(|e| EngineError::DecoderError(e))?)
         } else {
@@ -239,7 +264,7 @@ impl EditorsProEngine {
             .ok_or_else(|| EngineError::InvalidState("No project open".to_string()))?;
         let composed = self.renderer.compose_frame(project.timeline(), time_ms, video_frame);
 
-        Ok(composed.data)
+        Ok(composed)
     }
 
     /// Export the project as a video file

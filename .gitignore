@@ -5,9 +5,10 @@ build/
 .flutter-plugins
 .flutter-plugins-dependencies
 
-# Lock files (keep pubspec.lock for reproducible builds)
+# Lock files (keep pubspec.lock and Cargo.lock for reproducible builds)
 *.lock
 !pubspec.lock
+!engine/Cargo.lock
 
 # Rust engine
 engine/target/

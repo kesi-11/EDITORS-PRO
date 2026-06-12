@@ -1,13 +1,19 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/extensions/context_extensions.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/services/engine_service.dart';
 import '../../../data/models/project_model.dart';
 import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
+import '../providers/engine_bridge_provider.dart';
 import '../widgets/preview_viewport.dart';
 import '../widgets/timeline_panel.dart';
 import '../widgets/editor_toolbar.dart';
@@ -242,14 +248,87 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     );
   }
 
+  /// Import media using the file picker, copy to cache, and register
+  /// with the Rust engine.
   Future<void> _importMedia() async {
-    // This will use the Rust bridge in production
-    // For now, use file_picker to select a file
     try {
       ref.read(editorProvider.notifier).setImporting(true);
-      // In production: call engine.import_media(path)
-      // For MVP: we'll handle this through the bridge
+
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: [
+          'mp4', 'avi', 'mov', 'mkv', 'webm', 'flv', 'wmv', '3gp',
+          'mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma',
+          'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp',
+        ],
+        allowMultiple: false,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        ref.read(editorProvider.notifier).setImporting(false);
+        return;
+      }
+
+      final pickedFile = result.files.first;
+      final sourcePath = pickedFile.path;
+
+      if (sourcePath == null) {
+        ref.read(editorProvider.notifier).setImporting(false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not access the selected file')),
+          );
+        }
+        return;
+      }
+
+      // Copy the file to the app's cache directory so that the Rust
+      // engine (which runs on the native side) can access it reliably.
+      final cacheDir = await getTemporaryDirectory();
+      final mediaDir = Directory(p.join(cacheDir.path, AppConstants.mediaDir));
+      if (!mediaDir.existsSync()) {
+        mediaDir.createSync(recursive: true);
+      }
+
+      final destPath = p.join(mediaDir.path, p.basename(sourcePath));
+      await File(sourcePath).copy(destPath);
+
+      // Call into the Rust engine to import the media.
+      if (!EngineService.instance.isInitialized) {
+        ref.read(editorProvider.notifier).setImporting(false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Engine not initialized')),
+          );
+        }
+        return;
+      }
+
+      final notifier = ref.read(editorProvider.notifier);
+      final assetInfo = await notifier.importMedia(destPath);
+
+      if (assetInfo != null) {
+        // Update the project provider's media asset list so that the
+        // media library UI reflects the newly imported asset.
+        final mediaType = _mediaTypeFromString(assetInfo.mediaType);
+        await ref.read(projectProvider.notifier).importMedia(
+              assetInfo.filePath,
+              assetInfo.fileName,
+              mediaType,
+              durationMs: assetInfo.durationMs?.toInt(),
+              width: assetInfo.width?.toInt(),
+              height: assetInfo.height?.toInt(),
+              fileSizeBytes: assetInfo.fileSizeBytes.toInt(),
+            );
+      }
+
       ref.read(editorProvider.notifier).setImporting(false);
+
+      if (mounted && assetInfo != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imported: ${assetInfo.fileName}')),
+        );
+      }
     } catch (e) {
       ref.read(editorProvider.notifier).setImporting(false);
       if (mounted) {
@@ -257,6 +336,21 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
           SnackBar(content: Text('Import failed: $e')),
         );
       }
+    }
+  }
+
+  /// Map the string media type returned by the Rust engine to the
+  /// Dart [MediaType] enum.
+  MediaType _mediaTypeFromString(String type) {
+    switch (type.toLowerCase()) {
+      case 'video':
+        return MediaType.video;
+      case 'audio':
+        return MediaType.audio;
+      case 'image':
+        return MediaType.image;
+      default:
+        return MediaType.video;
     }
   }
 }
