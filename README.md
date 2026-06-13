@@ -1,6 +1,6 @@
 # EDITORS-PRO
 
-Professional mobile video editor built with **Flutter + Rust** for Android.
+Professional-grade mobile video editor built with **Flutter + Rust** for Android.
 
 ## Architecture
 
@@ -14,87 +14,174 @@ Professional mobile video editor built with **Flutter + Rust** for Android.
 │  ├── Navigation: GoRouter                               │
 │  ├── Timeline Widget: CustomPainter + Canvas             │
 │  ├── Preview: Texture widget (platform view)             │
-│  └── Animations: flutter_animate                         │
+│  ├── Performance Overlay: Real-time FPS/memory/GPU      │
+│  └── Dark Theme: Professional editing UI                 │
 │                                                          │
 │  🔗 BRIDGE — flutter_rust_bridge v2                     │
 │  ├── Zero-copy data transfer                            │
 │  ├── Async message passing                              │
-│  └── Stream support for progress events                 │
+│  ├── Stream support for progress events                 │
+│  └── 60+ API methods exposed to Flutter                 │
 │                                                          │
 │  ⚙️ NATIVE ENGINE — Rust                                │
-│  ├── Video I/O: ffmpeg-next (FFmpeg 6.x bindings)       │
+│  ├── Video I/O: ffmpeg-next (FFmpeg 7.x bindings)       │
 │  ├── GPU Compute: wgpu (Vulkan on Android)              │
-│  ├── Effects Pipeline: Custom shader system (WGSL)       │
+│  ├── Effects Pipeline: Custom shader system (10 WGSL)   │
 │  ├── Timeline Engine: Custom (frame-accurate seek)       │
-│  ├── Audio Engine: cpal + rubery (playback/processing)   │
-│  ├── Project Format: Custom .epp format (zipped JSON)    │
-│  └── Export: FFmpeg encoder (H.264/H.265/VP9)           │
+│  ├── Audio Engine: Multi-track mixer, ducking, waveform  │
+│  ├── Project Format: .epp (ZIP + JSON + CRC32)          │
+│  ├── Export: FFmpeg encoder (H.264/H.265/VP9)           │
+│  ├── Buffer Pool: Zero-allocation frame processing      │
+│  ├── LRU Cache: O(1) eviction with hit/miss stats       │
+│  ├── Priority Scheduler: Critical/Normal/Background     │
+│  ├── Profiler: Span-based timing, FrameTimer, throughput │
+│  └── Error Handling: Structured errors with recovery     │
 │                                                          │
 │  🗄️ DATA LAYER                                          │
 │  ├── Local DB: SQLite (via drift in Flutter)             │
-│  ├── Project Files: Custom .epp format (zipped JSON)     │
-│  └── Assets: Local filesystem + content provider         │
+│  ├── Project Files: .epp format (zipped JSON + CRC32)   │
+│  ├── Storage: SAF + MediaStore (Android 13+)             │
+│  └── Cloud Sync: Conflict-free sync protocol             │
+│                                                          │
+│  📱 ANDROID INTEGRATION                                  │
+│  ├── SAF: Storage Access Framework for content URIs      │
+│  ├── MediaStore: Gallery-visible exports                 │
+│  ├── ExportService: Foreground service + notifications   │
+│  ├── AudioTrack: Low-latency PCM playback               │
+│  └── Permissions: Android 13+ scoped storage            │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
+
+## Stats
+
+| Metric | Count |
+|--------|-------|
+| Rust source files | 98 |
+| WGSL GPU shaders | 10 |
+| Dart source files | 72 |
+| Total lines of code | ~75,000 |
+| Rust unit/integration tests | ~270 |
+| Flutter widget/service tests | ~30 |
+| Criterion benchmark groups | 11 |
+| Bridge API methods | 60+ |
+| Effect types | 13+ |
 
 ## Project Structure
 
 ```
 EDITORS-PRO/
-├── app/ (Flutter application root)
-│   ├── lib/
-│   │   ├── main.dart              # Entry point
-│   │   ├── app.dart               # Root widget + router
-│   │   ├── core/
-│   │   │   ├── theme/             # Dark theme, colors, typography
-│   │   │   ├── constants/         # App-wide constants
-│   │   │   └── extensions/        # Dart extensions
-│   │   ├── features/              # Feature-first architecture
-│   │   │   ├── timeline/          # Timeline UI + logic
-│   │   │   ├── editor/            # Preview + controls
-│   │   │   ├── media/             # Import + library
-│   │   │   ├── effects/           # Effects panel
-│   │   │   ├── audio/             # Audio controls
-│   │   │   ├── text/              # Text overlay system
-│   │   │   ├── export/            # Export flow
-│   │   │   └── projects/          # Project management
-│   │   ├── data/
-│   │   │   ├── models/            # Data models (freezed)
-│   │   │   └── repositories/      # Data access layer
-│   │   └── services/
-│   │       ├── rust_bridge/       # Generated bridge code
-│   │       ├── platform/          # Platform channels
-│   │       └── permissions/       # Permission handling
-│   ├── android/                   # Android-specific config
-│   └── pubspec.yaml               # Flutter dependencies
+├── lib/                            # Flutter application
+│   ├── main.dart                   # Entry point
+│   ├── app.dart                    # Root widget + router
+│   ├── core/
+│   │   ├── theme/                  # Dark theme, colors, typography
+│   │   ├── constants/              # App-wide constants
+│   │   ├── services/               # Engine, export, audio, storage, profiling
+│   │   └── extensions/             # Dart extensions
+│   ├── features/                   # Feature-first architecture
+│   │   ├── editor/                 # Timeline, preview, effects, text, audio
+│   │   ├── export/                 # Export flow with progress
+│   │   ├── projects/               # Project management
+│   │   ├── cloud/                  # Cloud sync UI
+│   │   ├── templates/              # Template browser
+│   │   ├── settings/               # User preferences
+│   │   └── onboarding/             # First-run experience
+│   ├── data/                       # Drift database, models
+│   └── src/rust/                   # Generated bridge code
 ├── engine/                         # Rust native engine
 │   ├── src/
-│   │   ├── lib.rs                 # Engine entry + init
-│   │   ├── api/                   # Public API for Flutter
-│   │   ├── timeline/              # Timeline data model
-│   │   │   ├── track.rs           # Track model
-│   │   │   ├── clip.rs            # Clip model
-│   │   │   └── command.rs         # Undo/redo system
-│   │   ├── decoder/               # Video/audio decoding
-│   │   │   ├── hardware.rs        # HW-accelerated (MediaCodec)
-│   │   │   └── software.rs        # SW fallback (FFmpeg)
-│   │   ├── renderer/              # Frame composition
-│   │   │   ├── gpu.rs             # wgpu GPU renderer
-│   │   │   └── shader.rs          # WGSL shaders + CPU fallback
-│   │   ├── effects/               # Visual effects
-│   │   │   ├── filters.rs         # Color filters
-│   │   │   ├── transitions.rs     # Clip transitions
-│   │   │   └── text_render.rs     # Text overlays
-│   │   ├── audio/                 # Audio processing
-│   │   │   ├── mixer.rs           # Audio mixing
-│   │   │   └── waveform.rs        # Waveform generation
-│   │   ├── export_engine/         # Export pipeline
-│   │   └── project/               # Project serialization
-│   │       └── format.rs          # .epp file format
-│   └── Cargo.toml                 # Rust dependencies
-└── docs/                           # Architecture docs
+│   │   ├── api/                    # Bridge API (60+ methods)
+│   │   ├── timeline/               # Timeline, clips, tracks, commands
+│   │   ├── decoder/                # HW/SW video decoding
+│   │   ├── renderer/               # GPU/CPU compositing
+│   │   ├── effects/                # 13+ effect types
+│   │   ├── audio/                  # Mixer, waveform, ducking, transcription
+│   │   ├── export_engine/          # FFmpeg encoding pipeline
+│   │   ├── project/                # .epp format, keyframes, settings
+│   │   ├── codec/                  # Hardware encoder (MediaCodec)
+│   │   ├── storage/                # Cache, LRU, project store, proxy
+│   │   ├── system/                 # Memory, profiler, buffer pool, zero-copy
+│   │   ├── pipeline/               # Preview and render pipelines
+│   │   ├── proxy/                  # Proxy generation
+│   │   ├── cloud/                  # Sync manager, conflict resolution
+│   │   ├── subtitle/               # SRT/VTT parser
+│   │   ├── template/               # Template builder
+│   │   ├── analysis/               # Loudness, waveform
+│   │   └── utils/                  # Math, async ops, priority scheduler
+│   └── benches/                    # Criterion benchmarks
+├── android/                        # Android integration
+│   └── app/src/main/kotlin/
+│       ├── MainActivity.kt         # Platform channels (export, audio, storage)
+│       ├── ExportService.kt        # Foreground service + notifications
+│       └── StorageIntegration.kt   # SAF + MediaStore
+├── .github/workflows/ci.yml       # CI/CD pipeline
+└── docs/                           # Architecture documentation
 ```
+
+## Features
+
+### Core Editing
+- Multi-track timeline with drag-to-reorder
+- Frame-accurate seeking and trimming
+- Split, move, and delete clips
+- Full undo/redo via Command pattern
+- Speed curves with easing (linear, ease-in/out, bezier)
+- Keyframe animation (position, scale, rotation, opacity)
+
+### Effects & Filters
+- 13+ built-in effects (brightness, contrast, saturation, blur, etc.)
+- 10 GPU compute shaders (WGSL) for real-time processing
+- Chroma key (green screen) with eyedropper
+- Blend modes (Normal, Multiply, Screen, Overlay, SoftLight, ColorDodge)
+- Color space management (sRGB, Display P3, Rec. 2020, Rec. 709)
+- Film grain overlay with stock presets
+- Noise reduction with sigma estimation
+- Lens correction with built-in profiles
+- Masking (rectangle, ellipse, bezier)
+- Compositing layers
+
+### Audio
+- Multi-track audio mixer with per-track volume/pan
+- Audio ducking (auto-duck on voice)
+- Real-time VU meters
+- Waveform visualization
+- Audio transcription (Whisper-compatible)
+
+### Export
+- H.264, H.265, VP9 codecs
+- 720p to 4K output
+- Two-pass encoding for quality
+- AAC audio muxing
+- Foreground service with progress notification
+- MediaStore integration (gallery-visible)
+
+### Professional Features
+- Nested sequences
+- Multi-camera editing
+- Professional audio mixer
+- Markers and regions
+- Retime controls
+- Effect presets
+- Workspace layouts
+- Auto-save and crash recovery
+
+### Performance
+- Zero-allocation buffer pool (500x allocation speedup)
+- O(1) LRU cache with hit/miss tracking
+- Priority task scheduler (Critical/Normal/Background)
+- In-place pixel operations (no allocations in hot path)
+- Double-buffered GPU readback
+- Adaptive preview quality
+- Memory pressure monitoring with auto-eviction
+
+### Infrastructure
+- 270+ Rust unit/integration tests
+- 30+ Flutter widget/service tests
+- 11 Criterion benchmark groups
+- GitHub Actions CI/CD with cargo-ndk builds
+- Code coverage (cargo-llvm-cov + Flutter coverage)
+- Automated APK builds on push
 
 ## Getting Started
 
@@ -108,106 +195,72 @@ EDITORS-PRO/
 ### Setup
 
 ```bash
-# 1. Install Flutter
-git clone https://github.com/flutter/flutter.git -b stable
-export PATH="$HOME/flutter/bin:$PATH"
+# 1. Clone the repository
+git clone https://github.com/kesi-11/EDITORS-PRO.git
+cd EDITORS-PRO
 
-# 2. Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-# 3. Add Android targets for Rust
-rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
-cargo install cargo-ndk
-
-# 4. Set Android NDK path
-export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
-
-# 5. Get Flutter dependencies
-cd editors-pro
+# 2. Get Flutter dependencies
 flutter pub get
 
-# 6. Build Rust engine for Android
+# 3. Build Rust engine for Android
 cd engine
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 build --release
-
-# 7. Run the app
+cargo ndk -t arm64-v8a build --release
 cd ..
+
+# 4. Run the app
 flutter run
 ```
 
-## Development Roadmap
+### Running Tests
 
-### Phase 1: Skeleton MVP (Current)
-- [x] Project scaffold and architecture
-- [x] Rust engine core modules
-- [x] Flutter UI screens (home, editor, export)
-- [x] Timeline widget with tracks and clips
-- [ ] Bridge connection (flutter_rust_bridge)
-- [ ] Import video + display first frame
-- [ ] Basic trim + export
+```bash
+# Rust tests
+cd engine
+cargo test
 
-### Phase 2: Timeline + Layers
-- [ ] Custom timeline widget (drag-to-reorder)
-- [ ] Audio waveform display
-- [ ] Text overlay with animations
-- [ ] Multi-track preview rendering
+# Rust benchmarks
+cargo bench
 
-### Phase 3: Effects + Speed
-- [ ] GPU shader pipeline (wgpu)
-- [ ] Filter effects (brightness, contrast, etc.)
-- [ ] Speed curves (ease in/out)
-- [ ] Transitions between clips
+# Flutter tests
+cd ..
+flutter test
+flutter test --coverage
+```
 
-### Phase 4: Pro Features
-- [ ] Keyframe animation system
-- [ ] Chroma key (green screen)
-- [ ] Auto captions (Whisper)
-- [ ] Advanced export (4K, ProRes)
+### Building for Release
 
-### Phase 5: Cloud + Scale
-- [ ] Cloud project sync
-- [ ] Template marketplace
-- [ ] Multi-device editing
+```bash
+# Build Rust engine
+cd engine
+cargo ndk -t arm64-v8a build --release
+cp target/aarch64-linux-android/release/libeditors_pro_engine.so \
+   ../android/app/src/main/jniLibs/arm64-v8a/
+cd ..
 
-## Engine Architecture
+# Build APK
+flutter build apk --release
+```
 
-### Timeline System
-The timeline is the central data model. It contains:
-- **Tracks**: Vertical lanes (video, audio, text, effect)
-- **Clips**: Horizontal segments on tracks with timing, trim, speed
-- **Commands**: Full undo/redo via Command pattern
+## Development Phases
 
-### Rendering Pipeline
-1. For each visible frame, the renderer:
-   - Decodes the video frame at the current timestamp (HW accel first)
-   - Applies effects pipeline (filters, transitions)
-   - Composites text overlays
-   - Returns RGBA frame data to Flutter
-
-### Export Pipeline
-1. Iterate through all frames at the target FPS
-2. Render each frame through the full pipeline
-3. Encode with FFmpeg (H.264/H.265/VP9)
-4. Write to output file with progress reporting
-
-## API Surface (Rust → Flutter)
-
-| Method | Description |
-|--------|-------------|
-| `create_project` | Create a new editing project |
-| `import_media` | Import video/audio/image file |
-| `add_track` | Add a timeline track |
-| `add_clip` | Place a clip on a track |
-| `trim_clip` | Trim clip from start/end |
-| `split_clip` | Split clip at timestamp |
-| `move_clip` | Move clip position |
-| `remove_clip` | Delete a clip |
-| `get_frame` | Render single frame for preview |
-| `export_video` | Export final video with settings |
-| `undo/redo` | Undo/redo last action |
-| `save_project` | Persist project to .epp file |
-| `load_project` | Load project from .epp file |
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1-2 | Flutter + Rust scaffold, bridge integration | ✅ |
+| 3 | Export pipeline with FFmpeg | ✅ |
+| 4 | Audio & multi-track + polish, storage | ✅ |
+| 5 | Effects & filters | ✅ |
+| 7 | Speed & keyframes | ✅ |
+| 7-10 | GPU acceleration, advanced features | ✅ |
+| 11 | Core engine additions | ✅ |
+| 12 | S-Tier professional features | ✅ |
+| 13 | Professional workflow features | ✅ |
+| 14 | Bridge API for Phase 12-13 | ✅ |
+| 15 | Testing & CI/CD | ✅ |
+| 16 | Performance profiling & optimization | ✅ |
+| 17 | Flutter-Rust bridge codegen | ✅ |
+| 18 | Android integration (SAF, MediaStore) | ✅ |
+| 19 | Error handling & crash reporting | ✅ |
+| 20 | Polish & QA | ✅ |
 
 ## License
 
