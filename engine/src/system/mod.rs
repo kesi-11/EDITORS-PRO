@@ -1,9 +1,12 @@
 //! System monitoring utilities
 //!
 //! Provides memory pressure monitoring, performance metrics collection,
-//! and system resource tracking for the editing engine.
+//! performance profiling, and system resource tracking for the editing engine.
 
 pub mod memory;
+pub mod profiler;
+pub mod buffer_pool;
+pub mod zero_copy;
 
 use serde::{Deserialize, Serialize};
 

@@ -230,6 +230,181 @@ fn bench_speed_curve(c: &mut Criterion) {
     group.finish();
 }
 
+// ─── Buffer Pool ──────────────────────────────────────────────────
+
+fn bench_buffer_pool(c: &mut Criterion) {
+    use editors_pro_engine::system::buffer_pool::{BufferPool, BufferPoolConfig};
+
+    let mut group = c.benchmark_group("buffer_pool");
+
+    group.bench_function("allocate_1080p_new", |b| {
+        b.iter(|| {
+            let pool = BufferPool::with_config(BufferPoolConfig {
+                max_per_class: 4,
+                prewarm: false,
+            });
+            let buf = pool.allocate(1920 * 1080 * 4);
+            black_box(buf);
+        })
+    });
+
+    group.bench_function("allocate_1080p_reuse", |b| {
+        let pool = BufferPool::with_config(BufferPoolConfig {
+            max_per_class: 4,
+            prewarm: false,
+        });
+        b.iter(|| {
+            let buf = pool.allocate(1920 * 1080 * 4);
+            drop(buf);
+        })
+    });
+
+    group.finish();
+}
+
+// ─── LRU Cache ────────────────────────────────────────────────────
+
+fn bench_lru_cache(c: &mut Criterion) {
+    use editors_pro_engine::system::lru_cache::{LruCache, LruCacheConfig};
+
+    let mut group = c.benchmark_group("lru_cache");
+
+    group.bench_function("put_and_get_1000", |b| {
+        let mut cache = LruCache::new(LruCacheConfig {
+            max_bytes: 100_000_000,
+            ..LruCacheConfig::default()
+        });
+        b.iter(|| {
+            for i in 0..1000 {
+                cache.put(&format!("key_{}", i), vec![0u8; 100], 100);
+            }
+            for i in 0..1000 {
+                let _ = cache.get(&format!("key_{}", i));
+            }
+        })
+    });
+
+    group.bench_function("eviction_under_pressure", |b| {
+        b.iter(|| {
+            let mut cache = LruCache::new(LruCacheConfig {
+                max_bytes: 10_000,
+                ..LruCacheConfig::default()
+            });
+            for i in 0..1000 {
+                cache.put(&format!("key_{}", i), vec![0u8; 100], 100);
+            }
+            black_box(&cache);
+        })
+    });
+
+    group.finish();
+}
+
+// ─── Zero-Copy Operations ─────────────────────────────────────────
+
+fn bench_zero_copy_operations(c: &mut Criterion) {
+    use editors_pro_engine::system::zero_copy::*;
+
+    let mut group = c.benchmark_group("zero_copy");
+
+    // 1080p frame data (1920 * 1080 * 4 = 8,294,400 bytes)
+    let frame_size = 1920 * 1080 * 4;
+
+    group.bench_function("brightness_1080p", |b| {
+        let mut data = vec![128u8; frame_size];
+        b.iter(|| {
+            adjust_brightness_in_place(&mut data, 50);
+        })
+    });
+
+    group.bench_function("contrast_1080p", |b| {
+        let mut data = vec![128u8; frame_size];
+        b.iter(|| {
+            adjust_contrast_in_place(&mut data, 1.5);
+        })
+    });
+
+    group.bench_function("grayscale_1080p", |b| {
+        let mut data = vec![128u8; frame_size];
+        b.iter(|| {
+            grayscale_in_place(&mut data);
+        })
+    });
+
+    group.bench_function("invert_1080p", |b| {
+        let mut data = vec![128u8; frame_size];
+        b.iter(|| {
+            invert_in_place(&mut data);
+        })
+    });
+
+    group.bench_function("sepia_1080p", |b| {
+        let mut data = vec![128u8; frame_size];
+        b.iter(|| {
+            sepia_in_place(&mut data);
+        })
+    });
+
+    group.bench_function("opacity_1080p", |b| {
+        let mut data = vec![255u8; frame_size];
+        b.iter(|| {
+            apply_opacity_in_place(&mut data, 0.75);
+        })
+    });
+
+    group.bench_function("blend_rgba_1080p", |b| {
+        let mut dst = vec![0u8; frame_size];
+        let src = vec![128u8; frame_size];
+        b.iter(|| {
+            blend_rgba_in_place(&mut dst, &src);
+        })
+    });
+
+    group.finish();
+}
+
+// ─── Frame Pipeline ───────────────────────────────────────────────
+
+fn bench_frame_pipeline(c: &mut Criterion) {
+    use editors_pro_engine::system::zero_copy::*;
+
+    let mut group = c.benchmark_group("frame_pipeline");
+
+    group.bench_function("single_transform_1080p", |b| {
+        let mut pipeline = FramePipeline::new();
+        pipeline.add(BrightnessTransform { delta: 30 });
+        let mut buffer = FrameBuffer::new(1920, 1080);
+        b.iter(|| {
+            buffer.clear();
+            pipeline.apply(&mut buffer);
+        })
+    });
+
+    group.bench_function("chain_4_transforms_1080p", |b| {
+        let mut pipeline = FramePipeline::new();
+        pipeline.add(BrightnessTransform { delta: 20 });
+        pipeline.add(ContrastTransform { factor: 1.3 });
+        pipeline.add(OpacityTransform { opacity: 0.9 });
+        pipeline.add(GrayscaleTransform);
+        let mut buffer = FrameBuffer::new(1920, 1080);
+        b.iter(|| {
+            buffer.clear();
+            pipeline.apply(&mut buffer);
+        })
+    });
+
+    group.bench_function("double_buffer_swap_1080p", |b| {
+        let mut db = DoubleBuffer::new(1920, 1080);
+        b.iter(|| {
+            db.back_mut().clear();
+            db.swap();
+            black_box(db.front());
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_waveform_generation,
@@ -239,6 +414,10 @@ criterion_group!(
     bench_blend_modes,
     bench_keyframe_interpolation,
     bench_speed_curve,
+    bench_buffer_pool,
+    bench_lru_cache,
+    bench_zero_copy_operations,
+    bench_frame_pipeline,
 );
 
 criterion_main!(benches);
