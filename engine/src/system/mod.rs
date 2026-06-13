@@ -7,6 +7,7 @@ pub mod memory;
 pub mod profiler;
 pub mod buffer_pool;
 pub mod zero_copy;
+pub mod error_handling;
 
 use serde::{Deserialize, Serialize};
 

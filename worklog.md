@@ -432,3 +432,23 @@ Stage Summary:
 - Updated MainActivity.kt: 8 new storage platform channel methods
 - New storage_service.dart: Flutter wrapper for all storage platform channels
 - Android integration is now complete for SAF, MediaStore, permissions, and notifications
+
+---
+Task ID: 19
+Agent: Main Agent
+Task: Phase 19 — Error Handling & Crash Reporting
+
+Work Log:
+- Added system/error_handling.rs: EngineErrorDetail struct with category, severity, code, context, cause, recovery_hint
+- Added ErrorReporter with ring buffer, category counts, crash report generation
+- Added global_reporter() for thread-safe global error reporting
+- Added convenience error constructors (decode_error, render_error, export_error, storage_error, memory_warning, etc.)
+- Added 15+ unit tests for error handling module
+- Added error_reporter_service.dart: Flutter error reporter with stream, counts, crash report
+- Added EngineError class with fromJson/toJson, userMessage, shouldShowToUser
+
+Stage Summary:
+- New Rust module: error_handling.rs (~400 lines, 15+ tests)
+- New Flutter service: error_reporter_service.dart (~200 lines)
+- Structured error types with categories, severity, codes, context, recovery hints
+- Global thread-safe error reporter with crash report generation
