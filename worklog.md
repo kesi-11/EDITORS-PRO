@@ -414,3 +414,21 @@ Stage Summary:
 - 2 new Dart DTO classes, 10 Dart free functions
 - 9 new Rust bridge tests
 - Bridge API now exposes performance profiling, memory monitoring, and profiler report to Flutter
+
+---
+Task ID: 18
+Agent: Main Agent
+Task: Phase 18 — Android Integration (SAF, MediaStore, permissions, notifications)
+
+Work Log:
+- Added StorageIntegration.kt: SAF content URI handling, MediaStore save (API 29+ and legacy), temp file management
+- Updated MainActivity.kt: Added STORAGE_CHANNEL platform channel for SAF/MediaStore operations
+- Added storage_service.dart: Flutter service for copyContentUriToTempFile, saveToMediaStore, cleanupTempFiles, getAvailableStorageBytes
+- Android manifest already had proper permissions (READ_MEDIA_VIDEO, READ_MEDIA_AUDIO, POST_NOTIFICATIONS, etc.)
+- ExportService already had notification channel with progress and cancel support
+
+Stage Summary:
+- New StorageIntegration.kt: SAF reading, MediaStore writing (both API 29+ and legacy), temp file cleanup
+- Updated MainActivity.kt: 8 new storage platform channel methods
+- New storage_service.dart: Flutter wrapper for all storage platform channels
+- Android integration is now complete for SAF, MediaStore, permissions, and notifications

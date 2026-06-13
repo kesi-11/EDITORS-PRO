@@ -20,6 +20,7 @@ class MainActivity : FlutterActivity() {
         private const val TAG = "EditorsPro"
         private const val EXPORT_CHANNEL = "com.editorspro/editors_pro/export"
         private const val AUDIO_CHANNEL = "com.editorspro/audio"
+        private const val STORAGE_CHANNEL = "com.editorspro/storage"
         private const val PERMISSION_REQUEST_CODE = 1001
 
         // Permissions required for Android 13+
@@ -199,6 +200,85 @@ class MainActivity : FlutterActivity() {
                         }
                     }
 
+                    else -> result.notImplemented()
+                }
+            }
+
+        // Set up method channel for SAF/MediaStore storage integration
+        MethodChannel(flutterEngine?.dartExecutor?.binaryMessenger, STORAGE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "copyContentUriToTempFile" -> {
+                        val uriString = call.argument<String>("uri")
+                        if (uriString != null) {
+                            val uri = android.net.Uri.parse(uriString)
+                            val path = StorageIntegration.copyContentUriToTempFile(this, uri)
+                            if (path != null) {
+                                result.success(path)
+                            } else {
+                                result.error("COPY_FAILED", "Failed to copy content URI", null)
+                            }
+                        } else {
+                            result.error("INVALID_URI", "URI argument is null", null)
+                        }
+                    }
+                    "getFileName" -> {
+                        val uriString = call.argument<String>("uri")
+                        if (uriString != null) {
+                            val uri = android.net.Uri.parse(uriString)
+                            val name = StorageIntegration.getFileName(this, uri)
+                            result.success(name)
+                        } else {
+                            result.error("INVALID_URI", "URI argument is null", null)
+                        }
+                    }
+                    "getFileSize" -> {
+                        val uriString = call.argument<String>("uri")
+                        if (uriString != null) {
+                            val uri = android.net.Uri.parse(uriString)
+                            val size = StorageIntegration.getFileSize(this, uri)
+                            result.success(size)
+                        } else {
+                            result.error("INVALID_URI", "URI argument is null", null)
+                        }
+                    }
+                    "saveToMediaStore" -> {
+                        val filePath = call.argument<String>("filePath")
+                        val displayName = call.argument<String>("displayName")
+                        val mimeType = call.argument<String>("mimeType") ?: "video/mp4"
+                        if (filePath != null && displayName != null) {
+                            val uri = StorageIntegration.saveToMediaStore(this, filePath, displayName, mimeType)
+                            if (uri != null) {
+                                result.success(uri.toString())
+                            } else {
+                                result.error("SAVE_FAILED", "Failed to save to MediaStore", null)
+                            }
+                        } else {
+                            result.error("INVALID_ARGS", "filePath or displayName is null", null)
+                        }
+                    }
+                    "cleanupTempFiles" -> {
+                        StorageIntegration.cleanupTempFiles(this)
+                        result.success(null)
+                    }
+                    "getTempFilesSize" -> {
+                        val size = StorageIntegration.getTempFilesSize(this)
+                        result.success(size)
+                    }
+                    "getAvailableStorageBytes" -> {
+                        val bytes = StorageIntegration.getAvailableStorageBytes()
+                        result.success(bytes)
+                    }
+                    "deleteFromMediaStore" -> {
+                        val uriString = call.argument<String>("uri")
+                        if (uriString != null) {
+                            val uri = android.net.Uri.parse(uriString)
+                            val deleted = StorageIntegration.deleteFromMediaStore(this, uri)
+                            result.success(deleted)
+                        } else {
+                            result.error("INVALID_URI", "URI argument is null", null)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
