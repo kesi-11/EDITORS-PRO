@@ -1656,3 +1656,217 @@ class EditorsProEngineApi {
     return List<String>.from(result as List);
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 16-17: Performance Profiling Bridge Types
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Bridge-compatible performance snapshot from the engine
+class PerformanceSnapshotInfo {
+  final double averageFps;
+  final double targetFps;
+  final double dropRate;
+  final double avgFrameMs;
+  final double p95FrameMs;
+  final double avgDecodeMs;
+  final double avgRenderMs;
+  final double cacheHitRate;
+  final int cachedFrameCount;
+  final double bufferPoolHitRate;
+  final int pooledBufferCount;
+  final double memoryRssMb;
+  final double memoryPeakMb;
+  final double memoryAvailableMb;
+  final String memoryPressureLevel;
+  final bool gpuAvailable;
+  final String gpuAdapterName;
+  final String gpuBackendName;
+  final double averageExportFps;
+  final bool isOnBudget;
+
+  const PerformanceSnapshotInfo({
+    required this.averageFps,
+    required this.targetFps,
+    required this.dropRate,
+    required this.avgFrameMs,
+    required this.p95FrameMs,
+    required this.avgDecodeMs,
+    required this.avgRenderMs,
+    required this.cacheHitRate,
+    required this.cachedFrameCount,
+    required this.bufferPoolHitRate,
+    required this.pooledBufferCount,
+    required this.memoryRssMb,
+    required this.memoryPeakMb,
+    required this.memoryAvailableMb,
+    required this.memoryPressureLevel,
+    required this.gpuAvailable,
+    required this.gpuAdapterName,
+    required this.gpuBackendName,
+    required this.averageExportFps,
+    required this.isOnBudget,
+  });
+
+  factory PerformanceSnapshotInfo.fromJson(Map<String, dynamic> json) =>
+      PerformanceSnapshotInfo(
+        averageFps: (json['average_fps'] as num).toDouble(),
+        targetFps: (json['target_fps'] as num).toDouble(),
+        dropRate: (json['drop_rate'] as num).toDouble(),
+        avgFrameMs: (json['avg_frame_ms'] as num).toDouble(),
+        p95FrameMs: (json['p95_frame_ms'] as num).toDouble(),
+        avgDecodeMs: (json['avg_decode_ms'] as num).toDouble(),
+        avgRenderMs: (json['avg_render_ms'] as num).toDouble(),
+        cacheHitRate: (json['cache_hit_rate'] as num).toDouble(),
+        cachedFrameCount: json['cached_frame_count'] as int? ?? 0,
+        bufferPoolHitRate: (json['buffer_pool_hit_rate'] as num).toDouble(),
+        pooledBufferCount: json['pooled_buffer_count'] as int? ?? 0,
+        memoryRssMb: (json['memory_rss_mb'] as num).toDouble(),
+        memoryPeakMb: (json['memory_peak_mb'] as num).toDouble(),
+        memoryAvailableMb: (json['memory_available_mb'] as num).toDouble(),
+        memoryPressureLevel: json['memory_pressure_level'] as String? ?? 'normal',
+        gpuAvailable: json['gpu_available'] as bool? ?? false,
+        gpuAdapterName: json['gpu_adapter_name'] as String? ?? '',
+        gpuBackendName: json['gpu_backend_name'] as String? ?? '',
+        averageExportFps: (json['average_export_fps'] as num).toDouble(),
+        isOnBudget: json['is_on_budget'] as bool? ?? true,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'average_fps': averageFps,
+        'target_fps': targetFps,
+        'drop_rate': dropRate,
+        'avg_frame_ms': avgFrameMs,
+        'p95_frame_ms': p95FrameMs,
+        'avg_decode_ms': avgDecodeMs,
+        'avg_render_ms': avgRenderMs,
+        'cache_hit_rate': cacheHitRate,
+        'cached_frame_count': cachedFrameCount,
+        'buffer_pool_hit_rate': bufferPoolHitRate,
+        'pooled_buffer_count': pooledBufferCount,
+        'memory_rss_mb': memoryRssMb,
+        'memory_peak_mb': memoryPeakMb,
+        'memory_available_mb': memoryAvailableMb,
+        'memory_pressure_level': memoryPressureLevel,
+        'gpu_available': gpuAvailable,
+        'gpu_adapter_name': gpuAdapterName,
+        'gpu_backend_name': gpuBackendName,
+        'average_export_fps': averageExportFps,
+        'is_on_budget': isOnBudget,
+      };
+}
+
+/// Bridge-compatible profiler span statistics
+class SpanStatsInfo {
+  final String name;
+  final int callCount;
+  final double totalMs;
+  final double meanMs;
+  final double minMs;
+  final double maxMs;
+  final double p99Ms;
+  final double stdDevMs;
+
+  const SpanStatsInfo({
+    required this.name,
+    required this.callCount,
+    required this.totalMs,
+    required this.meanMs,
+    required this.minMs,
+    required this.maxMs,
+    required this.p99Ms,
+    required this.stdDevMs,
+  });
+
+  factory SpanStatsInfo.fromJson(Map<String, dynamic> json) => SpanStatsInfo(
+        name: json['name'] as String,
+        callCount: json['call_count'] as int,
+        totalMs: (json['total_ms'] as num).toDouble(),
+        meanMs: (json['mean_ms'] as num).toDouble(),
+        minMs: (json['min_ms'] as num).toDouble(),
+        maxMs: (json['max_ms'] as num).toDouble(),
+        p99Ms: (json['p99_ms'] as num).toDouble(),
+        stdDevMs: (json['std_dev_ms'] as num).toDouble(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'call_count': callCount,
+        'total_ms': totalMs,
+        'mean_ms': meanMs,
+        'min_ms': minMs,
+        'max_ms': maxMs,
+        'p99_ms': p99Ms,
+        'std_dev_ms': stdDevMs,
+      };
+
+  @override
+  String toString() =>
+      '$name: calls=$callCount, mean=${meanMs.toStringAsFixed(2)}ms, '
+      'p99=${p99Ms.toStringAsFixed(2)}ms';
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 17: Free Functions (Bridge Codegen)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Enable or disable profiling globally.
+Future<void> setProfilingEnabled({required bool enabled}) async {
+  await RustLib.instance.api._call<void>('set_profiling_enabled', {
+    'enabled': enabled,
+  });
+}
+
+/// Check if profiling is currently enabled.
+Future<bool> isProfilingEnabled() async {
+  final result = await RustLib.instance.api._call<dynamic>('is_profiling_enabled', {});
+  return result as bool;
+}
+
+/// Get a performance snapshot from the engine.
+Future<PerformanceSnapshotInfo> getPerformanceSnapshot() async {
+  final result = await RustLib.instance.api._call<dynamic>('get_performance_snapshot', {});
+  return PerformanceSnapshotInfo.fromJson(result as Map<String, dynamic>);
+}
+
+/// Get the profiler report as a list of span statistics.
+Future<List<SpanStatsInfo>> getProfilerReport() async {
+  final result = await RustLib.instance.api._call<dynamic>('get_profiler_report', {});
+  return (result as List)
+      .map((e) => SpanStatsInfo.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+
+/// Reset all profiler statistics.
+Future<void> resetProfiler() async {
+  await RustLib.instance.api._call<void>('reset_profiler', {});
+}
+
+/// Get the engine version string.
+Future<String> getEngineVersion() async {
+  final result = await RustLib.instance.api._call<dynamic>('get_engine_version', {});
+  return result as String;
+}
+
+/// Get the memory pressure level ("normal", "warning", "critical").
+Future<String> getMemoryPressureLevel() async {
+  final result = await RustLib.instance.api._call<dynamic>('get_memory_pressure_level', {});
+  return result as String;
+}
+
+/// Get current memory usage in bytes.
+Future<int> getMemoryUsageBytes() async {
+  final result = await RustLib.instance.api._call<dynamic>('get_memory_usage_bytes', {});
+  return result as int;
+}
+
+/// Check if the engine should release caches due to memory pressure.
+Future<bool> shouldReleaseCaches() async {
+  final result = await RustLib.instance.api._call<dynamic>('should_release_caches', {});
+  return result as bool;
+}
+
+/// Check if the engine should reduce quality due to memory pressure.
+Future<bool> shouldReduceQuality() async {
+  final result = await RustLib.instance.api._call<dynamic>('should_reduce_quality', {});
+  return result as bool;
+}

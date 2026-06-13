@@ -395,3 +395,22 @@ Stage Summary:
 - 3 new Flutter files (~600 lines, ~20 tests)
 - 4 new Criterion benchmark groups (buffer pool, LRU cache, zero-copy ops, frame pipeline)
 - Key optimizations: buffer pooling eliminates ~500x allocation overhead, O(1) LRU cache, priority scheduler for real-time preview
+
+---
+Task ID: 17
+Agent: Main Agent
+Task: Phase 17 — Flutter-Rust Bridge Codegen
+
+Work Log:
+- Added Phase 16-17 bridge API: PerformanceSnapshotInfo, SpanStatsInfo DTOs
+- Added 8 new #[frb] free functions: set_profiling_enabled, is_profiling_enabled, get_performance_snapshot, get_profiler_report, reset_profiler, get_engine_version, get_memory_pressure_level, get_memory_usage_bytes, should_release_caches, should_reduce_quality
+- Updated Dart bridge_api.dart: PerformanceSnapshotInfo and SpanStatsInfo classes with fromJson/toJson
+- Added 10 Dart free functions for performance profiling from Flutter
+- Added 9 bridge API tests for all new functions
+- All #[frb] annotations are in place for flutter_rust_bridge_codegen generate
+
+Stage Summary:
+- 2 new Rust DTOs, 8 new bridge functions with #[frb] annotations
+- 2 new Dart DTO classes, 10 Dart free functions
+- 9 new Rust bridge tests
+- Bridge API now exposes performance profiling, memory monitoring, and profiler report to Flutter

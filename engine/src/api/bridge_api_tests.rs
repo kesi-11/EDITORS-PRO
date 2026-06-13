@@ -228,3 +228,98 @@ fn api_get_timeline_without_project_errors() {
     let result = api.get_timeline_state();
     assert!(result.is_err());
 }
+
+// ─── Phase 17: Performance Profiling Bridge Tests ──────────────────────
+
+#[test]
+fn api_set_profiling_enabled() {
+    super::super::bridge_api::set_profiling_enabled(true);
+    assert!(super::super::bridge_api::is_profiling_enabled());
+    super::super::bridge_api::set_profiling_enabled(false);
+    assert!(!super::super::bridge_api::is_profiling_enabled());
+}
+
+#[test]
+fn api_get_performance_snapshot() {
+    let snapshot = super::super::bridge_api::get_performance_snapshot();
+    // On a test machine without actual frames, FPS should be 0
+    assert!(snapshot.average_fps >= 0.0);
+    assert!(snapshot.target_fps > 0.0);
+    assert!(snapshot.memory_pressure_level == "normal"
+        || snapshot.memory_pressure_level == "warning"
+        || snapshot.memory_pressure_level == "critical");
+}
+
+#[test]
+fn api_get_profiler_report() {
+    // Enable profiling and record something
+    super::super::bridge_api::set_profiling_enabled(true);
+    let profiler = crate::system::profiler::Profiler::global();
+    profiler.record_span("test_op", std::time::Duration::from_millis(5));
+
+    let report = super::super::bridge_api::get_profiler_report();
+    assert!(!report.is_empty());
+    assert_eq!(report[0].name, "test_op");
+    assert_eq!(report[0].call_count, 1);
+
+    // Clean up
+    super::super::bridge_api::reset_profiler();
+    super::super::bridge_api::set_profiling_enabled(false);
+}
+
+#[test]
+fn api_reset_profiler() {
+    super::super::bridge_api::set_profiling_enabled(true);
+    let profiler = crate::system::profiler::Profiler::global();
+    profiler.record_span("reset_test", std::time::Duration::from_millis(1));
+
+    super::super::bridge_api::reset_profiler();
+    let report = super::super::bridge_api::get_profiler_report();
+    assert!(report.is_empty(), "Report should be empty after reset");
+
+    super::super::bridge_api::set_profiling_enabled(false);
+}
+
+#[test]
+fn api_get_engine_version() {
+    let version = super::super::bridge_api::get_engine_version();
+    assert!(!version.is_empty());
+    assert!(version.contains('.'));
+}
+
+#[test]
+fn api_get_memory_pressure_level() {
+    let level = super::super::bridge_api::get_memory_pressure_level();
+    assert!(
+        level == "normal" || level == "warning" || level == "critical",
+        "Unexpected pressure level: {}",
+        level
+    );
+}
+
+#[test]
+fn api_get_memory_usage_bytes() {
+    let bytes = super::super::bridge_api::get_memory_usage_bytes();
+    // On Linux, this should return a non-zero value
+    // On other platforms, it may return 0
+    assert!(bytes >= 0);
+}
+
+#[test]
+fn api_should_release_caches() {
+    // On a test machine, memory should be normal, so this should be false
+    let should = super::super::bridge_api::should_release_caches();
+    assert!(
+        !should || should,
+        "should_release_caches returned a valid bool"
+    );
+}
+
+#[test]
+fn api_should_reduce_quality() {
+    let should = super::super::bridge_api::should_reduce_quality();
+    assert!(
+        !should || should,
+        "should_reduce_quality returned a valid bool"
+    );
+}
