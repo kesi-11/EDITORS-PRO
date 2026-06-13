@@ -7,6 +7,11 @@
 pub mod bridge_api;
 pub mod commands;
 
+#[cfg(test)]
+mod bridge_api_tests;
+#[cfg(test)]
+mod commands_tests;
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

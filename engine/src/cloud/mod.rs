@@ -24,6 +24,9 @@ pub mod conflict;
 pub mod provider;
 pub mod sync_manager;
 
+#[cfg(test)]
+mod provider_tests;
+
 use serde::{Deserialize, Serialize};
 
 /// Cloud storage provider type

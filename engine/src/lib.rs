@@ -17,6 +17,9 @@ pub mod system;
 pub mod template;
 pub mod timeline;
 
+#[cfg(test)]
+mod tests;
+
 use log::LevelFilter;
 
 /// Initialize the editing engine.

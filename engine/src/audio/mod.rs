@@ -9,3 +9,6 @@ pub mod ducking;
 pub mod mixer;
 pub mod transcription;
 pub mod waveform;
+
+#[cfg(test)]
+mod waveform_tests;

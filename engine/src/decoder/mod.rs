@@ -6,6 +6,9 @@
 pub mod hardware;
 pub mod software;
 
+#[cfg(test)]
+mod tests;
+
 /// Information about a video file
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VideoInfo {

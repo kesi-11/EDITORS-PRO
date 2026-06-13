@@ -10,6 +10,13 @@ pub mod keyframe;
 pub mod speed_curve;
 pub mod track;
 
+#[cfg(test)]
+mod clip_tests;
+#[cfg(test)]
+mod command_tests;
+#[cfg(test)]
+mod track_tests;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
