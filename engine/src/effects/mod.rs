@@ -14,8 +14,19 @@
 //! respecting each effect's `enabled` flag and `order` field.
 
 pub mod chroma_key;
+pub mod compositing;
+pub mod color_space;
 pub mod filters;
+pub mod grain;
 pub mod gpu_filters;
+pub mod lens_correction;
+pub mod masking;
+pub mod markers;
+pub mod mixer_pro;
+pub mod multicam;
+pub mod nested_sequence;
+pub mod noise_reduction;
+pub mod retiming;
 pub mod text_render;
 pub mod text_rasterizer;
 pub mod transitions;
@@ -32,6 +43,13 @@ pub enum EffectType {
     Transition,
     TextOverlay,
     ChromaKey,
+    Masking,
+    Compositing,
+    NoiseReduction,
+    LensCorrection,
+    SpeedRamp,
+    ColorSpace,
+    FilmGrain,
 }
 
 /// An effect that can be applied to a clip
