@@ -20,16 +20,19 @@ pub mod filters;
 pub mod grain;
 pub mod gpu_filters;
 pub mod lens_correction;
+pub mod macro_system;
 pub mod masking;
 pub mod markers;
 pub mod mixer_pro;
 pub mod multicam;
 pub mod nested_sequence;
 pub mod noise_reduction;
+pub mod preset;
 pub mod retiming;
 pub mod text_render;
 pub mod text_rasterizer;
 pub mod transitions;
+pub mod workspace;
 
 use serde::{Deserialize, Serialize};
 
