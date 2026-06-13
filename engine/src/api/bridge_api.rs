@@ -1749,3 +1749,198 @@ impl TranscriptionSegmentInfo {
         }
     }
 }
+
+// ─── Phase 12: S-Tier Professional Features DTOs ───────────────────────
+
+/// Bridge-compatible mask info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MaskInfo {
+    pub id: String,
+    pub mask_type: String,
+    pub enabled: bool,
+    pub inverted: bool,
+    pub feather: f32,
+    pub expansion: f32,
+    pub opacity: f32,
+    pub blend_mode: String,
+}
+
+/// Bridge-compatible blend mode info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BlendModeInfo {
+    pub name: String,
+    pub display_name: String,
+    pub formula: String,
+}
+
+/// Bridge-compatible noise reduction config
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NoiseReductionInfo {
+    pub method: String,
+    pub channel_mode: String,
+    pub strength: f32,
+    pub spatial_sigma: f32,
+    pub range_sigma: f32,
+    pub preserve_edges: bool,
+}
+
+/// Bridge-compatible lens correction config
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LensCorrectionInfo {
+    pub enabled: bool,
+    pub k1: f64,
+    pub k2: f64,
+    pub k3: f64,
+    pub selected_profile: Option<String>,
+    pub vignette_amount: f32,
+    pub ca_red_x: f32,
+    pub ca_blue_x: f32,
+}
+
+/// Bridge-compatible speed ramp point
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SpeedRampPointInfo {
+    pub time: f64,
+    pub speed: f64,
+    pub interpolation: String,
+}
+
+/// Bridge-compatible color space config
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ColorSpaceInfo {
+    pub input_transfer: String,
+    pub working_transfer: String,
+    pub output_transfer: String,
+    pub enable_hdr: bool,
+    pub hdr_peak_nits: f32,
+}
+
+/// Bridge-compatible marker info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MarkerInfo {
+    pub id: String,
+    pub name: String,
+    pub position_ms: f64,
+    pub color: String,
+    pub marker_type: String,
+    pub comment: String,
+}
+
+/// Bridge-compatible film grain config
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FilmGrainInfo {
+    pub enabled: bool,
+    pub preset: Option<String>,
+    pub intensity: f32,
+    pub size: f32,
+    pub color_grain: bool,
+    pub vhs_enabled: bool,
+    pub halation_enabled: bool,
+}
+
+/// Bridge-compatible multicam angle info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MulticamAngleInfo {
+    pub id: String,
+    pub name: String,
+    pub source_path: String,
+    pub offset_ms: f64,
+    pub is_reference: bool,
+}
+
+/// Bridge-compatible VU meter reading
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VuMeterInfo {
+    pub peak_db: f32,
+    pub rms_db: f32,
+    pub clipping: bool,
+}
+
+/// Bridge-compatible channel strip info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChannelStripInfo {
+    pub id: String,
+    pub name: String,
+    pub volume_db: f32,
+    pub pan: f32,
+    pub muted: bool,
+    pub solo: bool,
+    pub vu: VuMeterInfo,
+}
+
+// ─── Phase 13: Workflow Features DTOs ──────────────────────────────────
+
+/// Bridge-compatible preset info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PresetInfo {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub preset_type: String,
+    pub is_builtin: bool,
+    pub is_favorite: bool,
+    pub parameters_json: String,
+}
+
+/// Bridge-compatible workspace layout info
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceLayoutInfo {
+    pub id: String,
+    pub name: String,
+    pub is_builtin: bool,
+    pub panels_json: String,
+}
+
+/// Bridge-compatible user preferences
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UserPreferencesInfo {
+    pub theme: String,
+    pub language: String,
+    pub auto_save_interval_sec: u32,
+    pub max_undo_levels: u32,
+    pub gpu_acceleration: bool,
+    pub proxy_mode: String,
+}
+
+// ─── Phase 12-13 Bridge API Methods ────────────────────────────────────
+
+/// Get all available blend modes with formulas.
+pub fn get_blend_modes() -> Vec<BlendModeInfo> {
+    use crate::effects::compositing::BlendMode;
+    BlendMode::all().iter().map(|bm| BlendModeInfo {
+        name: format!("{:?}", bm).to_lowercase(),
+        display_name: bm.display_name().to_string(),
+        formula: bm.formula().to_string(),
+    }).collect()
+}
+
+/// Get all available lens correction profiles.
+pub fn get_lens_profiles() -> Vec<String> {
+    use crate::effects::lens_correction::builtin_profiles;
+    builtin_profiles().iter().map(|p| p.name.clone()).collect()
+}
+
+/// Get all film stock presets.
+pub fn get_film_stock_presets() -> Vec<String> {
+    use crate::effects::grain::FilmStock;
+    FilmStock::all().iter().map(|f| f.display_name().to_string()).collect()
+}
+
+/// Get all transfer functions.
+pub fn get_transfer_functions() -> Vec<String> {
+    use crate::effects::color_space::TransferFunction;
+    TransferFunction::all().iter().map(|tf| tf.display_name().to_string()).collect()
+}
+
+/// Get all marker colors.
+pub fn get_marker_colors() -> Vec<String> {
+    use crate::effects::markers::MarkerColor;
+    MarkerColor::all().iter().map(|c| format!("{:?}", c).to_lowercase()).collect()
+}
+
+/// Estimate noise in a frame (returns luma_sigma).
+pub fn estimate_noise_level(frame_data: &[u8], width: u32, height: u32) -> f32 {
+    use crate::effects::noise_reduction::estimate_noise;
+    let est = estimate_noise(frame_data, width, height);
+    est.luma_sigma
+}
