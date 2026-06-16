@@ -4,12 +4,15 @@
 //! On Android, this will integrate MediaCodec via NDK for optimal performance.
 //! Falls back to software decoding when hardware acceleration is unavailable.
 
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next as ffmpeg;
+#[cfg(feature = "ffmpeg")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{FrameData, VideoInfo};
 
 /// Hardware-accelerated video decoder using FFmpeg
+#[cfg(feature = "ffmpeg")]
 pub struct HardwareDecoder {
     format_context: Option<ffmpeg::format::context::Input>,
     video_stream_index: Option<usize>,
@@ -23,6 +26,7 @@ pub struct HardwareDecoder {
     decoding_in_progress: AtomicBool,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl HardwareDecoder {
     /// Create a new decoder instance
     pub fn new() -> Self {
@@ -239,6 +243,7 @@ impl HardwareDecoder {
     }
 }
 
+#[cfg(feature = "ffmpeg")]
 impl Drop for HardwareDecoder {
     fn drop(&mut self) {
         if self.is_open {
@@ -261,4 +266,39 @@ impl Drop for HardwareDecoder {
 // If true thread-safe decoding is needed in the future, the recommended
 // approach is to spawn a dedicated decode thread and communicate via channels,
 // which avoids the need for unsafe Send/Sync entirely.
+#[cfg(feature = "ffmpeg")]
 unsafe impl Send for HardwareDecoder {}
+
+// ─── Stub implementation when FFmpeg is not available ──────────────────────────
+
+#[cfg(not(feature = "ffmpeg"))]
+pub struct HardwareDecoder;
+
+#[cfg(not(feature = "ffmpeg"))]
+impl HardwareDecoder {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn open(&mut self, _file_path: &str) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn get_video_info(&self) -> Option<&VideoInfo> {
+        None
+    }
+
+    pub fn get_duration(&self) -> u64 {
+        0
+    }
+
+    pub fn decode_frame_at(&mut self, _time_ms: u64) -> Result<FrameData, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn generate_thumbnails(&mut self, _count: u32) -> Result<Vec<FrameData>, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn close(&mut self) {}
+}

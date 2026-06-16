@@ -1,0 +1,112 @@
+# ============================================================================
+# EDITORS-PRO — Docker Build Image for Android Cross-Compilation
+# Uses Linux + Android NDK + FFmpeg for reliable arm64-v8a builds
+# ============================================================================
+# Usage:
+#   docker build -t editors-pro-builder -f Dockerfile.build .
+#   docker run --rm -v "$(pwd):/project" editors-pro-builder
+#
+# This produces the compiled .so file at:
+#   engine/target/aarch64-linux-android/release/libeditors_pro_engine.so
+# ============================================================================
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ANDROID_NDK_VERSION=r26d
+ENV ANDROID_NDK_HOME=/opt/android-ndk
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH="${CARGO_HOME}/bin:${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    curl \
+    git \
+    pkg-config \
+    unzip \
+    yasm \
+    nasm \
+    libtool \
+    autoconf \
+    automake \
+    texinfo \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Android NDK
+RUN wget -q "https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip" \
+    -O /tmp/ndk.zip \
+    && unzip -q /tmp/ndk.zip -d /opt \
+    && mv /opt/android-ndk-${ANDROID_NDK_VERSION} ${ANDROID_NDK_HOME} \
+    && rm /tmp/ndk.zip
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && rustup target add aarch64-linux-android \
+    && cargo install cargo-ndk
+
+# Build FFmpeg for Android arm64-v8a
+ENV FFMPEG_VERSION=7.1
+ENV FFMPEG_DIR=/opt/ffmpeg-android
+
+RUN mkdir -p ${FFMPEG_DIR} /tmp/ffmpeg-build \
+    && cd /tmp/ffmpeg-build \
+    && wget -q "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+    && tar xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
+    && cd ffmpeg-${FFMPEG_VERSION} \
+    && ./configure \
+        --prefix=${FFMPEG_DIR} \
+        --enable-cross-compile \
+        --target-os=android \
+        --arch=aarch64 \
+        --cc=aarch64-linux-android33-clang \
+        --cxx=aarch64-linux-android33-clang++ \
+        --enable-shared \
+        --enable-static \
+        --disable-doc \
+        --disable-programs \
+        --disable-avdevice \
+        --enable-gpl \
+        --enable-version3 \
+        --enable-libswscale \
+        --enable-libswresample \
+        --enable-libavfilter \
+        --sysroot=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot \
+    && make -j$(nproc) \
+    && make install \
+    && cd / \
+    && rm -rf /tmp/ffmpeg-build
+
+# Create pkg-config files for FFmpeg
+RUN mkdir -p ${FFMPEG_DIR}/lib/pkgconfig \
+    && for lib in libavcodec libavformat libavutil libswscale libswresample libavfilter; do \
+        cat > ${FFMPEG_DIR}/lib/pkgconfig/${lib}.pc << EOF
+prefix=${FFMPEG_DIR}
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: ${lib}
+Description: FFmpeg ${lib}
+Version: ${FFMPEG_VERSION}
+Libs: -L\${libdir} -l${lib#lib}
+Cflags: -I\${includedir}
+EOF
+    done
+
+# Set build environment
+ENV PKG_CONFIG_PATH=${FFMPEG_DIR}/lib/pkgconfig
+ENV PKG_CONFIG_SYSROOT_DIR=${FFMPEG_DIR}
+ENV FFMPEG_DIR=${FFMPEG_DIR}
+
+# Working directory
+WORKDIR /project
+
+# Build script
+COPY scripts/docker_build.sh /usr/local/bin/build.sh
+RUN chmod +x /usr/local/bin/build.sh
+
+CMD ["/usr/local/bin/build.sh"]

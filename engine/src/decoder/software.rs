@@ -3,11 +3,13 @@
 //! Pure FFmpeg-based software decoder for environments where
 //! hardware acceleration is not available or not needed.
 
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next as ffmpeg;
 
 use super::{FrameData, VideoInfo};
 
 /// Software-only video decoder using FFmpeg
+#[cfg(feature = "ffmpeg")]
 pub struct SoftwareDecoder {
     format_context: Option<ffmpeg::format::context::Input>,
     video_stream_index: Option<usize>,
@@ -17,6 +19,7 @@ pub struct SoftwareDecoder {
     current_position_ms: u64,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl SoftwareDecoder {
     pub fn new() -> Self {
         Self {
@@ -213,6 +216,7 @@ impl SoftwareDecoder {
     }
 }
 
+#[cfg(feature = "ffmpeg")]
 impl Drop for SoftwareDecoder {
     fn drop(&mut self) {
         if self.is_open {
@@ -224,4 +228,43 @@ impl Drop for SoftwareDecoder {
 // SAFETY: Same rationale as HardwareDecoder - FFmpeg contexts are not
 // thread-safe. Send allows moving between threads, but Sync is intentionally
 // omitted to prevent shared concurrent access.
+#[cfg(feature = "ffmpeg")]
 unsafe impl Send for SoftwareDecoder {}
+
+// ─── Stub implementation when FFmpeg is not available ──────────────────────────
+
+#[cfg(not(feature = "ffmpeg"))]
+pub struct SoftwareDecoder;
+
+#[cfg(not(feature = "ffmpeg"))]
+impl SoftwareDecoder {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn open(&mut self, _file_path: &str) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn seek_to(&mut self, _time_ms: u64) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn decode_next_frame(&mut self) -> Result<Option<FrameData>, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn decode_frame_at(&mut self, _time_ms: u64) -> Result<FrameData, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn current_position(&self) -> u64 {
+        0
+    }
+
+    pub fn get_video_info(&self) -> Option<&VideoInfo> {
+        None
+    }
+
+    pub fn close(&mut self) {}
+}

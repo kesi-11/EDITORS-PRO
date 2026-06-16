@@ -4,6 +4,7 @@
 //! for playback and processing. Supports resampling to a target
 //! sample rate and channel layout.
 
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next as ff;
 
 /// Decoded audio data in interleaved f32 format
@@ -102,6 +103,7 @@ impl DecodedAudio {
 }
 
 /// Audio decoder that reads audio from media files using FFmpeg
+#[cfg(feature = "ffmpeg")]
 pub struct AudioDecoder {
     /// Whether the decoder has an open file
     is_open: bool,
@@ -117,6 +119,7 @@ pub struct AudioDecoder {
     codec_name: String,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl AudioDecoder {
     /// Create a new audio decoder
     pub fn new() -> Self {
@@ -409,6 +412,80 @@ pub struct AudioInfo {
     pub codec_name: String,
 }
 
+#[cfg(feature = "ffmpeg")]
+impl Default for AudioDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ─── Stub implementation when FFmpeg is not available ──────────────────────────
+
+#[cfg(not(feature = "ffmpeg"))]
+pub struct AudioDecoder {
+    is_open: bool,
+    file_path: Option<String>,
+    source_sample_rate: u32,
+    source_channels: u32,
+    duration_ms: u64,
+    codec_name: String,
+}
+
+#[cfg(not(feature = "ffmpeg"))]
+impl AudioDecoder {
+    pub fn new() -> Self {
+        Self {
+            is_open: false,
+            file_path: None,
+            source_sample_rate: 44100,
+            source_channels: 2,
+            duration_ms: 0,
+            codec_name: String::new(),
+        }
+    }
+
+    pub fn open(&mut self, _file_path: &str) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn close(&mut self) {
+        self.is_open = false;
+        self.file_path = None;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.is_open
+    }
+
+    pub fn audio_info(&self) -> AudioInfo {
+        AudioInfo {
+            sample_rate: self.source_sample_rate,
+            channels: self.source_channels,
+            duration_ms: self.duration_ms,
+            codec_name: self.codec_name.clone(),
+        }
+    }
+
+    pub fn decode_all(
+        &self,
+        _target_sample_rate: u32,
+        _target_channels: u32,
+    ) -> Result<DecodedAudio, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn decode_range(
+        &self,
+        _start_ms: u64,
+        _end_ms: u64,
+        _target_sample_rate: u32,
+        _target_channels: u32,
+    ) -> Result<DecodedAudio, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+}
+
+#[cfg(not(feature = "ffmpeg"))]
 impl Default for AudioDecoder {
     fn default() -> Self {
         Self::new()

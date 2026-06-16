@@ -27,8 +27,8 @@ anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11"
 
-# Video I/O (FFmpeg 6.x bindings)
-ffmpeg-next = "7.1"
+# Video I/O (FFmpeg 7.x bindings) — optional for dev builds without FFmpeg
+ffmpeg-next = { version = "7.1", optional = true }
 
 # Concurrency
 rayon = "1.10"
@@ -60,7 +60,12 @@ bytemuck = "1.16"
 flutter_rust_bridge = "2.9"
 
 [features]
-default = []
+# Default: include FFmpeg for full functionality
+default = ["ffmpeg"]
+
+# FFmpeg feature — enables actual video decode/encode via FFmpeg C libraries
+# Disable this for development builds on platforms without FFmpeg installed
+ffmpeg = ["dep:ffmpeg-next"]
 
 # Android NDK bindings (for MediaCodec hardware acceleration)
 [target.'cfg(target_os = "android")'.dependencies]

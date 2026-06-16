@@ -1,17 +1,36 @@
+#[cfg(feature = "ffmpeg")]
 use anyhow::{Context, Result};
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next as ffmpeg;
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next::format::input;
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next::media::Type;
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next::util::frame::video::Pixel;
+#[cfg(feature = "ffmpeg")]
 use log::{debug, warn};
+
+#[cfg(not(feature = "ffmpeg"))]
+use anyhow::Result;
+
 use std::path::Path;
 
 /// FFmpeg-based video decoder that reads media files and produces RGBA frames.
+///
+/// When the `ffmpeg` feature is disabled, all methods return errors indicating
+/// that FFmpeg is not available. This allows the engine to compile on platforms
+/// where FFmpeg libraries are not installed (e.g. during development).
 pub struct Decoder {
+    #[cfg(feature = "ffmpeg")]
     format_context: Option<ffmpeg::format::context::Input>,
+    #[cfg(feature = "ffmpeg")]
     video_stream_idx: Option<usize>,
+    #[cfg(feature = "ffmpeg")]
     audio_stream_idx: Option<usize>,
+    #[cfg(feature = "ffmpeg")]
     decoder: Option<ffmpeg::decoder::Video>,
+    #[cfg(feature = "ffmpeg")]
     audio_decoder: Option<ffmpeg::decoder::Audio>,
     path: String,
     frame_count: u64,
@@ -28,10 +47,15 @@ impl Decoder {
             anyhow::bail!("File not found: {}", path);
         }
         Ok(Self {
+            #[cfg(feature = "ffmpeg")]
             format_context: None,
+            #[cfg(feature = "ffmpeg")]
             video_stream_idx: None,
+            #[cfg(feature = "ffmpeg")]
             audio_stream_idx: None,
+            #[cfg(feature = "ffmpeg")]
             decoder: None,
+            #[cfg(feature = "ffmpeg")]
             audio_decoder: None,
             path: path.to_string(),
             frame_count: 0,
@@ -43,6 +67,7 @@ impl Decoder {
     }
 
     /// Open the media file and initialize the decoder contexts.
+    #[cfg(feature = "ffmpeg")]
     pub fn open(&mut self) -> Result<()> {
         ffmpeg::init().context("Failed to initialize FFmpeg")?;
 
@@ -103,14 +128,23 @@ impl Decoder {
         Ok(())
     }
 
+    /// Open the media file — stub when FFmpeg is not available.
+    #[cfg(not(feature = "ffmpeg"))]
+    pub fn open(&mut self) -> Result<()> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature and install FFmpeg libraries.")
+    }
+
     /// Close the decoder and release resources.
     pub fn close(&mut self) {
-        self.decoder = None;
-        self.audio_decoder = None;
-        self.format_context = None;
-        self.video_stream_idx = None;
-        self.audio_stream_idx = None;
-        debug!("Decoder closed for {}", self.path);
+        #[cfg(feature = "ffmpeg")]
+        {
+            self.decoder = None;
+            self.audio_decoder = None;
+            self.format_context = None;
+            self.video_stream_idx = None;
+            self.audio_stream_idx = None;
+        }
+        log::debug!("Decoder closed for {}", self.path);
     }
 
     /// Get the total frame count.
@@ -134,6 +168,7 @@ impl Decoder {
     }
 
     /// Decode a single frame at the given index and return RGBA pixel data.
+    #[cfg(feature = "ffmpeg")]
     pub fn decode_frame(&mut self, frame_idx: u64) -> Result<Vec<u8>> {
         self.seek_to_frame(frame_idx)?;
 
@@ -175,6 +210,12 @@ impl Decoder {
         anyhow::bail!("Failed to decode frame at index {}", frame_idx)
     }
 
+    /// Decode frame — stub when FFmpeg is not available.
+    #[cfg(not(feature = "ffmpeg"))]
+    pub fn decode_frame(&mut self, _frame_idx: u64) -> Result<Vec<u8>> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
     /// Decode a range of frames [start, end).
     pub fn decode_range(&mut self, start: u64, end: u64) -> Result<Vec<Vec<u8>>> {
         let mut frames = Vec::with_capacity((end - start) as usize);
@@ -182,7 +223,7 @@ impl Decoder {
             match self.decode_frame(idx) {
                 Ok(data) => frames.push(data),
                 Err(e) => {
-                    warn!("Failed to decode frame {}: {}", idx, e);
+                    log::warn!("Failed to decode frame {}: {}", idx, e);
                     break;
                 }
             }
@@ -191,9 +232,9 @@ impl Decoder {
     }
 
     /// Seek to a specific frame index.
+    #[cfg(feature = "ffmpeg")]
     pub fn seek_to_frame(&mut self, frame_idx: u64) -> Result<()> {
         let ictx = self.format_context.as_mut().context("Decoder not open")?;
-        let video_idx = self.video_stream_idx.context("No video stream")?;
 
         if self.fps > 0.0 {
             let timestamp_us = (frame_idx as f64 / self.fps * f64::from(ffmpeg::ffi::AV_TIME_BASE))
@@ -211,7 +252,14 @@ impl Decoder {
         Ok(())
     }
 
+    /// Seek to frame — stub when FFmpeg is not available.
+    #[cfg(not(feature = "ffmpeg"))]
+    pub fn seek_to_frame(&mut self, _frame_idx: u64) -> Result<()> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
     /// Extract all audio samples as interleaved f32.
+    #[cfg(feature = "ffmpeg")]
     pub fn get_audio_samples(&mut self) -> Result<Vec<f32>> {
         let ictx = self.format_context.as_mut().context("Decoder not open")?;
         let audio_idx = self.audio_stream_idx.context("No audio stream")?;
@@ -236,7 +284,6 @@ impl Decoder {
                                     f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
                                 })
                                 .collect();
-                            // Interleave
                             if ch == 0 {
                                 samples.resize(samples.len() + ch_samples.len() * channels as usize, 0.0);
                             }
@@ -249,7 +296,6 @@ impl Decoder {
             }
         }
 
-        // Flush audio decoder
         audio_decoder.send_eof()?;
         while audio_decoder.receive_frame(&mut frame).is_ok() {
             let channels = frame.channels();
@@ -275,7 +321,14 @@ impl Decoder {
         Ok(samples)
     }
 
+    /// Get audio samples — stub when FFmpeg is not available.
+    #[cfg(not(feature = "ffmpeg"))]
+    pub fn get_audio_samples(&mut self) -> Result<Vec<f32>> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
     /// Extract a thumbnail image (RGBA) at the given time in milliseconds.
+    #[cfg(feature = "ffmpeg")]
     pub fn extract_thumbnail(&mut self, time_ms: u64) -> Result<Vec<u8>> {
         let timestamp_us = (time_ms as f64 * 1000.0) as i64;
         {
@@ -288,9 +341,14 @@ impl Decoder {
             decoder.flush();
         }
 
-        // Try to decode the next available frame
         let frame_idx = ((time_ms as f64 / 1000.0) * self.fps) as u64;
         self.decode_frame(frame_idx)
+    }
+
+    /// Extract thumbnail — stub when FFmpeg is not available.
+    #[cfg(not(feature = "ffmpeg"))]
+    pub fn extract_thumbnail(&mut self, _time_ms: u64) -> Result<Vec<u8>> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
     }
 }
 
@@ -314,7 +372,6 @@ mod tests {
 
     #[test]
     fn test_decoder_new_with_valid_path_structure() {
-        // Create a temp empty file to test path validation
         let tmp = std::env::temp_dir().join("test_decoder_dummy.mp4");
         std::fs::write(&tmp, b"").ok();
         let result = Decoder::new(tmp.to_str().unwrap());
@@ -339,18 +396,18 @@ mod tests {
         let tmp = std::env::temp_dir().join("test_decoder_close.mp4");
         std::fs::write(&tmp, b"").ok();
         let mut decoder = Decoder::new(tmp.to_str().unwrap()).unwrap();
-        // Should not panic
         decoder.close();
         let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
-    fn test_decoder_open_invalid_file() {
+    fn test_decoder_open_without_ffmpeg() {
         let tmp = std::env::temp_dir().join("test_decoder_invalid.mp4");
         std::fs::write(&tmp, b"not a real video").ok();
         let mut decoder = Decoder::new(tmp.to_str().unwrap()).unwrap();
         let result = decoder.open();
-        // Should fail because it's not a valid video
+        // Should fail — either FFmpeg is available and file is invalid,
+        // or FFmpeg is not available and open() returns a stub error
         assert!(result.is_err());
         let _ = std::fs::remove_file(&tmp);
     }

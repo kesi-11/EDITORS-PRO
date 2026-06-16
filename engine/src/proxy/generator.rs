@@ -27,6 +27,7 @@ use super::{ProxyMetadata, ProxyQuality};
 /// - The source file doesn't exist or can't be opened
 /// - FFmpeg fails to initialize or encode
 /// - The cache directory can't be created
+#[cfg(feature = "ffmpeg")]
 pub fn generate_proxy(
     source_path: &str,
     asset_id: &str,
@@ -87,6 +88,7 @@ pub fn generate_proxy(
 }
 
 /// Get video dimensions using FFmpeg.
+#[cfg(feature = "ffmpeg")]
 fn get_video_dimensions(source_path: &str) -> Result<(u32, u32), String> {
     use ffmpeg_next as ffmpeg;
 
@@ -167,6 +169,7 @@ fn proxy_bitrate(quality: ProxyQuality) -> u64 {
 ///
 /// Re-encodes the source video at the specified resolution and bitrate
 /// using the ultrafast H.264 preset for maximum encoding speed.
+#[cfg(feature = "ffmpeg")]
 fn transcode_with_ffmpeg(
     source_path: &str,
     output_path: &str,
@@ -406,6 +409,18 @@ fn sanitize_filename(s: &str) -> String {
         .collect()
 }
 
+// ─── Stub implementation when FFmpeg is not available ──────────────────────────
+
+#[cfg(not(feature = "ffmpeg"))]
+pub fn generate_proxy(
+    _source_path: &str,
+    _asset_id: &str,
+    _quality: ProxyQuality,
+    _cache_dir: &str,
+) -> Result<ProxyMetadata, String> {
+    Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,6 +476,7 @@ mod tests {
         assert_eq!(sanitize_filename("test.file"), "test_file");
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_generate_proxy_off_returns_error() {
         let result = generate_proxy("/fake.mp4", "id", ProxyQuality::Off, "/cache");
@@ -468,6 +484,7 @@ mod tests {
         assert!(result.unwrap_err().contains("disabled"));
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_generate_proxy_missing_file() {
         let result = generate_proxy("/nonexistent.mp4", "id", ProxyQuality::P480, "/cache");

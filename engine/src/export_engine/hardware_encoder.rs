@@ -25,7 +25,7 @@
 
 use super::{ExportResult, ExportSettings, VideoCodec};
 
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", feature = "ffmpeg"))]
 use ffmpeg_next as ffmpeg;
 
 // ──────────────────────────────────────────────────────────────────
@@ -688,7 +688,7 @@ pub struct HardwareEncoder {
     /// FFmpeg output context for muxing MediaCodec output into MP4.
     /// When using hardware encoding, the encoded NAL units from MediaCodec
     /// are written to this context as packets.
-    #[cfg(target_os = "android")]
+    #[cfg(all(target_os = "android", feature = "ffmpeg"))]
     mux_context: Option<ffmpeg::format::context::Output>,
 
     /// Whether the encoder has been opened.
@@ -767,9 +767,9 @@ impl HardwareEncoder {
             output_path: None,
             frame_count: 0,
             start_time: std::time::Instant::now(),
-            #[cfg(target_os = "android")]
+            #[cfg(all(target_os = "android", feature = "ffmpeg"))]
             media_codec: None,
-            #[cfg(target_os = "android")]
+            #[cfg(all(target_os = "android", feature = "ffmpeg"))]
             mux_context: None,
             is_opened: false,
         })
@@ -936,7 +936,7 @@ impl HardwareEncoder {
     /// 4. Create an FFmpeg mux context for the output container
     /// 5. Start the MediaCodec encoder
     fn open_hardware(&mut self, _output_path: &str) -> Result<(), String> {
-        #[cfg(target_os = "android")]
+        #[cfg(all(target_os = "android", feature = "ffmpeg"))]
         {
             // Determine MIME type
             let mime_type = match self.settings.codec {
@@ -996,9 +996,9 @@ impl HardwareEncoder {
             Ok(())
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(all(target_os = "android", feature = "ffmpeg")))]
         {
-            Err("Hardware encoding is only available on Android".to_string())
+            Err("Hardware encoding is only available on Android with FFmpeg".to_string())
         }
     }
 
@@ -1012,7 +1012,7 @@ impl HardwareEncoder {
     /// 4. Dequeue any available output buffers
     /// 5. Write encoded data to the FFmpeg mux context
     fn encode_hardware_frame(&mut self, _rgba_data: &[u8], _pts: i64) -> Result<(), String> {
-        #[cfg(target_os = "android")]
+        #[cfg(all(target_os = "android", feature = "ffmpeg"))]
         {
             let codec = self.media_codec.as_mut()
                 .ok_or("MediaCodec not initialized")?;
@@ -1063,9 +1063,9 @@ impl HardwareEncoder {
             Ok(())
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(all(target_os = "android", feature = "ffmpeg")))]
         {
-            Err("Hardware encoding is only available on Android".to_string())
+            Err("Hardware encoding is only available on Android with FFmpeg".to_string())
         }
     }
 
@@ -1075,7 +1075,7 @@ impl HardwareEncoder {
     /// or more encoded packets (MediaCodec operates asynchronously and
     /// may buffer frames internally).
     fn drain_hardware_output(&mut self) -> Result<(), String> {
-        #[cfg(target_os = "android")]
+        #[cfg(all(target_os = "android", feature = "ffmpeg"))]
         {
             let codec = self.media_codec.as_mut()
                 .ok_or("MediaCodec not initialized")?;
@@ -1133,7 +1133,7 @@ impl HardwareEncoder {
             Ok(())
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(all(target_os = "android", feature = "ffmpeg")))]
         {
             Ok(())
         }
@@ -1146,7 +1146,7 @@ impl HardwareEncoder {
     /// 3. Write MP4 trailer via FFmpeg
     /// 4. Return the export result
     fn finish_hardware(&mut self, _duration_ms: u64) -> Result<ExportResult, String> {
-        #[cfg(target_os = "android")]
+        #[cfg(all(target_os = "android", feature = "ffmpeg"))]
         {
             // Signal end of input stream
             if let Some(codec) = self.media_codec.as_mut() {
@@ -1194,15 +1194,15 @@ impl HardwareEncoder {
             }
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(all(target_os = "android", feature = "ffmpeg")))]
         {
-            Err("Hardware encoding is only available on Android".to_string())
+            Err("Hardware encoding is only available on Android with FFmpeg".to_string())
         }
     }
 
     /// Cancel the hardware encoding and clean up.
     fn cancel_hardware(&mut self) {
-        #[cfg(target_os = "android")]
+        #[cfg(all(target_os = "android", feature = "ffmpeg"))]
         {
             // Stop MediaCodec
             if let Some(codec) = self.media_codec.as_mut() {
@@ -1221,9 +1221,9 @@ impl HardwareEncoder {
             }
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(all(target_os = "android", feature = "ffmpeg")))]
         {
-            log::info!("Hardware export cancelled (no-op on non-Android)");
+            log::info!("Hardware export cancelled (no-op on non-Android/FFmpeg)");
         }
     }
 }
@@ -1290,7 +1290,7 @@ impl HardwareEncoder {
         log::warn!("Falling back from hardware to software encoding");
 
         // Clean up hardware state
-        #[cfg(target_os = "android")]
+        #[cfg(all(target_os = "android", feature = "ffmpeg"))]
         {
             if let Some(codec) = self.media_codec.as_mut() {
                 codec.stop_and_release();
@@ -1300,7 +1300,7 @@ impl HardwareEncoder {
 
         // Close and delete the partial output file (it may contain
         // incomplete data from the hardware encoder)
-        #[cfg(target_os = "android")]
+        #[cfg(all(target_os = "android", feature = "ffmpeg"))]
         {
             if let Some(octx) = self.mux_context.take() {
                 drop(octx);
@@ -1430,6 +1430,7 @@ mod tests {
         assert!(!caps.supports_settings(&settings));
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_hardware_encoder_new_valid_settings() {
         let settings = ExportSettings::full_hd_1080p();
@@ -1485,6 +1486,7 @@ mod tests {
         assert!(!HardwareEncoder::is_available());
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_hardware_encoder_not_opened_encode() {
         let settings = ExportSettings::full_hd_1080p();
@@ -1495,6 +1497,7 @@ mod tests {
         assert!(result.unwrap_err().contains("not opened"));
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_hardware_encoder_not_opened_finish() {
         let settings = ExportSettings::full_hd_1080p();
@@ -1503,6 +1506,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_hardware_encoder_double_open() {
         let settings = ExportSettings::full_hd_1080p();
@@ -1523,6 +1527,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_hardware_encoder_frame_count() {
         let settings = ExportSettings::full_hd_1080p();
@@ -1530,6 +1535,7 @@ mod tests {
         assert_eq!(encoder.frame_count(), 0);
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_hardware_encoder_encoder_type() {
         let settings = ExportSettings::full_hd_1080p();
@@ -1538,6 +1544,7 @@ mod tests {
         assert_eq!(encoder.encoder_type(), HardwareEncoderType::None);
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_hardware_encoder_capabilities_accessor() {
         let settings = ExportSettings::full_hd_1080p();
@@ -1547,6 +1554,7 @@ mod tests {
         assert_eq!(caps.encoder_type, HardwareEncoderType::None);
     }
 
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_software_fallback_on_non_android() {
         // On non-Android platforms, the encoder should immediately

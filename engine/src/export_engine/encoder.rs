@@ -12,6 +12,7 @@
 //!
 //! For two-pass encoding, phase 2 runs twice with the first pass discarding output.
 
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next as ffmpeg;
 
 use super::{ExportResult, ExportSettings, ExportStage, VideoCodec};
@@ -115,6 +116,7 @@ pub fn convert_rgba_to_yuv420p(
 ///
 /// The returned frame has the correct line sizes and data pointers set up
 /// for the encoder.
+#[cfg(feature = "ffmpeg")]
 fn build_yuv420p_frame(
     yuv_data: &[u8],
     width: u32,
@@ -196,6 +198,7 @@ fn build_yuv420p_frame(
 ///
 /// let result = encoder.finish()?;
 /// ```
+#[cfg(feature = "ffmpeg")]
 pub struct VideoEncoder {
     settings: ExportSettings,
     output_context: Option<ffmpeg::format::context::Output>,
@@ -205,6 +208,7 @@ pub struct VideoEncoder {
     start_time: std::time::Instant,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl VideoEncoder {
     /// Create a new encoder with the given export settings.
     pub fn new(settings: &ExportSettings) -> Result<Self, String> {
@@ -604,6 +608,7 @@ mod tests {
     }
 
     /// Test that even-dimension requirement is enforced
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_odd_dimensions_rejected() {
         let result = VideoEncoder::new(&ExportSettings {
@@ -623,6 +628,7 @@ mod tests {
     }
 
     /// Test that zero dimensions are rejected
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_zero_dimensions_rejected() {
         let result = VideoEncoder::new(&ExportSettings {
@@ -678,6 +684,7 @@ mod tests {
     }
 
     /// Test AudioEncoder rejects invalid parameters
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_audio_encoder_rejects_zero_sample_rate() {
         let result = AudioEncoder::new(0, 2, 128);
@@ -685,6 +692,7 @@ mod tests {
     }
 
     /// Test AudioEncoder rejects zero channels
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_audio_encoder_rejects_zero_channels() {
         let result = AudioEncoder::new(44100, 0, 128);
@@ -692,6 +700,7 @@ mod tests {
     }
 
     /// Test AudioEncoder rejects zero bitrate
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_audio_encoder_rejects_zero_bitrate() {
         let result = AudioEncoder::new(44100, 2, 0);
@@ -699,6 +708,7 @@ mod tests {
     }
 
     /// Test AudioEncoder accepts valid parameters
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_audio_encoder_accepts_valid_params() {
         let result = AudioEncoder::new(48000, 2, 192);
@@ -711,6 +721,7 @@ mod tests {
     }
 
     /// Test MuxedEncoder rejects invalid video dimensions
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_muxed_encoder_rejects_odd_dimensions() {
         let result = MuxedEncoder::new(&ExportSettings {
@@ -772,6 +783,7 @@ pub fn convert_f32_to_s16(samples: &[f32]) -> Vec<i16> {
 ///
 /// The audio stream uses a time base of `1/sample_rate`. For a frame
 /// starting at sample index `N` (per channel), the PTS is simply `N`.
+#[cfg(feature = "ffmpeg")]
 pub struct AudioEncoder {
     encoder: Option<ffmpeg::encoder::Audio>,
     stream_index: Option<usize>,
@@ -786,6 +798,7 @@ pub struct AudioEncoder {
     frame_size: usize,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl AudioEncoder {
     /// Create a new audio encoder with the specified parameters.
     ///
@@ -1092,6 +1105,7 @@ impl AudioEncoder {
 /// Audio PTS uses time base `1/sample_rate` (PTS = sample index per channel).
 /// Both are automatically rescaled by FFmpeg's muxer when writing interleaved
 /// packets, ensuring correct A/V sync.
+#[cfg(feature = "ffmpeg")]
 pub struct MuxedEncoder {
     settings: ExportSettings,
     output_context: Option<ffmpeg::format::context::Output>,
@@ -1102,6 +1116,7 @@ pub struct MuxedEncoder {
     start_time: std::time::Instant,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl MuxedEncoder {
     /// Create a new muxed encoder with the given export settings.
     ///
@@ -1429,5 +1444,125 @@ impl MuxedEncoder {
     /// encoded into full AAC frames.
     pub fn audio_buffered_samples(&self) -> usize {
         self.audio_encoder.buffered_sample_count()
+    }
+}
+
+// ─── Stub implementations when FFmpeg is not available ──────────────────────────
+
+#[cfg(not(feature = "ffmpeg"))]
+pub struct VideoEncoder;
+
+#[cfg(not(feature = "ffmpeg"))]
+impl VideoEncoder {
+    pub fn new(_settings: &ExportSettings) -> Result<Self, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn open(&mut self, _output_path: &str) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn open_with_audio(self, _output_path: &str) -> Result<MuxedEncoder, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn encode_rgba_frame(&mut self, _rgba_data: &[u8], _pts: i64) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn encode_yuv420p_frame(&mut self, _yuv_data: &[u8], _pts: i64) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn finish(self, _duration_ms: u64) -> Result<ExportResult, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn cancel(self) {}
+
+    pub fn frame_count(&self) -> u64 {
+        0
+    }
+
+    pub fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+}
+
+#[cfg(not(feature = "ffmpeg"))]
+pub struct AudioEncoder;
+
+#[cfg(not(feature = "ffmpeg"))]
+impl AudioEncoder {
+    pub fn new(_sample_rate: u32, _channels: u32, _bitrate_kbps: u32) -> Result<Self, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn stream_index(&self) -> Option<usize> {
+        None
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        0
+    }
+
+    pub fn channels(&self) -> u32 {
+        0
+    }
+
+    pub fn bitrate_kbps(&self) -> u32 {
+        0
+    }
+
+    pub fn buffered_sample_count(&self) -> usize {
+        0
+    }
+}
+
+#[cfg(not(feature = "ffmpeg"))]
+pub struct MuxedEncoder;
+
+#[cfg(not(feature = "ffmpeg"))]
+impl MuxedEncoder {
+    pub fn new(_settings: &ExportSettings) -> Result<Self, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn open(&mut self, _output_path: &str) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn encode_video_frame(&mut self, _rgba_data: &[u8], _pts: i64) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn encode_yuv420p_video_frame(&mut self, _yuv_data: &[u8], _pts: i64) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn encode_audio_samples(&mut self, _samples: &[f32]) -> Result<(), String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn finish(self, _duration_ms: u64) -> Result<ExportResult, String> {
+        Err("FFmpeg is not available. Enable the 'ffmpeg' feature.".to_string())
+    }
+
+    pub fn cancel(self) {}
+
+    pub fn frame_count(&self) -> u64 {
+        0
+    }
+
+    pub fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+
+    pub fn has_audio(&self) -> bool {
+        false
+    }
+
+    pub fn audio_buffered_samples(&self) -> usize {
+        0
     }
 }

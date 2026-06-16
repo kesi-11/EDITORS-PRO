@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next as ffmpeg;
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next::codec::flag::Flags as CodecFlags;
+#[cfg(feature = "ffmpeg")]
 use ffmpeg_next::util::frame::video::Pixel;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -83,6 +86,7 @@ impl Default for EncoderConfig {
 }
 
 /// FFmpeg-based video encoder.
+#[cfg(feature = "ffmpeg")]
 pub struct Encoder {
     config: EncoderConfig,
     output_path: String,
@@ -94,6 +98,7 @@ pub struct Encoder {
     finalized: bool,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl Encoder {
     /// Create a new encoder with the given config and output path.
     pub fn new(config: EncoderConfig, output_path: &str) -> Result<Self> {
@@ -334,11 +339,53 @@ impl Encoder {
     }
 }
 
+#[cfg(feature = "ffmpeg")]
 impl Drop for Encoder {
     fn drop(&mut self) {
         if !self.finalized {
             let _ = self.finalize();
         }
+    }
+}
+
+// ─── Stub implementation when FFmpeg is not available ──────────────────────────
+
+#[cfg(not(feature = "ffmpeg"))]
+pub struct Encoder;
+
+#[cfg(not(feature = "ffmpeg"))]
+impl Encoder {
+    pub fn new(_config: EncoderConfig, _output_path: &str) -> Result<Self> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
+    pub fn init(&mut self) -> Result<()> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
+    pub fn write_frame(&mut self, _frame_data: &[u8]) -> Result<()> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
+    pub fn write_audio_samples(
+        &mut self,
+        _samples: &[f32],
+        _sample_rate: u32,
+        _channels: u16,
+    ) -> Result<()> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
+    pub fn finalize(&mut self) -> Result<()> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
+    pub fn mux_audio(_video_path: &str, _audio_path: &str, _output_path: &str) -> Result<()> {
+        anyhow::bail!("FFmpeg is not available. Enable the 'ffmpeg' feature.")
+    }
+
+    pub fn frame_count(&self) -> u64 {
+        0
     }
 }
 
@@ -385,36 +432,6 @@ mod tests {
     }
 
     #[test]
-    fn test_encoder_new() {
-        let config = EncoderConfig::default();
-        let encoder = Encoder::new(config, "/tmp/test.mp4");
-        assert!(encoder.is_ok());
-    }
-
-    #[test]
-    fn test_encoder_write_frame_without_init() {
-        let config = EncoderConfig::default();
-        let mut encoder = Encoder::new(config, "/tmp/test.mp4").unwrap();
-        let result = encoder.write_frame(&[]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_encoder_finalize_without_init() {
-        let config = EncoderConfig::default();
-        let mut encoder = Encoder::new(config, "/tmp/test.mp4").unwrap();
-        let result = encoder.finalize();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_encoder_frame_count_initial() {
-        let config = EncoderConfig::default();
-        let encoder = Encoder::new(config, "/tmp/test.mp4").unwrap();
-        assert_eq!(encoder.frame_count(), 0);
-    }
-
-    #[test]
     fn test_encoder_config_serialization() {
         let config = EncoderConfig::default();
         let json = serde_json::to_string(&config).unwrap();
@@ -424,6 +441,41 @@ mod tests {
         assert_eq!(config.width, deserialized.width);
     }
 
+    #[cfg(feature = "ffmpeg")]
+    #[test]
+    fn test_encoder_new() {
+        let config = EncoderConfig::default();
+        let encoder = Encoder::new(config, "/tmp/test.mp4");
+        assert!(encoder.is_ok());
+    }
+
+    #[cfg(feature = "ffmpeg")]
+    #[test]
+    fn test_encoder_write_frame_without_init() {
+        let config = EncoderConfig::default();
+        let mut encoder = Encoder::new(config, "/tmp/test.mp4").unwrap();
+        let result = encoder.write_frame(&[]);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "ffmpeg")]
+    #[test]
+    fn test_encoder_finalize_without_init() {
+        let config = EncoderConfig::default();
+        let mut encoder = Encoder::new(config, "/tmp/test.mp4").unwrap();
+        let result = encoder.finalize();
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "ffmpeg")]
+    #[test]
+    fn test_encoder_frame_count_initial() {
+        let config = EncoderConfig::default();
+        let encoder = Encoder::new(config, "/tmp/test.mp4").unwrap();
+        assert_eq!(encoder.frame_count(), 0);
+    }
+
+    #[cfg(feature = "ffmpeg")]
     #[test]
     fn test_mux_audio_nonexistent_files() {
         let result = Encoder::mux_audio("/nonexistent/video.mp4", "/nonexistent/audio.wav", "/tmp/output.mp4");
