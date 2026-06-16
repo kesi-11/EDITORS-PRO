@@ -3,9 +3,9 @@ import 'dart:developer' as developer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../../data/models/project_model.dart';
-import '../../../core/services/project_repository.dart';
 import '../../../core/services/engine_service.dart';
+import '../../../core/services/project_repository.dart';
+import '../../../data/models/project_model.dart';
 
 /// Current project state
 class ProjectState {
@@ -170,6 +170,22 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
         return track.copyWith(clips: [...track.clips, clip]);
       }
       return track;
+    }).toList();
+
+    state = state.copyWith(
+      currentProject: state.currentProject!.copyWith(
+        tracks: updatedTracks,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  /// Update a track's properties (e.g., locked, visible, volume).
+  void updateTrack(String trackId, TrackModel updatedTrack) {
+    if (state.currentProject == null) return;
+
+    final updatedTracks = state.currentProject!.tracks.map((track) {
+      return track.id == trackId ? updatedTrack : track;
     }).toList();
 
     state = state.copyWith(

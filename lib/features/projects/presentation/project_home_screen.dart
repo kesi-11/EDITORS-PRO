@@ -1,14 +1,19 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-import 'package:flutter_animate/flutter_animate.dart';
+import 'dart:async';
 
-import '../../../core/theme/app_theme.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../core/constants/app_icons.dart';
 import '../../../core/extensions/context_extensions.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_icon.dart';
 import '../../../data/models/project_model.dart';
 import '../providers/project_provider.dart';
 
-/// Home screen showing project list and create button
+/// Home screen showing project list, templates, and create button.
 class ProjectHomeScreen extends ConsumerStatefulWidget {
   const ProjectHomeScreen({super.key});
 
@@ -16,7 +21,8 @@ class ProjectHomeScreen extends ConsumerStatefulWidget {
   ConsumerState<ProjectHomeScreen> createState() => _ProjectHomeScreenState();
 }
 
-class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with SingleTickerProviderStateMixin {
+class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
@@ -43,24 +49,8 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
       body: SafeArea(
         child: Column(
           children: [
-            // Header
             _buildHeader(context),
-
-            // Tab bar
-            Container(
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Color(0xFF2A2A3E))),
-              ),
-              child: TabBar(
-                controller: _tabController,
-                tabs: const [
-                  Tab(text: 'RECENT'),
-                  Tab(text: 'TEMPLATES'),
-                ],
-              ),
-            ),
-
-            // Content
+            _buildTabBar(context),
             Expanded(
               child: TabBarView(
                 controller: _tabController,
@@ -77,27 +67,22 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
     );
   }
 
+  // ─── Header ───────────────────────────────────────────────────
   Widget _buildHeader(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
       child: Row(
         children: [
-          // Logo & Title
+          // Logo in 44x44 rounded container with subtle glow
           Container(
-            width: 40,
-            height: 40,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.primary.withOpacity(0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: AppTheme.primaryGlow(opacity: 0.35),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
               child: Image.asset(
                 'assets/icons/logo.png',
                 fit: BoxFit.cover,
@@ -105,38 +90,109 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
             ),
           ),
           const SizedBox(width: 12),
+          // Title + subtitle
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 'EDITORS-PRO',
-                style: context.textTheme.headlineSmall?.copyWith(
+                style: context.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w800,
                   letterSpacing: 1.5,
                 ),
               ),
+              const SizedBox(height: 2),
               Text(
                 'Video Editor',
                 style: context.textTheme.bodySmall?.copyWith(
                   color: AppTheme.textSecondary,
+                  letterSpacing: 0.3,
                 ),
               ),
             ],
           ),
           const Spacer(),
-          // Settings button
-          IconButton(
-            onPressed: () => context.go('/settings'),
-            icon: const Icon(Icons.settings_outlined),
-            style: IconButton.styleFrom(
-              backgroundColor: AppTheme.surfaceVariant,
-            ),
+          // Search
+          _buildHeaderIconButton(
+            icon: AppIcons.search,
+            onTap: () {
+              // Search — extension point for future feature
+            },
+          ),
+          const SizedBox(width: 8),
+          // Settings
+          _buildHeaderIconButton(
+            icon: AppIcons.settings,
+            onTap: () => context.go('/settings'),
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 400.ms);
+    ).animate().fadeIn(duration: 400.ms).slideY(begin: -0.05, end: 0);
   }
 
+  Widget _buildHeaderIconButton({
+    required String icon,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: AppTheme.surfaceVariant,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          width: 40,
+          height: 40,
+          alignment: Alignment.center,
+          child: AppIcon(icon, size: 18, color: AppTheme.textSecondary),
+        ),
+      ),
+    );
+  }
+
+  // ─── Pill-style Tab Bar ───────────────────────────────────────
+  Widget _buildTabBar(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceVariant,
+        borderRadius: BorderRadius.circular(AppTheme.radiusFull),
+      ),
+      child: TabBar(
+        controller: _tabController,
+        indicator: BoxDecoration(
+          color: AppTheme.primary.withOpacity(0.18),
+          borderRadius: BorderRadius.circular(AppTheme.radiusFull),
+          border: Border.all(
+            color: AppTheme.primary.withOpacity(0.4),
+            width: 1,
+          ),
+        ),
+        indicatorSize: TabBarIndicatorSize.tab,
+        dividerColor: Colors.transparent,
+        labelColor: AppTheme.primary,
+        unselectedLabelColor: AppTheme.textSecondary,
+        labelPadding: const EdgeInsets.symmetric(vertical: 10),
+        labelStyle: const TextStyle(
+          fontWeight: FontWeight.w700,
+          fontSize: 13,
+          letterSpacing: 1.4,
+        ),
+        unselectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 13,
+          letterSpacing: 1.4,
+        ),
+        tabs: const [
+          Tab(text: 'RECENT'),
+          Tab(text: 'TEMPLATES'),
+        ],
+      ),
+    );
+  }
+
+  // ─── Recent Projects Tab ──────────────────────────────────────
   Widget _buildRecentProjects(BuildContext context, ProjectState state) {
     if (state.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -146,24 +202,35 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
       return _buildEmptyState(context);
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: state.recentProjects.length,
-      itemBuilder: (context, index) {
-        final project = state.recentProjects[index];
-        return _ProjectCard(
-          project: project,
-          onTap: () async {
-            await ref.read(projectProvider.notifier).openProject(project);
-            if (context.mounted) {
-              context.go('/editor/${project.id}');
-            }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 600;
+        final crossAxisCount = isWide ? 2 : 1;
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            childAspectRatio: isWide ? 0.82 : 1.2,
+          ),
+          itemCount: state.recentProjects.length,
+          itemBuilder: (context, index) {
+            final project = state.recentProjects[index];
+            return _ProjectCard(
+              project: project,
+              onTap: () async {
+                await ref.read(projectProvider.notifier).openProject(project);
+                if (context.mounted) {
+                  context.go('/editor/${project.id}');
+                }
+              },
+              onMore: () => _showDeleteConfirmation(context, project),
+            )
+                .animate(delay: (index * 80).ms)
+                .fadeIn(duration: 400.ms)
+                .slideY(begin: 0.15, end: 0, duration: 400.ms);
           },
-          onDelete: () => _showDeleteConfirmation(context, project),
-        ).animate().slideX(
-          begin: 0.1,
-          duration: 300.ms,
-          delay: (index * 50).ms,
         );
       },
     );
@@ -172,35 +239,57 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
   Widget _buildEmptyState(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(40),
+        padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.video_library_outlined,
-              size: 80,
-              color: AppTheme.textDisabled,
-            ).animate().scale(duration: 500.ms),
-            const SizedBox(height: 24),
+            // Large film illustration in a soft circle
+            Container(
+              width: 144,
+              height: 144,
+              decoration: const BoxDecoration(
+                color: AppTheme.surfaceVariant,
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: SvgPicture.asset(
+                AppIcons.film,
+                width: 80,
+                height: 80,
+                colorFilter: const ColorFilter.mode(
+                  AppTheme.textDisabled,
+                  BlendMode.srcIn,
+                ),
+              ),
+            ).animate().scaleXY(
+                  duration: 600.ms,
+                  curve: Curves.elasticOut,
+                  begin: 0.5,
+                  end: 1.0,
+                ),
+            const SizedBox(height: 28),
             Text(
               'No Projects Yet',
               style: context.textTheme.headlineSmall?.copyWith(
-                color: AppTheme.textSecondary,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 12),
             Text(
-              'Create your first video project\nand start editing like a pro.',
+              'Create your first video project and\nstart editing like a pro',
               textAlign: TextAlign.center,
               style: context.textTheme.bodyMedium?.copyWith(
-                color: AppTheme.textDisabled,
+                color: AppTheme.textSecondary,
+                height: 1.5,
               ),
             ),
             const SizedBox(height: 32),
-            ElevatedButton.icon(
+            _GradientButton(
+              icon: AppIcons.plus,
+              label: 'Create Project',
+              gradient: AppTheme.primaryGradient,
+              shadow: AppTheme.primaryGlow(opacity: 0.45),
               onPressed: () => _showCreateProjectDialog(context),
-              icon: const Icon(Icons.add),
-              label: const Text('Create Project'),
             ),
           ],
         ),
@@ -208,97 +297,162 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
     );
   }
 
+  // ─── Templates Tab ────────────────────────────────────────────
   Widget _buildTemplates(BuildContext context) {
-    final templates = [
-      ('Social Vertical', '9:16 for TikTok & Reels', Icons.phone_android, AppTheme.accent, 1080, 1920),
-      ('Social Square', '1:1 for Instagram', Icons.crop_square, AppTheme.secondary, 1080, 1080),
-      ('YouTube', '16:9 standard', Icons.play_circle, AppTheme.primary, 1920, 1080),
-      ('Cinematic', '21:9 widescreen', Icons.theaters, AppTheme.warning, 2560, 1080),
+    final templates = <_TemplateData>[
+      _TemplateData(
+        name: 'Social Vertical',
+        icon: AppIcons.phone,
+        aspectRatio: '9:16',
+        dimensions: '1080 × 1920',
+        width: 1080,
+        height: 1920,
+        gradient: AppTheme.accentGradient,
+        color: AppTheme.accent,
+      ),
+      _TemplateData(
+        name: 'Social Square',
+        icon: AppIcons.crop,
+        aspectRatio: '1:1',
+        dimensions: '1080 × 1080',
+        width: 1080,
+        height: 1080,
+        gradient: AppTheme.secondaryGradient,
+        color: AppTheme.secondary,
+      ),
+      _TemplateData(
+        name: 'YouTube',
+        icon: AppIcons.monitor,
+        aspectRatio: '16:9',
+        dimensions: '1920 × 1080',
+        width: 1920,
+        height: 1080,
+        gradient: AppTheme.primaryGradient,
+        color: AppTheme.primary,
+      ),
+      _TemplateData(
+        name: 'Cinematic',
+        icon: AppIcons.film,
+        aspectRatio: '21:9',
+        dimensions: '2560 × 1080',
+        width: 2560,
+        height: 1080,
+        gradient: const LinearGradient(
+          colors: [Color(0xFFFFB84D), Color(0xFFFF7E5F)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        color: AppTheme.warning,
+      ),
     ];
 
     return GridView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        childAspectRatio: 1.2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+        childAspectRatio: 1.0,
       ),
       itemCount: templates.length,
       itemBuilder: (context, index) {
-        final (name, description, icon, color, width, height) = templates[index];
+        final t = templates[index];
         return _TemplateCard(
-          name: name,
-          description: description,
-          icon: icon,
-          color: color,
-          onTap: () => _createProjectFromTemplate(context, name, width: width, height: height),
-        ).animate().scale(
-          duration: 300.ms,
-          delay: (index * 80).ms,
-        );
+          data: t,
+          onTap: () => _createProjectFromTemplate(
+            context,
+            t.name,
+            width: t.width,
+            height: t.height,
+          ),
+        )
+            .animate(delay: (index * 80).ms)
+            .fadeIn(duration: 400.ms)
+            .scaleXY(
+              begin: 0.9,
+              end: 1.0,
+              duration: 400.ms,
+              curve: Curves.easeOutBack,
+            );
       },
     );
   }
 
+  // ─── Extended FAB ─────────────────────────────────────────────
   Widget _buildCreateButton(BuildContext context) {
-    return FloatingActionButton.extended(
-      onPressed: () => _showCreateProjectDialog(context),
-      backgroundColor: AppTheme.primary,
-      icon: const Icon(Icons.add, color: Colors.white),
-      label: const Text(
-        'New Project',
-        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+    return Container(
+      decoration: BoxDecoration(
+        gradient: AppTheme.primaryGradient,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        boxShadow: AppTheme.primaryGlow(opacity: 0.5),
       ),
-    ).animate().scale(duration: 300.ms, delay: 500.ms);
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showCreateProjectDialog(context),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppIcon(AppIcons.plus, size: 22, color: Colors.white),
+                SizedBox(width: 10),
+                Text(
+                  'New Project',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ).animate().scaleXY(
+          duration: 600.ms,
+          delay: 500.ms,
+          curve: Curves.elasticOut,
+          begin: 0.5,
+          end: 1.0,
+        );
   }
 
+  // ─── Dialogs & Project Ops ────────────────────────────────────
   void _showCreateProjectDialog(BuildContext context) {
-    final nameController = TextEditingController(text: 'Untitled Project');
-
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New Project'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Project Name',
-                hintText: 'Enter project name',
-              ),
-              autofocus: true,
-            ),
-            const SizedBox(height: 16),
-            // Resolution selector
-            _ResolutionSelector(),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _createProject(nameController.text);
-            },
-            child: const Text('Create'),
-          ),
-        ],
+      builder: (dialogContext) => _CreateProjectDialog(
+        onCreate: (name, width, height) {
+          Navigator.pop(dialogContext);
+          unawaited(_createProject(name, width: width, height: height));
+        },
       ),
     );
   }
 
-  void _createProjectFromTemplate(BuildContext context, String templateName, {int width = 1920, int height = 1080}) {
-    _createProject(templateName, width: width, height: height);
+  void _createProjectFromTemplate(
+    BuildContext context,
+    String templateName, {
+    int width = 1920,
+    int height = 1080,
+  }) {
+    unawaited(_createProject(templateName, width: width, height: height));
   }
 
-  void _createProject(String name, {int width = 1920, int height = 1080}) {
-    ref.read(projectProvider.notifier).createProject(name, width: width, height: height);
+  Future<void> _createProject(
+    String name, {
+    int width = 1920,
+    int height = 1080,
+  }) async {
+    final effectiveName = name.trim().isEmpty ? 'Untitled Project' : name.trim();
+    await ref
+        .read(projectProvider.notifier)
+        .createProject(effectiveName, width: width, height: height);
+    if (!mounted) return;
     final project = ref.read(projectProvider).currentProject;
     if (project != null) {
       context.go('/editor/${project.id}');
@@ -323,7 +477,9 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
             onPressed: () {
               Navigator.pop(ctx);
-              ref.read(projectProvider.notifier).deleteProject(project.id);
+              unawaited(
+                ref.read(projectProvider.notifier).deleteProject(project.id),
+              );
             },
             child: const Text('Delete'),
           ),
@@ -333,73 +489,150 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen> with Sing
   }
 }
 
+// ─── Project Card ────────────────────────────────────────────────
 class _ProjectCard extends StatelessWidget {
   final ProjectModel project;
   final VoidCallback onTap;
-  final VoidCallback onDelete;
+  final VoidCallback onMore;
 
   const _ProjectCard({
     required this.project,
     required this.onTap,
-    required this.onDelete,
+    required this.onMore,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        boxShadow: AppTheme.softShadow,
+        border: Border.all(color: AppTheme.border.withOpacity(0.5)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Thumbnail
-              Container(
-                width: 72,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceVariant,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                  gradient: const LinearGradient(
-                    colors: [AppTheme.primary, AppTheme.secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+              // ─ Thumbnail (16:9) with overlays ─
+              Stack(
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        gradient: AppTheme.sunsetGradient,
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(AppTheme.radiusLarge),
+                        ),
+                      ),
+                      child: Center(
+                        child: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.32),
+                            shape: BoxShape.circle,
+                          ),
+                          alignment: Alignment.center,
+                          child: AppIcon(
+                            AppIcons.play,
+                            size: 20,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-                child: const Icon(Icons.play_circle, color: Colors.white54, size: 24),
+                  // More options button (top-right)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: GestureDetector(
+                      onTap: onMore,
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.45),
+                          shape: BoxShape.circle,
+                        ),
+                        alignment: Alignment.center,
+                        child: AppIcon(
+                          AppIcons.moreHorizontal,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Duration badge (bottom-right)
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.65),
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusSmall),
+                      ),
+                      child: Text(
+                        _formatDuration(project.durationMs),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 16),
-              // Info
-              Expanded(
+              // ─ Info section ─
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       project.name,
-                      style: context.textTheme.titleMedium,
+                      style: context.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${project.width}x${project.height} @ ${project.fps}fps',
-                      style: context.textTheme.bodySmall,
+                      '${project.width}×${project.height} • ${project.fps.toInt()}fps',
+                      style: context.textTheme.bodySmall?.copyWith(
+                        color: AppTheme.textSecondary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 6),
                     Text(
-                      _formatDate(project.updatedAt),
-                      style: context.textTheme.labelSmall,
+                      'Edited ${_formatDate(project.updatedAt)}',
+                      style: context.textTheme.labelSmall?.copyWith(
+                        color: AppTheme.textDisabled,
+                        letterSpacing: 0.3,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
-                ),
-              ),
-              // Actions
-              IconButton(
-                onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline, size: 20),
-                style: IconButton.styleFrom(
-                  foregroundColor: AppTheme.error,
                 ),
               ),
             ],
@@ -407,6 +640,14 @@ class _ProjectCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _formatDuration(int durationMs) {
+    if (durationMs <= 0) return '0:00';
+    final duration = Duration(milliseconds: durationMs);
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds.remainder(60);
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
   String _formatDate(int timestamp) {
@@ -415,56 +656,97 @@ class _ProjectCard extends StatelessWidget {
   }
 }
 
-class _TemplateCard extends StatelessWidget {
+// ─── Template Data + Card ────────────────────────────────────────
+class _TemplateData {
   final String name;
-  final String description;
-  final IconData icon;
+  final String icon;
+  final String aspectRatio;
+  final String dimensions;
+  final int width;
+  final int height;
+  final Gradient gradient;
   final Color color;
+
+  const _TemplateData({
+    required this.name,
+    required this.icon,
+    required this.aspectRatio,
+    required this.dimensions,
+    required this.width,
+    required this.height,
+    required this.gradient,
+    required this.color,
+  });
+}
+
+class _TemplateCard extends StatelessWidget {
+  final _TemplateData data;
   final VoidCallback onTap;
 
-  const _TemplateCard({
-    required this.name,
-    required this.description,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
+  const _TemplateCard({required this.data, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        boxShadow: AppTheme.softShadow,
+        border: Border.all(color: AppTheme.border.withOpacity(0.5)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Icon in colored gradient circle
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    gradient: data.gradient,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: data.color.withOpacity(0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  alignment: Alignment.center,
+                  child: AppIcon(data.icon, size: 24, color: Colors.white),
                 ),
-                child: Icon(icon, color: color, size: 24),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                name,
-                style: context.textTheme.titleSmall,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                description,
-                style: context.textTheme.bodySmall,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+                const SizedBox(height: 14),
+                Text(
+                  data.name,
+                  style: context.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  data.aspectRatio,
+                  style: context.textTheme.bodySmall?.copyWith(
+                    color: AppTheme.textSecondary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  data.dimensions,
+                  style: context.textTheme.labelSmall?.copyWith(
+                    color: AppTheme.textDisabled,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -472,39 +754,216 @@ class _TemplateCard extends StatelessWidget {
   }
 }
 
-class _ResolutionSelector extends StatefulWidget {
-  @override
-  State<_ResolutionSelector> createState() => _ResolutionSelectorState();
-}
+// ─── Reusable Gradient Button ────────────────────────────────────
+class _GradientButton extends StatelessWidget {
+  final String icon;
+  final String label;
+  final Gradient gradient;
+  final List<BoxShadow>? shadow;
+  final VoidCallback onPressed;
+  final EdgeInsets padding;
 
-class _ResolutionSelectorState extends State<_ResolutionSelector> {
-  String _selected = '1080p';
-
-  final _resolutions = {
-    '720p': (1280, 720),
-    '1080p': (1920, 1080),
-    '4K': (3840, 2160),
-  };
+  const _GradientButton({
+    required this.icon,
+    required this.label,
+    required this.gradient,
+    required this.onPressed,
+    this.shadow,
+    this.padding = const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Resolution', style: context.textTheme.titleSmall),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          children: _resolutions.entries.map((entry) {
-            final isSelected = _selected == entry.key;
-            return ChoiceChip(
-              label: Text(entry.key),
-              selected: isSelected,
-              onSelected: (_) => setState(() => _selected = entry.key),
+    return Container(
+      decoration: BoxDecoration(
+        gradient: gradient,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        boxShadow: shadow,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+          child: Padding(
+            padding: padding,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppIcon(icon, size: 18, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Create Project Dialog ───────────────────────────────────────
+class _CreateProjectDialog extends StatefulWidget {
+  final void Function(String name, int width, int height) onCreate;
+
+  const _CreateProjectDialog({required this.onCreate});
+
+  @override
+  State<_CreateProjectDialog> createState() => _CreateProjectDialogState();
+}
+
+class _CreateProjectDialogState extends State<_CreateProjectDialog> {
+  final _nameController = TextEditingController(text: 'Untitled Project');
+  String _selectedResolution = '1080p';
+
+  static const _resolutions = <_ResolutionOption>[
+    _ResolutionOption('720p', 1280, 720),
+    _ResolutionOption('1080p', 1920, 1080),
+    _ResolutionOption('4K', 3840, 2160),
+  ];
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+      ),
+      title: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              gradient: AppTheme.primaryGradient,
+              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              boxShadow: AppTheme.primaryGlow(opacity: 0.4),
+            ),
+            alignment: Alignment.center,
+            child: AppIcon(AppIcons.plus, size: 20, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          const Text('New Project'),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Project Name',
+            style: context.textTheme.labelLarge?.copyWith(
+              color: AppTheme.textSecondary,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _nameController,
+            decoration: const InputDecoration(
+              hintText: 'Enter project name',
+            ),
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Resolution',
+            style: context.textTheme.labelLarge?.copyWith(
+              color: AppTheme.textSecondary,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _resolutions.map((option) {
+              final isSelected = _selectedResolution == option.label;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedResolution = option.label),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: isSelected ? AppTheme.primaryGradient : null,
+                    color: isSelected ? null : AppTheme.surfaceVariant,
+                    borderRadius:
+                        BorderRadius.circular(AppTheme.radiusMedium),
+                    border: Border.all(
+                      color: isSelected
+                          ? AppTheme.primaryLight
+                          : AppTheme.border,
+                      width: 1.5,
+                    ),
+                    boxShadow:
+                        isSelected ? AppTheme.primaryGlow(opacity: 0.35) : null,
+                  ),
+                  child: Text(
+                    option.label,
+                    style: TextStyle(
+                      color:
+                          isSelected ? Colors.white : AppTheme.textSecondary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        _GradientButton(
+          icon: AppIcons.plus,
+          label: 'Create',
+          gradient: AppTheme.primaryGradient,
+          shadow: AppTheme.primaryGlow(opacity: 0.4),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          onPressed: () {
+            final selected = _resolutions.firstWhere(
+              (r) => r.label == _selectedResolution,
             );
-          }).toList(),
+            widget.onCreate(
+              _nameController.text,
+              selected.width,
+              selected.height,
+            );
+          },
         ),
       ],
     );
   }
+}
+
+class _ResolutionOption {
+  final String label;
+  final int width;
+  final int height;
+  const _ResolutionOption(this.label, this.width, this.height);
 }

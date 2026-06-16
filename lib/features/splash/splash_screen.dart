@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/theme/app_theme.dart';
 
-/// Minimal splash / loading screen that determines whether the user
-/// should be sent to onboarding or the home screen.
+/// Polished, animated splash screen.
 ///
-/// Because GoRouter's redirect callback cannot easily perform async
-/// work (reading SharedPreferences), we use this screen as the
-/// initial route. It checks the onboarding flag and then navigates.
+/// Reads the `onboarding_completed` SharedPreferences flag and routes
+/// the user to either `/onboarding` (first run) or `/` (returning user).
+/// While that async check runs, we display a branded loading animation.
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
@@ -18,11 +18,33 @@ class SplashScreen extends ConsumerStatefulWidget {
   ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends ConsumerState<SplashScreen> {
+class _SplashScreenState extends ConsumerState<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _loaderController;
+  late final Animation<double> _loaderTween;
+
   @override
   void initState() {
     super.initState();
+
+    // Indeterminate pill animation — slides left-to-right and back.
+    _loaderController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat(reverse: true);
+
+    // Pill is 40px wide on a 120px track → travel range = 80px.
+    _loaderTween = Tween<double>(begin: 0.0, end: 80.0).animate(
+      CurvedAnimation(parent: _loaderController, curve: Curves.easeInOut),
+    );
+
     _navigate();
+  }
+
+  @override
+  void dispose() {
+    _loaderController.dispose();
+    super.dispose();
   }
 
   Future<void> _navigate() async {
@@ -41,52 +63,104 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.background,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.primary.withOpacity(0.4),
-                    blurRadius: 24,
-                    offset: const Offset(0, 4),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: AppTheme.backgroundGradient,
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ─── Logo ──────────────────────────────────────────────
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  borderRadius:
+                      BorderRadius.circular(AppTheme.radiusLarge),
+                  boxShadow: AppTheme.primaryGlow(opacity: 0.5),
+                ),
+                child: ClipRRect(
+                  borderRadius:
+                      BorderRadius.circular(AppTheme.radiusLarge),
+                  child: Image.asset(
+                    'assets/icons/logo.png',
+                    fit: BoxFit.cover,
                   ),
-                ],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Image.asset(
-                  'assets/icons/logo.png',
-                  fit: BoxFit.cover,
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'EDITORS-PRO',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.textPrimary,
-                letterSpacing: 2,
+              const SizedBox(height: 32),
+
+              // ─── Brand wordmark (gradient) ─────────────────────────
+              ShaderMask(
+                shaderCallback: (bounds) =>
+                    AppTheme.primaryGradient.createShader(bounds),
+                child: const Text(
+                  'EDITORS-PRO',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    letterSpacing: 4,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 32),
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: AppTheme.primaryLight,
+              const SizedBox(height: 8),
+
+              // ─── Tagline ───────────────────────────────────────────
+              const Text(
+                'Professional Video Editor',
+                style: TextStyle(
+                  fontSize: 13,
+                  letterSpacing: 1,
+                  color: AppTheme.textSecondary,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 40),
+
+              // ─── Indeterminate loading pill ────────────────────────
+              SizedBox(
+                width: 120,
+                height: 4,
+                child: Stack(
+                  children: [
+                    // Track
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceVariant,
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusFull),
+                      ),
+                    ),
+                    // Animated inner pill
+                    AnimatedBuilder(
+                      animation: _loaderTween,
+                      builder: (context, _) {
+                        return Positioned(
+                          left: _loaderTween.value,
+                          top: 0,
+                          child: Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              gradient: AppTheme.primaryGradient,
+                              borderRadius: BorderRadius.circular(
+                                  AppTheme.radiusFull,
+                              ),
+                              boxShadow: AppTheme.primaryGlow(opacity: 0.6),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          )
+              .animate()
+              .fadeIn(duration: 600.ms)
+              .scale(begin: const Offset(0.95, 0.95)),
         ),
       ),
     );

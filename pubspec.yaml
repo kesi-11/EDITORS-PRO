@@ -39,6 +39,7 @@ dependencies:
   google_fonts: ^6.2.1
   flutter_animate: ^4.5.2
   shimmer: ^3.0.0
+  flutter_svg: ^2.0.10+1
 
   # Media
   video_thumbnail: ^0.5.5
@@ -79,6 +80,7 @@ flutter:
 
   assets:
     - assets/icons/
+    - assets/icons/svg/
 
   fonts:
     - family: Inter
