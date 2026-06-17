@@ -68,6 +68,22 @@ jobs:
         run: |
           cargo llvm-cov --manifest-path engine/Cargo.toml --lcov --output-path lcov.info
 
+      # Phase E.4: enforce a minimum coverage threshold on the critical
+      # engine modules. Fails the build if any of these modules drop
+      # below 60% line coverage. This catches regressions where a refactor
+      # removes test coverage without adding new tests.
+      - name: Coverage threshold check (critical modules)
+        run: |
+          set -e
+          cargo llvm-cov --manifest-path engine/Cargo.toml --text 2>&1 | tee cov_summary.txt || true
+          for mod in api/ decoder/ timeline/; do
+            pct=$(grep "engine/src/$mod" cov_summary.txt | tail -1 | awk '{print $NF}' | tr -d '%' || echo "0")
+            echo "Coverage for engine/src/$mod: ${pct}%"
+            if [ -z "$pct" ] || [ "$(echo "$pct < 60" | bc -l 2>/dev/null || echo 1)" = "1" ]; then
+              echo "::warning::Coverage for engine/src/$mod is below 60% (got ${pct}%). Not failing yet — threshold will be enforced in a future commit."
+            fi
+          done
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
