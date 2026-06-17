@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/services/engine_service.dart';
 import '../../../core/services/project_repository.dart';
+import '../../../core/services/project_snapshots.dart';
 import '../../../data/models/project_model.dart';
 
 /// Current project state
@@ -274,6 +275,46 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
     } catch (e) {
       developer.log('saveCurrentProject failed: $e', name: 'ProjectNotifier');
     }
+  }
+
+  /// Phase E.15: create a version-history snapshot of the current project.
+  ///
+  /// Reads the current `.epp` file from the engine and stores a copy
+  /// in the per-project snapshots directory. The user can later restore
+  /// to this snapshot via the snapshot browser UI.
+  ///
+  /// Returns the snapshot ID, or `null` on failure.
+  Future<String?> createSnapshot() async {
+    if (state.currentProject == null) return null;
+    try {
+      // Read the current .epp bytes from the engine's save location.
+      final eppBytes = await _repo.readProjectEppBytes(state.currentProject!.id);
+      if (eppBytes == null) {
+        developer.log(
+          'createSnapshot: no .epp file found for project ${state.currentProject!.id}',
+          name: 'ProjectNotifier',
+        );
+        return null;
+      }
+      return await ProjectSnapshots.create(
+        state.currentProject!.id,
+        eppBytes,
+      );
+    } catch (e, st) {
+      developer.log(
+        'createSnapshot failed: $e',
+        name: 'ProjectNotifier',
+        error: e,
+        stackTrace: st,
+      );
+      return null;
+    }
+  }
+
+  /// Phase E.15: list all snapshots for the current project.
+  Future<List<ProjectSnapshot>> listSnapshots() async {
+    if (state.currentProject == null) return [];
+    return ProjectSnapshots.listForProject(state.currentProject!.id);
   }
 
   /// Sync the project model with the latest engine state (after

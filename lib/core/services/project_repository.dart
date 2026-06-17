@@ -10,6 +10,7 @@
 library;
 
 import 'dart:developer' as developer;
+import 'dart:io' show File;
 
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -147,6 +148,25 @@ class ProjectRepository {
       ));
     } catch (e) {
       developer.log('saveProjectToEngine failed: $e', name: 'ProjectRepository');
+    }
+  }
+
+  /// Phase E.15: read the raw `.epp` bytes for a project from disk.
+  ///
+  /// Used by the snapshot system to copy the current project state into
+  /// a versioned snapshot file. Returns `null` if the project has never
+  /// been saved (no .epp file exists yet).
+  Future<List<int>?> readProjectEppBytes(String projectId) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final projectsDir = p.join(dir.path, AppConstants.projectsDir);
+      final eppPath = p.join(projectsDir, '$projectId${AppConstants.projectFileExtension}');
+      final file = File(eppPath);
+      if (!file.existsSync()) return null;
+      return await file.readAsBytes();
+    } catch (e) {
+      developer.log('readProjectEppBytes failed: $e', name: 'ProjectRepository');
+      return null;
     }
   }
 
