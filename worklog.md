@@ -628,3 +628,52 @@ Work Log:
 
 Stage Summary:
 - Phase E.20 and the remaining dependency upgrades are scoped and documented. The Phase A-D and E.1-E.19 work is complete and pushed.
+
+---
+Task ID: 29 (Phase E.20 — Google Drive Cloud Sync)
+Agent: Main Agent (upgrade audit)
+Task: Implement real Google Drive cloud sync via OAuth2 PKCE + Drive REST API.
+
+Work Log:
+- E.20.1 — Added 3 dependencies to pubspec.yaml: flutter_appauth (^8.0.0+1, OAuth2 PKCE with Chrome Custom Tabs), flutter_secure_storage (^9.2.2, Android Keystore-backed token storage), http (^1.2.2, Google Drive REST API calls).
+- E.20.2 — Created lib/core/services/google_drive_sync.dart (~400 lines):
+  - GoogleDriveSync singleton with authenticate(), signOut(), uploadProject(), downloadProject(), listProjects(), deleteProject()
+  - OAuth2 PKCE flow via flutter_appauth (opens Chrome Custom Tab for Google sign-in)
+  - Token auto-refresh when access token expires (uses stored refresh token)
+  - Drive REST API v3: multipart upload, media download, file listing, folder creation
+  - Creates 'EDITORS-PRO' folder on first upload
+  - Extracts user email from ID token JWT payload
+  - Token revocation on sign-out
+  - DriveProjectEntry data class
+- E.20.3 — Created lib/core/constants/cloud_config.dart with googleDriveClientId constant (empty by default — user fills in their own). Documented that OAuth2 client IDs for mobile apps are NOT secret (per Google's docs) — security relies on PKCE + redirect URI registration.
+- E.20.4 — Updated lib/features/cloud/providers/cloud_provider.dart:
+  - authenticate() now delegates to GoogleDriveSync when provider is "Google Drive"
+  - signOut() calls GoogleDriveSync.signOut() to revoke tokens
+  - syncProject() uploads .epp to Drive via GoogleDriveSync.uploadProject()
+  - fetchCloudProjects() lists from Drive via GoogleDriveSync.listProjects()
+  - _getProjectEppPath() constructs the .epp file path using path_provider
+  - Other providers (Dropbox, Custom) still use the engine placeholder
+- E.20.5 — Added OAuth2 redirect URI intent filter to AndroidManifest.xml. Captures the `com.googleusercontent.apps.<CLIENT_ID>:/oauth2redirect` redirect from Chrome Custom Tabs. Includes TODO comment with instructions to replace the placeholder client ID.
+- E.20.6 — Created docs/GOOGLE_DRIVE_SETUP.md (~250 lines, 7 sections):
+  1. Overview of the OAuth2 PKCE flow
+  2. Create Google Cloud project
+  3. Enable Google Drive API
+  4. Configure OAuth consent screen (scopes: drive.file, openid, email)
+  5. Get app's SHA-1 fingerprint (debug + release)
+  6. Create OAuth2 Android client ID
+  7. Configure the app (cloud_config.dart + AndroidManifest)
+  8. Test the sync
+  - Troubleshooting section (redirect_uri_mismatch, access_denied, invalid_client, token refresh, "not configured" errors)
+  - Security model section (PKCE, drive.file scope, Keystore, token revocation)
+  - Privacy section (only .epp files synced, no source media, no other Drive files)
+  - Publishing section (verification process for public release)
+- E.20.7 — Token storage uses flutter_secure_storage with AndroidOptions(encryptedSharedPreferences: true). Access token, refresh token, expiry, account email, and Drive folder ID are all stored securely.
+- E.20.8 — Updated cloud_screen.dart to remove "not yet implemented" messages. _handleSyncAll now iterates all cloud projects and syncs each one. _handleSyncProject shows real error messages from the sync state.
+
+Stage Summary:
+- Google Drive cloud sync is fully implemented on the Dart side. The Rust engine's PlaceholderCloudProvider remains as the fallback for non-Drive providers.
+- OAuth2 PKCE flow opens Chrome Custom Tab, exchanges code for tokens, stores them in Android Keystore.
+- Drive REST API v3 handles upload/download/list/delete with automatic folder creation.
+- Token auto-refresh ensures seamless operation across sessions.
+- Full setup documentation in docs/GOOGLE_DRIVE_SETUP.md walks the user through Google Cloud Console configuration.
+- The only remaining step for the user is to register an OAuth2 client ID in Google Cloud Console and paste it into cloud_config.dart — the app handles everything else.

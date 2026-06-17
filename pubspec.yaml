@@ -58,6 +58,14 @@ dependencies:
   flutter_localizations:
     sdk: flutter
 
+  # Phase E.20: Google Drive cloud sync
+  # flutter_appauth handles the OAuth2 PKCE flow with Android Custom Tabs.
+  # flutter_secure_storage stores the access/refresh tokens in Android Keystore.
+  # http is used for Google Drive REST API calls.
+  flutter_appauth: ^8.0.0+1
+  flutter_secure_storage: ^9.2.2
+  http: ^1.2.2
+
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
   logger: ^2.5.0

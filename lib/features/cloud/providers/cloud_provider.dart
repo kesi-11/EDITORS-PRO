@@ -1,14 +1,21 @@
 /// Cloud sync state and Riverpod provider.
 ///
 /// Manages the cloud sync lifecycle: authentication, project sync,
-/// conflict resolution, and status tracking.  This is a FOUNDATION
-/// implementation — actual OAuth2 and cloud API calls are placeholders.
+/// conflict resolution, and status tracking.
+///
+/// Phase E.20: Google Drive sync is now fully implemented via
+/// [GoogleDriveSync]. When the provider is "Google Drive", the notifier
+/// delegates to the real OAuth2 PKCE + Drive REST API implementation.
+/// Other providers still use the placeholder.
 
 import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
+import '../../../core/constants/cloud_config.dart';
 import '../../../core/services/engine_service.dart';
+import '../../../core/services/google_drive_sync.dart';
 
 // ─── Cloud Sync State ─────────────────────────────────────────────
 
@@ -136,24 +143,45 @@ class CloudSyncNotifier extends StateNotifier<CloudSyncState> {
 
   /// Authenticate with the selected cloud provider.
   ///
-  /// This is a placeholder — actual OAuth2 integration will be
-  /// added when real providers are implemented.
+  /// Phase E.20: when the provider is "Google Drive", this delegates
+  /// to [GoogleDriveSync.authenticate] which performs the real OAuth2
+  /// PKCE flow via `flutter_appauth`. Other providers still use the
+  /// placeholder.
   Future<void> authenticate() async {
     state = state.copyWith(isSyncing: true, clearError: true);
 
     try {
-      developer.log(
-        'Cloud authentication requested (placeholder)',
-        name: 'CloudSyncNotifier',
-      );
+      if (state.providerName == 'Google Drive') {
+        if (!CloudConfig.isGoogleDriveConfigured) {
+          state = state.copyWith(
+            isSyncing: false,
+            lastError:
+                'Google Drive client ID not configured. See docs/GOOGLE_DRIVE_SETUP.md.',
+          );
+          return;
+        }
 
-      // Placeholder — simulate authentication failure
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      state = state.copyWith(
-        isSyncing: false,
-        lastError: 'Cloud sync not yet implemented',
-      );
+        final email = await GoogleDriveSync.instance.authenticate();
+        state = state.copyWith(
+          isAuthenticated: true,
+          accountName: email,
+          isSyncing: false,
+        );
+        developer.log(
+          'Google Drive authentication successful: $email',
+          name: 'CloudSyncNotifier',
+        );
+      } else {
+        // Other providers — placeholder
+        developer.log(
+          'Cloud authentication for ${state.providerName} not yet implemented',
+          name: 'CloudSyncNotifier',
+        );
+        state = state.copyWith(
+          isSyncing: false,
+          lastError: '${state.providerName} sync not yet implemented',
+        );
+      }
     } catch (e) {
       developer.log(
         'Cloud authentication failed: $e',
@@ -169,6 +197,16 @@ class CloudSyncNotifier extends StateNotifier<CloudSyncState> {
 
   /// Sign out from the cloud provider.
   Future<void> signOut() async {
+    if (state.providerName == 'Google Drive' && state.isAuthenticated) {
+      try {
+        await GoogleDriveSync.instance.signOut();
+      } catch (e) {
+        developer.log(
+          'Google Drive sign-out failed (non-fatal): $e',
+          name: 'CloudSyncNotifier',
+        );
+      }
+    }
     state = const CloudSyncState();
     developer.log(
       'Signed out from cloud provider',
@@ -187,6 +225,11 @@ class CloudSyncNotifier extends StateNotifier<CloudSyncState> {
 
   /// Sync a single project.
   ///
+  /// Phase E.20: when the provider is "Google Drive" and authenticated,
+  /// this uploads the project's `.epp` file to Drive via
+  /// [GoogleDriveSync.uploadProject]. Other providers fall back to the
+  /// engine's placeholder sync.
+  ///
   /// Returns `true` if the sync succeeded, `false` otherwise.
   Future<bool> syncProject(String projectId) async {
     if (state.isSyncing) return false;
@@ -194,15 +237,62 @@ class CloudSyncNotifier extends StateNotifier<CloudSyncState> {
     state = state.copyWith(isSyncing: true, clearError: true);
 
     try {
-      final api = EngineService.instance.api;
-      final result = await api.syncProject(projectId: projectId);
+      if (state.providerName == 'Google Drive' && state.isAuthenticated) {
+        // Get the local .epp file path from the engine.
+        final api = EngineService.instance.api;
+        final projectInfo = await api.getProjectInfo();
+        if (projectInfo == null) {
+          state = state.copyWith(
+            isSyncing: false,
+            lastError: 'No project open',
+          );
+          return false;
+        }
 
-      state = state.copyWith(
-        isSyncing: false,
-        lastError: result.success ? null : result.message,
-      );
+        // Save the project to a temp file, then upload it.
+        // The saveProject call writes the .epp file to the engine's
+        // projects directory.
+        // We need the path — get it from the project repository.
+        // For now, use the engine's save_project + read pattern.
+        final eppPath = await _getProjectEppPath(projectId);
+        if (eppPath == null) {
+          state = state.copyWith(
+            isSyncing: false,
+            lastError: 'Could not find project file to sync',
+          );
+          return false;
+        }
 
-      return result.success;
+        // Ensure the project is saved before uploading.
+        await api.saveProject(filePath: eppPath);
+
+        final fileId = await GoogleDriveSync.instance.uploadProject(
+          projectId,
+          eppPath,
+        );
+
+        state = state.copyWith(
+          isSyncing: false,
+          lastError: null,
+        );
+
+        developer.log(
+          'Synced project $projectId to Google Drive (fileId=$fileId)',
+          name: 'CloudSyncNotifier',
+        );
+        return true;
+      } else {
+        // Other providers — use the engine's sync (placeholder).
+        final api = EngineService.instance.api;
+        final result = await api.syncProject(projectId: projectId);
+
+        state = state.copyWith(
+          isSyncing: false,
+          lastError: result.success ? null : result.message,
+        );
+
+        return result.success;
+      }
     } catch (e) {
       developer.log(
         'Sync project failed: $e',
@@ -214,6 +304,22 @@ class CloudSyncNotifier extends StateNotifier<CloudSyncState> {
         lastError: 'Sync failed: $e',
       );
       return false;
+    }
+  }
+
+  /// Get the local `.epp` file path for a project.
+  ///
+  /// Constructs the same path that `ProjectRepository.saveProjectToEngine`
+  /// uses: `<docs>/editors_pro/projects/<projectId>.epp`.
+  Future<String?> _getProjectEppPath(String projectId) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      // Use the same path pattern as ProjectRepository + AppConstants.
+      return '${dir.path}/editors_pro/projects/$projectId.epp';
+    } catch (e) {
+      developer.log('Failed to get project EPP path: $e',
+          name: 'CloudSyncNotifier');
+      return null;
     }
   }
 
@@ -241,23 +347,43 @@ class CloudSyncNotifier extends StateNotifier<CloudSyncState> {
   }
 
   /// Fetch the list of cloud projects.
+  ///
+  /// Phase E.20: when the provider is "Google Drive" and authenticated,
+  /// this lists projects from Drive via [GoogleDriveSync.listProjects].
   Future<void> fetchCloudProjects() async {
     try {
-      final api = EngineService.instance.api;
-      final projects = await api.getCloudProjects();
+      if (state.providerName == 'Google Drive' && state.isAuthenticated) {
+        final driveProjects = await GoogleDriveSync.instance.listProjects();
+        state = state.copyWith(
+          cloudProjects: driveProjects
+              .map((p) => CloudProjectEntry(
+                    projectId: p.projectId,
+                    name: p.name,
+                    modifiedAt: p.modifiedAt,
+                    sizeBytes: p.sizeBytes,
+                    cloudFileId: p.cloudFileId,
+                    providerName: 'Google Drive',
+                  ))
+              .toList(),
+        );
+      } else {
+        // Other providers — use the engine's placeholder.
+        final api = EngineService.instance.api;
+        final projects = await api.getCloudProjects();
 
-      state = state.copyWith(
-        cloudProjects: projects
-            .map((p) => CloudProjectEntry(
-                  projectId: p.projectId,
-                  name: p.name,
-                  modifiedAt: p.modifiedAt,
-                  sizeBytes: p.sizeBytes,
-                  cloudFileId: p.cloudFileId,
-                  providerName: p.providerName,
-                ))
-            .toList(),
-      );
+        state = state.copyWith(
+          cloudProjects: projects
+              .map((p) => CloudProjectEntry(
+                    projectId: p.projectId,
+                    name: p.name,
+                    modifiedAt: p.modifiedAt,
+                    sizeBytes: p.sizeBytes,
+                    cloudFileId: p.cloudFileId,
+                    providerName: p.providerName,
+                  ))
+              .toList(),
+        );
+      }
     } catch (e) {
       developer.log(
         'Fetch cloud projects failed: $e',

@@ -58,6 +58,33 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!--
+                Phase E.20: OAuth2 redirect URI for Google Drive sync.
+                When the user completes the Google sign-in flow in a
+                Chrome Custom Tab, Google redirects back to the app
+                using this URI scheme. The intent filter captures the
+                redirect and hands it to flutter_appauth.
+
+                The scheme is `com.googleusercontent.apps.<CLIENT_ID>`
+                (without the `/oauth2redirect` path — that's handled by
+                flutter_appauth internally). Replace <CLIENT_ID> with
+                your actual OAuth2 client ID from the Google Cloud
+                Console. See docs/GOOGLE_DRIVE_SETUP.md.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!--
+                  TODO: Replace with your actual client ID. The format is:
+                  com.googleusercontent.apps.<NUMERIC>-<RANDOM>.apps.googleusercontent.com
+
+                  Example:
+                  <data android:scheme="com.googleusercontent.apps.123456789012-abcdefghijklmnopqrstuvwxyz" />
+                -->
+                <data android:scheme="com.googleusercontent.apps.REPLACE_WITH_YOUR_CLIENT_ID" />
+            </intent-filter>
         </activity>
 
         <!-- Export foreground service — keeps video encoding alive

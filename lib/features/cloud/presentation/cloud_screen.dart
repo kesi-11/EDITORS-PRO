@@ -120,10 +120,28 @@ class _CloudScreenState extends ConsumerState<CloudScreen> {
   }
 
   Future<void> _handleSyncAll(CloudSyncNotifier notifier) async {
-    // Sync all tracked projects — placeholder
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sync All — cloud sync not yet implemented')),
-    );
+    // Phase E.20: sync all tracked projects.
+    final projects = notifier.state.cloudProjects;
+    if (projects.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No cloud projects to sync')),
+      );
+      return;
+    }
+    int successCount = 0;
+    for (final project in projects) {
+      final ok = await notifier.syncProject(project.projectId);
+      if (ok) successCount++;
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Synced $successCount/${projects.length} projects',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _handleSyncProject(
@@ -135,7 +153,9 @@ class _CloudScreenState extends ConsumerState<CloudScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            success ? 'Project synced' : 'Sync failed — not yet implemented',
+            success
+                ? 'Project synced to ${notifier.state.providerName}'
+                : (notifier.state.lastError ?? 'Sync failed'),
           ),
         ),
       );
