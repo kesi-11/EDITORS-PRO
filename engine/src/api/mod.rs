@@ -7,6 +7,7 @@
 pub mod bridge_api;
 pub mod commands;
 pub mod ffi_dispatch;
+pub mod managers;
 
 #[cfg(test)]
 mod bridge_api_tests;

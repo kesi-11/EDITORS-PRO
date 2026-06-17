@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'core/theme/app_theme.dart';
 import 'features/projects/presentation/project_home_screen.dart';
 import 'features/editor/presentation/editor_screen.dart';
+import 'features/editor/providers/editor_provider.dart';
 import 'features/export/presentation/export_screen.dart';
 import 'features/settings/providers/settings_provider.dart';
 import 'features/settings/settings_screen.dart';
@@ -79,12 +80,58 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
-class EditorsProApp extends ConsumerWidget {
+class EditorsProApp extends ConsumerStatefulWidget {
   const EditorsProApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<EditorsProApp> createState() => _EditorsProAppState();
+}
+
+class _EditorsProAppState extends ConsumerState<EditorsProApp> {
+  String? _lastShownError;
+
+  @override
+  void initState() {
+    super.initState();
+    // Phase E.2: surface `EditorState.lastError` as a global SnackBar.
+    // The previous code set `lastError` on every error but never showed
+    // it to the user. This listener watches the editor state and shows
+    // a SnackBar whenever a new error appears.
+    // The actual subscription happens in build() via ref.listen.
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
+
+    // Phase E.2: listen for editor errors and show a SnackBar.
+    // Using ref.listen so we only react to changes, not on every build.
+    ref.listen<EditorState>(editorProvider, (previous, next) {
+      if (next.lastError != null && next.lastError != _lastShownError) {
+        _lastShownError = next.lastError;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(next.lastError!),
+              backgroundColor: Theme.of(context).colorScheme.error,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 4),
+              action: SnackBarAction(
+                label: 'Dismiss',
+                textColor: Colors.white,
+                onPressed: () {
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                },
+              ),
+            ),
+          );
+        });
+      } else if (next.lastError == null) {
+        // Error was cleared — reset our dedup token.
+        _lastShownError = null;
+      }
+    });
 
     return MaterialApp.router(
       title: 'EDITORS-PRO',

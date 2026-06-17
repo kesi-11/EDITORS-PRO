@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -85,12 +86,19 @@ class EditorToolbar extends ConsumerWidget {
             SvgToolbarButton(
               icon: AppIcons.undo,
               tooltip: 'Undo',
-              onPressed: () => ref.read(editorProvider.notifier).undo(),
+              onPressed: () {
+                // Phase E.6: light haptic on undo/redo — non-destructive.
+                HapticFeedback.selectionClick();
+                ref.read(editorProvider.notifier).undo();
+              },
             ),
             SvgToolbarButton(
               icon: AppIcons.redo,
               tooltip: 'Redo',
-              onPressed: () => ref.read(editorProvider.notifier).redo(),
+              onPressed: () {
+                HapticFeedback.selectionClick();
+                ref.read(editorProvider.notifier).redo();
+              },
             ),
             SvgToolbarButton(
               icon: AppIcons.save,
@@ -195,8 +203,12 @@ class EditorToolbar extends ConsumerWidget {
             SvgToolbarButton(
               icon: AppIcons.split,
               tooltip: 'Split at playhead',
-              onPressed: () =>
-                  ref.read(editorProvider.notifier).splitAtPlayhead(),
+              onPressed: () {
+                // Phase E.6: haptic feedback on split — confirms the
+                // destructive action was triggered.
+                HapticFeedback.mediumImpact();
+                ref.read(editorProvider.notifier).splitAtPlayhead();
+              },
             ),
             // ── 15. Delete (error color when selection exists) ─────
             SvgToolbarButton(
@@ -204,7 +216,12 @@ class EditorToolbar extends ConsumerWidget {
               tooltip: 'Delete selected',
               color: hasSelection ? AppTheme.error : null,
               onPressed: hasSelection
-                  ? () => ref.read(editorProvider.notifier).deleteSelected()
+                  ? () {
+                      // Phase E.6: heavier haptic on delete — more
+                      // destructive than split.
+                      HapticFeedback.heavyImpact();
+                      ref.read(editorProvider.notifier).deleteSelected();
+                    }
                   : null,
             ),
 
