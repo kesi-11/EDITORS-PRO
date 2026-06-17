@@ -280,6 +280,7 @@ impl PreviewRenderer {
             data,
             timestamp_ms: frame.timestamp_ms,
             is_keyframe: frame.is_keyframe,
+            pooled: false,
         }
     }
 
@@ -359,6 +360,7 @@ fn apply_clip_transform(
             data: output,
             timestamp_ms: frame.timestamp_ms,
             is_keyframe: frame.is_keyframe,
+            pooled: false,
         };
     }
 
@@ -413,6 +415,7 @@ fn apply_clip_transform(
         data: output,
         timestamp_ms: frame.timestamp_ms,
         is_keyframe: frame.is_keyframe,
+        pooled: false,
     }
 }
 

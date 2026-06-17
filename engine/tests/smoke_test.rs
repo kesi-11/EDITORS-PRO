@@ -303,3 +303,84 @@ fn smoke_test_editing_pipeline() {
         undo_resp
     );
 }
+
+/// Phase C.15: verify the global buffer pool is reachable and returns
+/// a buffer of the requested size. This is a sanity check that the
+/// pool is wired into the engine crate's public surface.
+#[test]
+fn smoke_test_buffer_pool_allocates() {
+    use editors_pro_engine::decoder::FRAME_BUFFER_POOL;
+    let buf = FRAME_BUFFER_POOL.allocate(1920 * 1080 * 4);
+    assert!(buf.len() >= 1920 * 1080 * 4, "pool returned too-small buffer");
+    // Drop the buffer to return it to the pool.
+    drop(buf);
+    // Second allocation should reuse the buffer (hit rate > 0).
+    let _buf2 = FRAME_BUFFER_POOL.allocate(1920 * 1080 * 4);
+    let stats = FRAME_BUFFER_POOL.stats();
+    let reuses = stats.reuses.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        reuses >= 1,
+        "expected at least 1 pool reuse, got {} (allocs={}, reuses={})",
+        reuses,
+        stats.allocations.load(std::sync::atomic::Ordering::Relaxed),
+        reuses
+    );
+}
+
+/// Phase C.13: verify the decode worker can be spawned and shut down
+/// without crashing.
+#[test]
+fn smoke_test_decode_worker_lifecycle() {
+    use editors_pro_engine::decoder::worker::DecodeWorker;
+    let worker = DecodeWorker::spawn();
+    // get_info without opening a file should return Ok(None).
+    let info = worker.get_info();
+    assert!(info.is_ok(), "get_info failed: {:?}", info);
+    assert!(info.unwrap().is_none(), "expected None when no file open");
+    worker.shutdown();
+}
+
+/// Phase C.17: verify EngineError's `From<String>` impl works through
+/// the `?` operator.
+#[test]
+fn smoke_test_engine_error_from_string() {
+    use editors_pro_engine::EngineError;
+
+    fn legacy() -> Result<i32, String> {
+        Err("legacy failure".to_string())
+    }
+    fn modern() -> Result<i32, EngineError> {
+        legacy()?
+    }
+    let err = modern().unwrap_err();
+    match err {
+        EngineError::Other(s) => assert_eq!(s, "legacy failure"),
+        _ => panic!("expected Other variant"),
+    }
+}
+
+/// Phase C.14: verify the BridgeFrame DTO can be serialized and
+/// deserialized (required for it to flow across the FFI boundary).
+#[test]
+fn smoke_test_bridge_frame_serde() {
+    use editors_pro_engine::api::bridge_api::BridgeFrame;
+
+    let frame = BridgeFrame {
+        width: 1920,
+        height: 1080,
+        data: vec![128u8; 1920 * 1080 * 4],
+        timestamp_ms: 12345,
+        is_keyframe: true,
+    };
+    let json = serde_json::to_string(&frame).expect("serialize failed");
+    assert!(json.contains("\"width\":1920"));
+    assert!(json.contains("\"timestamp_ms\":12345"));
+    assert!(json.contains("\"is_keyframe\":true"));
+
+    let parsed: BridgeFrame = serde_json::from_str(&json).expect("deserialize failed");
+    assert_eq!(parsed.width, 1920);
+    assert_eq!(parsed.height, 1080);
+    assert_eq!(parsed.timestamp_ms, 12345);
+    assert!(parsed.is_keyframe);
+    assert_eq!(parsed.data.len(), 1920 * 1080 * 4);
+}

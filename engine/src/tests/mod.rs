@@ -5,6 +5,7 @@
 
 pub mod perf_tests;
 pub mod proptest_tests;
+pub mod error_migration_tests;
 
 /// Create a sample VideoInfo for testing (1920x1080, 30fps, 60s)
 pub fn sample_video_info() -> crate::decoder::VideoInfo {

@@ -220,13 +220,23 @@ impl SoftwareDecoder {
 
                 self.current_position_ms = pts_ms as u64;
 
-                return Ok(Some(FrameData {
-                    width: scaled.width(),
-                    height: scaled.height(),
-                    data: scaled.data(0).to_vec(),
-                    timestamp_ms: pts_ms as u64,
-                    is_keyframe: decoded.is_key_frame(),
-                }));
+                // Phase C.15: allocate the output buffer from the global
+                // FRAME_BUFFER_POOL so the same 8 MB Vec is recycled
+                // across frames instead of being allocated and freed
+                // 30 times per second.
+                let frame_width = scaled.width();
+                let frame_height = scaled.height();
+                let mut frame = FrameData::with_pool(frame_width, frame_height);
+                frame.truncate_to_frame_size();
+                let src_bytes = scaled.data(0);
+                let dst_bytes = &mut frame.data;
+                if dst_bytes.len() >= src_bytes.len() {
+                    dst_bytes[..src_bytes.len()].copy_from_slice(src_bytes);
+                }
+                frame.timestamp_ms = pts_ms as u64;
+                frame.is_keyframe = decoded.is_key_frame();
+
+                return Ok(Some(frame));
             }
         }
 

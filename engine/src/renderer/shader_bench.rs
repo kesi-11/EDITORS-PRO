@@ -30,6 +30,7 @@ mod bench {
             data,
             timestamp_ms: 0,
             is_keyframe: true,
+            pooled: false,
         }
     }
 

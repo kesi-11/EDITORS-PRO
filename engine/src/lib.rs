@@ -90,6 +90,34 @@ pub enum EngineError {
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+
+    /// Phase C.17: catch-all for errors that don't fit the categories above.
+    /// Used by the `From<String>` impl so that legacy `Result<_, String>`
+    /// return types can be converted to `Result<_, EngineError>` via
+    /// `?` or `.map_err(EngineError::from)`.
+    #[error("{0}")]
+    Other(String),
+}
+
+/// Phase C.17: allow `Result<_, String>` to be converted to
+/// `Result<_, EngineError>` via `?` or `.map_err(EngineError::from)`.
+///
+/// This enables incremental migration of the codebase from `String`
+/// errors to `EngineError` without touching every call site at once.
+/// New code should use the specific variants (e.g., `DecoderError`)
+/// rather than relying on this blanket conversion.
+impl From<String> for EngineError {
+    fn from(s: String) -> Self {
+        EngineError::Other(s)
+    }
+}
+
+/// Phase C.17: allow `Result<_, &str>` to be converted too, since
+/// many error literals are `&str`.
+impl From<&str> for EngineError {
+    fn from(s: &str) -> Self {
+        EngineError::Other(s.to_string())
+    }
 }
 
 pub type EngineResult<T> = Result<T, EngineError>;

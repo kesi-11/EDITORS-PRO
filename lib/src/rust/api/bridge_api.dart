@@ -281,6 +281,50 @@ class BridgeExportProgress {
   });
 }
 
+/// Phase C.14: A decoded frame streamed from the Rust engine.
+///
+/// The Rust side pushes these via `StreamSink<BridgeFrame>` when the
+/// Dart side calls `streamFrames(startMs, endMs, fps)`. Each frame
+/// contains raw RGBA bytes (`width * height * 4` bytes) plus the
+/// presentation timestamp.
+///
+/// To display a `BridgeFrame` in Flutter, convert the RGBA bytes to
+/// a `ui.Image` via `dart:ui.Image.fromPixels` (or use the
+/// `image` package to encode to PNG first if targeting older Flutter).
+class BridgeFrame {
+  final int width;
+  final int height;
+  final typed_data.Uint8List data;
+  final int timestampMs;
+  final bool isKeyframe;
+
+  const BridgeFrame({
+    required this.width,
+    required this.height,
+    required this.data,
+    required this.timestampMs,
+    required this.isKeyframe,
+  });
+
+  factory BridgeFrame.fromJson(Map<String, dynamic> json) => BridgeFrame(
+        width: json['width'] as int,
+        height: json['height'] as int,
+        data: typed_data.Uint8List.fromList(
+          (json['data'] as List).cast<int>(),
+        ),
+        timestampMs: json['timestamp_ms'] as int,
+        isKeyframe: json['is_keyframe'] as bool? ?? false,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'width': width,
+        'height': height,
+        'data': data,
+        'timestamp_ms': timestampMs,
+        'is_keyframe': isKeyframe,
+      };
+}
+
 /// Timeline state from the engine
 class TimelineState {
   final List<TrackInfo> tracks;
@@ -1084,6 +1128,38 @@ class EditorsProEngineApi {
       'time_ms': timeMs.toString(),
     });
     return result as typed_data.Uint8List;
+  }
+
+  /// Phase C.14: stream frames from `startMs` to `endMs` at the given `fps`.
+  ///
+  /// Returns a `Stream<BridgeFrame>` that the caller can listen on.
+  /// Each frame is pushed by the Rust side as soon as it's decoded,
+  /// eliminating FFI round-trip latency for preview playback.
+  ///
+  /// **Note**: this method requires real flutter_rust_bridge bindings
+  /// (i.e., `flutter_rust_bridge_codegen generate` has been run). With
+  /// the FFI dispatcher fallback, this method throws `UnimplementedError`
+  /// — use `getFrame` polling as a fallback.
+  ///
+  /// To cancel the stream, cancel the `StreamSubscription` returned by
+  /// `listen()`. The Rust side detects the closed sink and exits.
+  Stream<BridgeFrame> streamFrames({
+    required BigInt startMs,
+    required BigInt endMs,
+    required double fps,
+  }) {
+    // The dispatcher can't pass a StreamSink across plain C FFI, so
+    // this method only works with real flutter_rust_bridge bindings.
+    // When codegen is run, this method will be replaced with a real
+    // implementation that creates a StreamSink and passes it to
+    // `RustLib.instance.api.stream_frames(start_ms, end_ms, fps, sink)`.
+    //
+    // For now, throw UnimplementedError so callers know to fall back
+    // to `getFrame` polling.
+    throw UnimplementedError(
+      'streamFrames requires flutter_rust_bridge_codegen to be run. '
+      'Until then, use getFrame() polling as a fallback.',
+    );
   }
 
   // ─── Export ──────────────────────────────────────────────────────

@@ -347,8 +347,13 @@ impl BufferPool {
 }
 
 impl BufferPoolHandle {
-    /// Return a buffer to the pool
-    fn return_buffer(&self, size_class: SizeClass, data: Vec<u8>) {
+    /// Return a buffer to the pool.
+    ///
+    /// Phase C.15: made `pub` so that `FrameData::Drop` can return its
+    /// `Vec<u8>` to the pool, closing the recycle loop. The `size_class`
+    /// is recomputed from the buffer length, so callers don't need to
+    /// track it themselves.
+    pub fn return_buffer(&self, size_class: SizeClass, data: Vec<u8>) {
         let mut inner = self.inner.lock().unwrap();
 
         let buffers = inner.buffers.entry(size_class).or_insert_with(Vec::new);
@@ -364,6 +369,17 @@ impl BufferPoolHandle {
         self.stats.pooled_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
         self.stats.returns.fetch_add(1, Ordering::Relaxed);
         buffers.push(data);
+    }
+
+    /// Phase C.15: convenience method to return a `Vec<u8>` to the pool
+    /// without manually computing the size class. The size class is
+    /// derived from the buffer's length, so a buffer that was originally
+    /// allocated for an 8 MB frame will be returned to the 8 MB class
+    /// even if it was later resized (as long as it's still in the same
+    /// size-class bucket).
+    pub fn return_vec(&self, data: Vec<u8>) {
+        let size_class = SizeClass::from_size(data.len());
+        self.return_buffer(size_class, data);
     }
 
     /// Release all pooled buffers (forwarded from pool)

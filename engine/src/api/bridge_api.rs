@@ -123,6 +123,51 @@ impl From<ExportProgress> for BridgeExportProgress {
     }
 }
 
+/// Bridge-compatible decoded frame (Phase C.14).
+///
+/// A serializable version of `crate::decoder::FrameData` suitable for
+/// streaming across the flutter_rust_bridge boundary. The raw RGBA
+/// bytes are transferred as `Vec<u8>` (FRB serializes this as a
+/// `Uint8List` on the Dart side, which is a zero-copy view when
+/// possible).
+///
+/// ## Push-based streaming
+///
+/// Rather than the Flutter side polling `get_frame(time_ms)` 30 times
+/// per second (which causes 30 FFI round-trips and 30 mutex locks),
+/// the Rust side can proactively decode the next few frames and push
+/// them via a `StreamSink<BridgeFrame>`. The Flutter side listens on
+/// a `Stream` and renders frames as they arrive.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BridgeFrame {
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// RGBA pixel data (4 bytes per pixel, `width * height * 4` bytes).
+    pub data: Vec<u8>,
+    /// Presentation timestamp in milliseconds.
+    pub timestamp_ms: u64,
+    /// Whether this frame is a keyframe (I-frame).
+    pub is_keyframe: bool,
+}
+
+impl From<crate::decoder::FrameData> for BridgeFrame {
+    fn from(f: crate::decoder::FrameData) -> Self {
+        // `into_data` takes ownership of the Vec without copying, and
+        // clears the `pooled` flag so the buffer isn't returned to the
+        // pool on drop (the bytes are now owned by the BridgeFrame).
+        let data = f.into_data();
+        Self {
+            width: f.width,
+            height: f.height,
+            data,
+            timestamp_ms: f.timestamp_ms,
+            is_keyframe: f.is_keyframe,
+        }
+    }
+}
+
 /// Bridge-compatible export result
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BridgeExportResult {
@@ -395,6 +440,77 @@ impl EditorsProEngineApi {
             // The engine returns a FrameData struct with width, height, and RGBA data.
             let frame_data = engine.get_frame(time_ms).map_err(|e| format!("{}", e))?;
             encode_rgba_to_png(&frame_data.data, frame_data.width, frame_data.height)
+        })
+    }
+
+    /// Phase C.14: stream frames from `start_ms` to `end_ms` at the given
+    /// `fps` via a `StreamSink<BridgeFrame>`.
+    ///
+    /// This is the push-based alternative to calling `get_frame(time_ms)`
+    /// 30 times per second. The Rust side proactively decodes each frame
+    /// and pushes it across the sink, eliminating FFI round-trip latency
+    /// for preview playback.
+    ///
+    /// The method returns once all frames in the range have been pushed
+    /// (or the sink is closed by the Dart side). For non-blocking
+    /// behavior, call this from a background isolate via
+    /// `Isolate.run` / `compute`.
+    ///
+    /// ## Cancellation
+    ///
+    /// The Dart side can cancel the stream by closing the `StreamSink`.
+    /// Each `add()` call returns `false` once the sink is closed; the
+    /// Rust side checks this and exits the loop early.
+    pub fn stream_frames(
+        &self,
+        start_ms: u64,
+        end_ms: u64,
+        fps: f32,
+        frame_sink: flutter_rust_bridge::StreamSink<BridgeFrame>,
+    ) -> Result<u64, String> {
+        if fps <= 0.0 {
+            return Err("fps must be positive".to_string());
+        }
+        if end_ms <= start_ms {
+            return Err("end_ms must be greater than start_ms".to_string());
+        }
+
+        let frame_interval_ms = (1000.0 / fps) as u64;
+        let mut pushed = 0u64;
+        let mut t = start_ms;
+
+        self.with_engine_recovery(|engine| {
+            while t < end_ms {
+                // Decode the frame at time `t`.
+                match engine.get_frame(t) {
+                    Ok(frame_data) => {
+                        // Convert to BridgeFrame (takes ownership of the Vec).
+                        let bridge_frame = BridgeFrame::from(frame_data);
+                        // Push across the sink. If the Dart side has closed
+                        // the stream, `add` returns false and we stop.
+                        if !frame_sink.add(bridge_frame) {
+                            log::info!(
+                                "Phase C.14: stream_frames cancelled by Dart side at {}ms",
+                                t
+                            );
+                            break;
+                        }
+                        pushed += 1;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Phase C.14: stream_frames decode error at {}ms: {}",
+                            t,
+                            e
+                        );
+                        // Continue to the next frame rather than aborting
+                        // the entire stream — a single bad frame shouldn't
+                        // kill playback.
+                    }
+                }
+                t = t.saturating_add(frame_interval_ms);
+            }
+            Ok(pushed)
         })
     }
 
