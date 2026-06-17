@@ -361,6 +361,24 @@ class EditorNotifier extends StateNotifier<EditorState> {
     if (!_engineReady) return;
     final clipId = state.selectedClipId;
     if (clipId == null) return;
+
+    // Phase E.14: refuse to delete a locked clip. The user must unlock
+    // it first via the inspector. This protects pinned clips (titles,
+    // logos, etc.) from accidental deletion.
+    final project = _ref.read(currentProjectProvider);
+    if (project != null) {
+      final clip = project.tracks
+          .expand((t) => t.clips)
+          .cast<ClipModel?>()
+          .firstWhere((c) => c?.id == clipId, orElse: () => null);
+      if (clip != null && clip.locked) {
+        state = state.copyWith(
+          lastError: 'Clip is locked — unlock it first to delete.',
+        );
+        return;
+      }
+    }
+
     try {
       final api = EngineService.instance.api;
       await api.removeClip(clipId: clipId);

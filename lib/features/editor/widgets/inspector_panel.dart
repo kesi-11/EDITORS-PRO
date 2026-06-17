@@ -779,12 +779,35 @@ class _EffectsSectionState extends ConsumerState<_EffectsSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (_effects.isEmpty) ...[
-          Center(
-            child: Text(
-              'No effects applied',
-              style: context.textTheme.bodySmall?.copyWith(
-                color: AppTheme.textDisabled,
-              ),
+          // Phase E.10: improved empty state with icon and guidance.
+          // Previously just showed "No effects applied" with no further
+          // direction. Now the user sees what to do next.
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppTheme.spacing24),
+            child: Column(
+              children: [
+                Icon(
+                  Icons.auto_fix_high_outlined,
+                  size: 48,
+                  color: AppTheme.textDisabled,
+                ),
+                const SizedBox(height: AppTheme.spacing12),
+                Text(
+                  'No effects applied',
+                  style: context.textTheme.bodyMedium?.copyWith(
+                    color: AppTheme.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: AppTheme.spacing4),
+                Text(
+                  'Open the Effects tab in the left panel\nto browse filters, transitions, and more.',
+                  textAlign: TextAlign.center,
+                  style: context.textTheme.bodySmall?.copyWith(
+                    color: AppTheme.textDisabled,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

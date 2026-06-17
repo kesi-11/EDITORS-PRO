@@ -215,6 +215,31 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
     );
   }
 
+  /// Phase E.14: toggle the `locked` flag on a clip. Locked clips
+  /// cannot be moved, trimmed, split, or deleted — they're protected
+  /// from accidental edits. The UI shows a small lock icon on locked
+  /// clips in the timeline.
+  void toggleClipLock(String clipId) {
+    if (state.currentProject == null) return;
+
+    final updatedTracks = state.currentProject!.tracks.map((track) {
+      final updatedClips = track.clips.map((clip) {
+        if (clip.id == clipId) {
+          return clip.copyWith(locked: !clip.locked);
+        }
+        return clip;
+      }).toList();
+      return track.copyWith(clips: updatedClips);
+    }).toList();
+
+    state = state.copyWith(
+      currentProject: state.currentProject!.copyWith(
+        tracks: updatedTracks,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+
   /// Remove a clip
   void removeClip(String clipId) {
     if (state.currentProject == null) return;

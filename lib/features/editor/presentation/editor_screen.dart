@@ -102,6 +102,41 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                             child: const Icon(Icons.tune),
                           ),
                         ),
+                      // Phase E.10: importing overlay — shown whenever
+                      // editorState.isImporting is true. Previously the flag
+                      // was set but no UI surfaced it, leaving the user
+                      // wondering if the app was frozen.
+                      if (editorState.isImporting)
+                        Positioned.fill(
+                          child: Container(
+                            color: Colors.black.withOpacity(0.5),
+                            child: Center(
+                              child: Card(
+                                color: AppTheme.surface,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(AppTheme.spacing24),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const CircularProgressIndicator(
+                                        color: AppTheme.primary,
+                                      ),
+                                      const SizedBox(height: AppTheme.spacing16),
+                                      Text(
+                                        'Importing media…',
+                                        style: TextStyle(
+                                          color: AppTheme.textPrimary,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

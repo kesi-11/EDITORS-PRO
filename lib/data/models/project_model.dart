@@ -138,6 +138,11 @@ class ClipModel {
   final List<EffectModel> effects;
   final TransitionModel? transitionIn;
   final TransitionModel? transitionOut;
+  /// Phase E.14: whether this clip is locked (cannot be moved, trimmed,
+  /// split, or deleted). A small lock icon appears on locked clips in
+  /// the timeline. Useful for protecting key clips (e.g., the opening
+  /// title or the closing logo) from accidental edits.
+  final bool locked;
 
   const ClipModel({
     required this.id,
@@ -151,6 +156,7 @@ class ClipModel {
     this.effects = const [],
     this.transitionIn,
     this.transitionOut,
+    this.locked = false,
   });
 
   ClipModel copyWith({
@@ -165,6 +171,7 @@ class ClipModel {
     List<EffectModel>? effects,
     TransitionModel? transitionIn,
     TransitionModel? transitionOut,
+    bool? locked,
   }) {
     return ClipModel(
       id: id ?? this.id,
@@ -178,6 +185,7 @@ class ClipModel {
       effects: effects ?? this.effects,
       transitionIn: transitionIn ?? this.transitionIn,
       transitionOut: transitionOut ?? this.transitionOut,
+      locked: locked ?? this.locked,
     );
   }
 }
