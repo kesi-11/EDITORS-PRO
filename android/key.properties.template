@@ -1,0 +1,12 @@
+# Phase E.13: Release signing configuration template.
+#
+# Copy this file to `android/key.properties` and fill in the values
+# from your release keystore. The real `key.properties` is gitignored
+# (see .gitignore) — never commit passwords.
+#
+# See docs/RELEASE_SIGNING.md for the full setup walkthrough.
+
+storeFile=/absolute/path/to/editors-pro-upload.jks
+storePassword=your-keystore-password
+keyAlias=upload
+keyPassword=your-key-password

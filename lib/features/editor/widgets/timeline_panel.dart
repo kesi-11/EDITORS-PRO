@@ -139,6 +139,20 @@ class _TimelinePanelState extends ConsumerState<TimelinePanel> {
                                     .read(editorProvider.notifier)
                                     .seekTo(timeMs);
                               },
+                              // Phase E.8: pinch-to-zoom gesture on the timeline.
+                              // The onScaleUpdate callback fires for both pan
+                              // and pinch gestures; we only act when the scale
+                              // has changed by a meaningful threshold (>1%)
+                              // to avoid jitter from sub-pixel noise.
+                              onScaleUpdate: (details) {
+                                if ((details.scale - 1.0).abs() < 0.01) return;
+                                final notifier = ref.read(editorProvider.notifier);
+                                final currentZoom = editorState.zoomLevel;
+                                // Scale >1 means zoom in, <1 means zoom out.
+                                // Multiply rather than add so the gesture
+                                // feels proportional to finger distance.
+                                notifier.setZoom(currentZoom * details.scale);
+                              },
                               child: SizedBox(
                                 width: totalWidth,
                                 child: Stack(

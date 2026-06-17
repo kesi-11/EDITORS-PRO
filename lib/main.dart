@@ -6,12 +6,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
+import 'core/services/crash_reporter.dart';
 import 'core/services/engine_service.dart';
 import 'core/services/performance_service.dart';
 import 'features/onboarding/providers/onboarding_provider.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Phase E.12: wire the crash reporter into Flutter's global error
+  // handlers. By default this uses LocalCrashBackend (console + in-memory
+  // ring buffer). To enable Sentry/Crashlytics, call
+  // `CrashReporter.instance.init(SentryCrashBackend())` before `main()`
+  // runs — see lib/core/services/crash_reporter.dart for examples.
 
   // ─── Flutter error handler ────────────────────────────────
   FlutterError.onError = (details) {
@@ -22,6 +29,13 @@ void main() {
       error: details.exception,
       stackTrace: details.stack,
     );
+    // Forward to crash reporter (non-blocking).
+    CrashReporter.instance.reportError(
+      details.exception,
+      details.stack,
+      context: {'library': details.library ?? 'unknown'},
+      level: CrashLevel.error,
+    );
   };
 
   // ─── Async error handler ──────────────────────────────────
@@ -31,6 +45,14 @@ void main() {
       name: 'AsyncError',
       error: error,
       stackTrace: stack,
+    );
+    // Forward to crash reporter. Async errors that escape the Flutter
+    // framework are typically fatal — use the `fatal` level so they
+    // get priority in the backend's dashboard.
+    CrashReporter.instance.reportError(
+      error,
+      stack,
+      level: CrashLevel.fatal,
     );
     return true;
   };

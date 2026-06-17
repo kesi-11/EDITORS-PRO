@@ -85,6 +85,23 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                         right: 58,
                         child: const ProxyStatusBadge(),
                       ),
+                      // Phase E.9: on narrow screens, show a floating action
+                      // button that opens the InspectorPanel as a draggable
+                      // bottom sheet. Without this, phone users have no way
+                      // to edit clip properties.
+                      if (isNarrowScreen)
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: FloatingActionButton.small(
+                            heroTag: 'inspector_fab',
+                            tooltip: 'Inspector',
+                            backgroundColor: AppTheme.primary,
+                            foregroundColor: Colors.white,
+                            onPressed: () => _showInspectorBottomSheet(context),
+                            child: const Icon(Icons.tune),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -103,6 +120,80 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
           const TimelinePanel(),
         ],
       ),
+    );
+  }
+
+  /// Phase E.9: show the InspectorPanel as a draggable bottom sheet
+  /// on narrow screens (phones). This is the same widget used in the
+  /// right-hand panel on tablets — no duplicate UI to maintain.
+  void _showInspectorBottomSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppTheme.radiusXLarge),
+        ),
+      ),
+      builder: (sheetContext) {
+        // Wrap in a DraggableScrollableSheet so the user can drag
+        // the sheet up to full height and back down to dismiss.
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.3,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (_, scrollController) {
+            return Column(
+              children: [
+                // Drag handle
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppTheme.textDisabled,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                // Header
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTheme.spacing16,
+                  ),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Inspector',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                // Inspector content (scrollable)
+                Expanded(
+                  child: SingleChildScrollView(
+                    controller: scrollController,
+                    padding: const EdgeInsets.all(AppTheme.spacing16),
+                    child: const InspectorPanel(),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
