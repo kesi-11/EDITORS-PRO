@@ -4,7 +4,7 @@
 //! LRU cache, zero-copy pipeline, and priority scheduler modules.
 
 use crate::system::buffer_pool::{BufferPool, BufferPoolConfig};
-use crate::system::lru_cache::{LruCache, LruCacheConfig};
+use crate::storage::lru_cache::{LruCache, LruCacheConfig};
 use crate::system::profiler::{
     FrameTimer, Profiler, SpanGuard, ThroughputTracker, format_duration_ns,
     is_profiling_enabled, set_profiling_enabled, span, span_if_enabled,

@@ -48,10 +48,13 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        // arm64-v8a only for initial release (covers 99% of modern Android devices)
-        // armeabi-v7a and x86_64 can be added in follow-up releases if needed
+        // Phase B.9: include x86_64 in addition to arm64-v8a so the app
+        // runs on Android emulators for development. armeabi-v7a is
+        // intentionally excluded — it covers <1% of modern devices and
+        // doubles the Rust .so build time. Re-enable in a follow-up if
+        // legacy 32-bit ARM support is needed.
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
 
         // Rust library loading
@@ -102,9 +105,14 @@ kotlin {
 }
 
 dependencies {
-    // ExoPlayer for video playback (fallback)
-    implementation("com.google.android.exoplayer:exoplayer:2.19.1")
-    implementation("com.google.android.exoplayer:exoplayer-ui:2.19.1")
+    // Phase B.9: Migrated from the deprecated `com.google.android.exoplayer`
+    // artifact (last release June 2023) to its successor `androidx.media3`.
+    // The ProGuard rules already referenced `androidx.media3.**`, so the
+    // migration is now consistent end-to-end.
+    // Media3 1.5.1 requires compileSdk 35 (already set above) and
+    // Java 17 (also already set in compileOptions).
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-ui:1.5.1")
 }
 
 flutter {

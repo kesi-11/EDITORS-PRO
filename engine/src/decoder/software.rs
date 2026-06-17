@@ -17,6 +17,15 @@ pub struct SoftwareDecoder {
     video_info: Option<VideoInfo>,
     is_open: bool,
     current_position_ms: u64,
+    /// Phase B fix: cache the FFmpeg scaler so we don't recreate it on
+    /// every `decode_next_frame()` call. Recreating a scaler per frame
+    /// at 30fps = 30 scaler constructions/sec, which is wasteful.
+    /// The scaler is invalidated when the input format/dimensions change.
+    scaler: Option<ffmpeg::software::scaling::context::Context>,
+    /// Cached input format used to detect when the scaler must be rebuilt.
+    scaler_src_format: Option<ffmpeg::format::Pixel>,
+    scaler_src_width: u32,
+    scaler_src_height: u32,
 }
 
 #[cfg(feature = "ffmpeg")]
@@ -29,6 +38,10 @@ impl SoftwareDecoder {
             video_info: None,
             is_open: false,
             current_position_ms: 0,
+            scaler: None,
+            scaler_src_format: None,
+            scaler_src_width: 0,
+            scaler_src_height: 0,
         }
     }
 
@@ -51,7 +64,24 @@ impl SoftwareDecoder {
 
         let frame_rate = video_stream.avg_frame_rate();
         let fps = frame_rate.numerator() as f32 / frame_rate.denominator().max(1) as f32;
-        let duration_ms = format_context.duration() as u64 * 1000 / ffmpeg::sys::AV_TIME_BASE as u64;
+
+        // Phase A fix: guard against AV_NOPTS_VALUE (defined as INT64_MIN in
+        // libavutil) which would overflow when cast to u64 and multiplied by
+        // 1000. We compare against the literal value to avoid depending on
+        // whether `ffmpeg::sys::AV_NOPTS_VALUE` is exposed as a `i64` const
+        // vs. a `u64` const across ffmpeg-sys-next versions.
+        const AV_NOPTS_VALUE: i64 = i64::MIN;
+        let container_duration = format_context.duration();
+        let duration_ms: u64 = if container_duration > 0
+            && container_duration != AV_NOPTS_VALUE
+        {
+            (container_duration as u64)
+                .saturating_mul(1000)
+                .checked_div(ffmpeg::sys::AV_TIME_BASE as u64)
+                .unwrap_or(0)
+        } else {
+            0
+        };
 
         let audio_stream = format_context.streams()
             .find(|s| s.parameters().medium() == ffmpeg::media::Type::Audio);
@@ -92,8 +122,48 @@ impl SoftwareDecoder {
         self.decoder = Some(decoder);
         self.video_info = Some(video_info);
         self.is_open = true;
+        // Invalidate any cached scaler from a previously-opened file.
+        self.scaler = None;
+        self.scaler_src_format = None;
+        self.scaler_src_width = 0;
+        self.scaler_src_height = 0;
 
         Ok(())
+    }
+
+    /// Return a scaler suitable for the decoder's current output format,
+    /// rebuilding it only when the source format/dimensions change.
+    /// Phase B optimization: avoids creating a fresh scaler per frame.
+    fn scaler_for_current_decoder(
+        &mut self,
+    ) -> Result<&mut ffmpeg::software::scaling::context::Context, String> {
+        let decoder = self.decoder.as_ref().ok_or("No decoder")?;
+        let src_format = decoder.format();
+        let src_width = decoder.width();
+        let src_height = decoder.height();
+
+        let needs_rebuild = self.scaler.is_none()
+            || self.scaler_src_format != Some(src_format)
+            || self.scaler_src_width != src_width
+            || self.scaler_src_height != src_height;
+
+        if needs_rebuild {
+            let new_scaler = ffmpeg::software::scaling::context::Context::get(
+                src_format,
+                src_width,
+                src_height,
+                ffmpeg::format::Pixel::RGBA,
+                src_width,
+                src_height,
+                ffmpeg::software::scaling::Flags::BILINEAR,
+            ).map_err(|e| format!("Scaler error: {}", e))?;
+            self.scaler = Some(new_scaler);
+            self.scaler_src_format = Some(src_format);
+            self.scaler_src_width = src_width;
+            self.scaler_src_height = src_height;
+        }
+
+        Ok(self.scaler.as_mut().expect("scaler was just initialized"))
     }
 
     /// Seek to a specific timestamp in milliseconds
@@ -124,19 +194,8 @@ impl SoftwareDecoder {
 
         let format_context = self.format_context.as_mut().ok_or("Not open")?;
         let video_idx = self.video_stream_index.ok_or("No video stream")?;
-        let decoder = self.decoder.as_mut().ok_or("No decoder")?;
         let stream = format_context.streams().get(video_idx).ok_or("Stream not found")?;
         let tb = stream.time_base();
-
-        let mut scaler = ffmpeg::software::scaling::context::Context::get(
-            decoder.format(),
-            decoder.width(),
-            decoder.height(),
-            ffmpeg::format::Pixel::RGBA,
-            decoder.width(),
-            decoder.height(),
-            ffmpeg::software::scaling::Flags::BILINEAR,
-        ).map_err(|e| format!("Scaler error: {}", e))?;
 
         let mut decoded = ffmpeg::util::frame::Video::empty();
         let mut scaled = ffmpeg::util::frame::Video::empty();
@@ -146,6 +205,7 @@ impl SoftwareDecoder {
                 continue;
             }
 
+            let decoder = self.decoder.as_mut().ok_or("No decoder")?;
             decoder.send_packet(&packet)
                 .map_err(|e| format!("Send packet error: {}", e))?;
 
@@ -153,6 +213,8 @@ impl SoftwareDecoder {
                 let pts_ms = (decoded.pts().unwrap_or(0) as i64 * tb.numerator() as i64 * 1000)
                     / tb.denominator().max(1) as i64;
 
+                // Phase B: use cached scaler instead of recreating per frame.
+                let scaler = self.scaler_for_current_decoder()?;
                 scaler.run(&decoded, &mut scaled)
                     .map_err(|e| format!("Scale error: {}", e))?;
 
@@ -212,6 +274,11 @@ impl SoftwareDecoder {
         self.decoder = None;
         self.video_info = None;
         self.is_open = false;
+        // Phase B: drop cached scaler along with the decoder.
+        self.scaler = None;
+        self.scaler_src_format = None;
+        self.scaler_src_width = 0;
+        self.scaler_src_height = 0;
         log::info!("Software decoder closed");
     }
 }

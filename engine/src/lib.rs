@@ -3,19 +3,23 @@
 //! Native video editing engine built in Rust for maximum performance
 //! and memory safety. Designed to be called from Flutter via bridge.
 
+pub mod analysis;
 pub mod api;
 pub mod audio;
 pub mod cloud;
 pub mod decoder;
 pub mod effects;
 pub mod export_engine;
+pub mod pipeline;
 pub mod project;
 pub mod proxy;
 pub mod renderer;
+pub mod storage;
 pub mod subtitle;
 pub mod system;
 pub mod template;
 pub mod timeline;
+pub mod utils;
 
 #[cfg(test)]
 mod tests;

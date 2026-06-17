@@ -19,6 +19,35 @@ class AppSettings {
   final int cacheSizeMb;
   final bool hardwareDecoding;
 
+  // ─── Experimental feature flags (Phase B.7) ───────────────────────────
+  //
+  // These gate features whose UI is shipping but whose Rust-side
+  // implementation is a placeholder. Users can opt in via
+  // Settings > Experimental. See `AUDIT_REPORT.md` §1.4-1.5 for the
+  // rationale.
+
+  /// Enable the "Auto Captions" UI button.
+  //
+  // The Rust `audio/transcription.rs` is a simulation that generates
+  // placeholder segments. Real Whisper integration is Phase D work
+  // (`whisper-rs` crate). Until then, this flag is `false` by default
+  // so users aren't shown a button that does nothing useful.
+  final bool experimentalAutoCaptions;
+
+  /// Enable the Cloud Sync screen.
+  //
+  // `engine/src/cloud/provider.rs::PlaceholderCloudProvider` returns
+  // "Cloud sync not yet implemented" for every operation. Real Google
+  // Drive sync is Phase D work. Until then, this flag is `false` by
+  // default so the cloud tab is hidden from regular users.
+  final bool experimentalCloudSync;
+
+  /// Enable the AI Background Removal effect.
+  //
+  // Phase D will port U²-Net to ONNX Runtime. Until then, this flag
+  // is `false` by default.
+  final bool experimentalAiBackgroundRemoval;
+
   const AppSettings({
     this.defaultResolution = '1080p',
     this.defaultCodec = 'H.264',
@@ -31,6 +60,9 @@ class AppSettings {
     this.proxyQuality = '480p',
     this.cacheSizeMb = 500,
     this.hardwareDecoding = true,
+    this.experimentalAutoCaptions = false,
+    this.experimentalCloudSync = false,
+    this.experimentalAiBackgroundRemoval = false,
   });
 
   AppSettings copyWith({
@@ -45,6 +77,9 @@ class AppSettings {
     String? proxyQuality,
     int? cacheSizeMb,
     bool? hardwareDecoding,
+    bool? experimentalAutoCaptions,
+    bool? experimentalCloudSync,
+    bool? experimentalAiBackgroundRemoval,
   }) {
     return AppSettings(
       defaultResolution: defaultResolution ?? this.defaultResolution,
@@ -62,6 +97,13 @@ class AppSettings {
       proxyQuality: proxyQuality ?? this.proxyQuality,
       cacheSizeMb: cacheSizeMb ?? this.cacheSizeMb,
       hardwareDecoding: hardwareDecoding ?? this.hardwareDecoding,
+      experimentalAutoCaptions:
+          experimentalAutoCaptions ?? this.experimentalAutoCaptions,
+      experimentalCloudSync:
+          experimentalCloudSync ?? this.experimentalCloudSync,
+      experimentalAiBackgroundRemoval:
+          experimentalAiBackgroundRemoval ??
+              this.experimentalAiBackgroundRemoval,
     );
   }
 }
@@ -86,6 +128,14 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   static const _keyCacheSizeMb = 'settings_cache_size_mb';
   static const _keyHardwareDecoding = 'settings_hardware_decoding';
 
+  // Phase B.7: experimental feature flag keys.
+  static const _keyExperimentalAutoCaptions =
+      'settings_experimental_auto_captions';
+  static const _keyExperimentalCloudSync =
+      'settings_experimental_cloud_sync';
+  static const _keyExperimentalAiBackgroundRemoval =
+      'settings_experimental_ai_bg_removal';
+
   SettingsNotifier(this._prefs) : super(const AppSettings()) {
     _loadFromPrefs();
   }
@@ -108,6 +158,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       cacheSizeMb: _prefs.getInt(_keyCacheSizeMb) ?? 500,
       hardwareDecoding:
           _prefs.getBool(_keyHardwareDecoding) ?? true,
+      experimentalAutoCaptions:
+          _prefs.getBool(_keyExperimentalAutoCaptions) ?? false,
+      experimentalCloudSync:
+          _prefs.getBool(_keyExperimentalCloudSync) ?? false,
+      experimentalAiBackgroundRemoval:
+          _prefs.getBool(_keyExperimentalAiBackgroundRemoval) ?? false,
     );
   }
 
@@ -166,6 +222,23 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setHardwareDecoding(bool enabled) async {
     await _prefs.setBool(_keyHardwareDecoding, enabled);
     state = state.copyWith(hardwareDecoding: enabled);
+  }
+
+  // ─── Experimental feature flag mutators (Phase B.7) ────────────────
+
+  Future<void> setExperimentalAutoCaptions(bool enabled) async {
+    await _prefs.setBool(_keyExperimentalAutoCaptions, enabled);
+    state = state.copyWith(experimentalAutoCaptions: enabled);
+  }
+
+  Future<void> setExperimentalCloudSync(bool enabled) async {
+    await _prefs.setBool(_keyExperimentalCloudSync, enabled);
+    state = state.copyWith(experimentalCloudSync: enabled);
+  }
+
+  Future<void> setExperimentalAiBackgroundRemoval(bool enabled) async {
+    await _prefs.setBool(_keyExperimentalAiBackgroundRemoval, enabled);
+    state = state.copyWith(experimentalAiBackgroundRemoval: enabled);
   }
 }
 

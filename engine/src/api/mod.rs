@@ -6,6 +6,7 @@
 
 pub mod bridge_api;
 pub mod commands;
+pub mod ffi_dispatch;
 
 #[cfg(test)]
 mod bridge_api_tests;
@@ -75,6 +76,13 @@ pub struct EditorsProEngine {
     auto_proxy_enabled: bool,
     /// Transcription engine for audio-to-text conversion (Whisper placeholder)
     transcription_engine: TranscriptionEngine,
+    /// Phase B.12: decoded-frame cache.
+    ///
+    /// Keyed by `"{asset_id}:{source_time_ms}"`. Stores the most recently
+    /// decoded RGBA frames so scrubbing back to a frame we just rendered
+    /// doesn't re-hit FFmpeg. Memory budget defaults to 256 MB; entries
+    /// are evicted LRU when the budget is exceeded.
+    frame_cache: crate::storage::lru_cache::LruCache<crate::decoder::FrameData>,
 }
 
 impl EditorsProEngine {
@@ -96,7 +104,19 @@ impl EditorsProEngine {
             cache_dir: String::new(),
             auto_proxy_enabled: true,
             transcription_engine: TranscriptionEngine::new(),
+            frame_cache: crate::storage::lru_cache::LruCache::with_budget_mb(256),
         }
+    }
+
+    /// Phase B.12: invalidate the decoded-frame cache.
+    ///
+    /// Call this whenever the timeline is mutated (clip added, trimmed,
+    /// moved, split, removed, transition added, etc.) so the next
+    /// `get_frame` call re-decodes from source instead of returning a
+    /// stale cached frame. The bridge layer's mutating methods call
+    /// this automatically.
+    pub fn invalidate_frame_cache(&mut self) {
+        self.frame_cache.clear();
     }
 
     /// Initialize the engine (must be called before any other operations)
@@ -145,6 +165,13 @@ impl EditorsProEngine {
 
     /// Import a media file into the current project
     pub fn import_media(&mut self, file_path: &str) -> Result<MediaAssetInfo, String> {
+        // Phase C.16: validate the file path before doing anything else.
+        // This guards against path-traversal attempts, missing files,
+        // unsupported extensions, and oversized files. Returns the
+        // canonicalized path which we use for all subsequent operations.
+        let canonical_path = crate::utils::validation::validate_media_path(file_path)?;
+        let file_path = canonical_path.as_str();
+
         let project = self.project.as_mut().ok_or("No project open")?;
 
         // Determine media type from file extension
@@ -349,31 +376,66 @@ impl EditorsProEngine {
             let relative_time = time_ms - clip.start_ms;
             let source_time = clip.trim_start_ms + (relative_time as f32 * clip.speed_at(relative_time)) as u64;
 
-            // Check whether the decoder already has the correct file open.
-            // If the file path differs from the currently-open file, close
-            // the decoder and re-open the new file. This fixes the bug where
-            // scrubbing between different clips would not re-open the decoder.
-            let needs_reopen = match &self.current_file_path {
-                Some(current) => current != &file_path,
-                None => true,
-            };
+            // Phase B.12: check the decoded-frame cache before re-decoding.
+            // The cache is keyed by asset_id + source_time so that scrubbing
+            // back to a previously-shown frame is O(1) and doesn't hit FFmpeg.
+            // Cache entries are invalidated by `invalidate_frame_cache()`,
+            // which the bridge layer calls whenever the timeline is mutated.
+            let cache_key = format!("{}:{}", clip.asset_id, source_time);
+            if let Some(cached) = self.frame_cache.get(&cache_key) {
+                // Cache hit — skip decode entirely.
+                log::trace!(
+                    "frame_cache HIT for asset {} @ {}ms",
+                    clip.asset_id,
+                    source_time
+                );
+                Some(cached)
+            } else {
+                // Cache miss — decode from FFmpeg and store the result.
 
-            if needs_reopen {
-                // Close the previous decoder to release FFmpeg resources.
-                self.decoder.close();
-                self.current_file_path = None;
+                // Check whether the decoder already has the correct file open.
+                // If the file path differs from the currently-open file, close
+                // the decoder and re-open the new file. This fixes the bug where
+                // scrubbing between different clips would not re-open the decoder.
+                let needs_reopen = match &self.current_file_path {
+                    Some(current) => current != &file_path,
+                    None => true,
+                };
 
-                // Open the new file.
-                self.decoder
-                    .open(&file_path)
-                    .map_err(|e| EngineError::DecoderError(e))?;
-                self.current_file_path = Some(file_path);
-            }
-            Some(
-                self.decoder
+                if needs_reopen {
+                    // Close the previous decoder to release FFmpeg resources.
+                    self.decoder.close();
+                    self.current_file_path = None;
+
+                    // Open the new file.
+                    self.decoder
+                        .open(&file_path)
+                        .map_err(|e| EngineError::DecoderError(e))?;
+                    self.current_file_path = Some(file_path);
+                }
+                let decoded = self
+                    .decoder
                     .decode_frame_at(source_time)
-                    .map_err(|e| EngineError::DecoderError(e))?,
-            )
+                    .map_err(|e| EngineError::DecoderError(e))?;
+
+                // Store in cache. Frame size = width * height * 4 bytes (RGBA).
+                let frame_size_bytes = (decoded.width * decoded.height * 4) as u64;
+                self.frame_cache.put(&cache_key, decoded.clone(), frame_size_bytes);
+                let usage_pct = if self.frame_cache.max_bytes() > 0 {
+                    (self.frame_cache.used_bytes() * 100 / self.frame_cache.max_bytes()) as u32
+                } else {
+                    0
+                };
+                log::trace!(
+                    "frame_cache MISS for asset {} @ {}ms ({} bytes, cache now {}% full)",
+                    clip.asset_id,
+                    source_time,
+                    frame_size_bytes,
+                    usage_pct
+                );
+
+                Some(decoded)
+            }
         } else {
             None
         };

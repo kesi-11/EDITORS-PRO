@@ -20,6 +20,10 @@ dependencies:
   # Rust Bridge
   flutter_rust_bridge: ^2.9.0
 
+  # FFI (Phase A.1: used by lib/src/rust/frb_generated.dart to call into
+  # the C ABI exposed by engine/src/api/ffi_dispatch.rs).
+  ffi: ^2.1.3
+
   # Database (local)
   drift: ^2.22.1
   sqlite3_flutter_libs: ^0.5.28
@@ -36,13 +40,9 @@ dependencies:
 
   # UI utilities
   cupertino_icons: ^1.0.8
-  google_fonts: ^6.2.1
   flutter_animate: ^4.5.2
   shimmer: ^3.0.0
   flutter_svg: ^2.0.10+1
-
-  # Media
-  video_thumbnail: ^0.5.5
 
   # Persistence
   shared_preferences: ^2.3.4

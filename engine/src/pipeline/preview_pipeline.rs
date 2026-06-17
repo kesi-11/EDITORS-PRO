@@ -200,7 +200,8 @@ impl PreviewPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::track::{Track, TrackType};
+    use crate::timeline::track::{Track, TrackType};
+    use crate::timeline::Timeline;
 
     fn make_project() -> Project {
         let mut project = Project::new("Preview Test");

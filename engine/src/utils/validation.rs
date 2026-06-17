@@ -201,6 +201,116 @@ pub fn validate_effect_count(count: usize) -> Result<(), String> {
     Ok(())
 }
 
+// ─── Media path validation (Phase C.16) ──────────────────────────────────────
+
+/// Maximum allowed media file size: 4 GB.
+///
+/// This is enforced to prevent accidental import of huge files that
+/// would OOM the device. The threshold is generous enough to allow
+/// 4K 60fps ProRes clips (which can easily exceed 1 GB/minute) but
+/// catches runaway imports of corrupted or misidentified files.
+pub const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Allowed media file extensions (lowercase, no leading dot).
+///
+/// The list is intentionally permissive — it covers every container
+/// FFmpeg can demux for the codecs we support.
+pub const ALLOWED_MEDIA_EXTENSIONS: &[&str] = &[
+    // Video containers
+    "mp4", "mov", "mkv", "webm", "avi", "m4v", "wmv", "flv", "3gp", "mpg", "mpeg", "ts",
+    // Audio-only files (we support audio import too)
+    "mp3", "wav", "aac", "m4a", "ogg", "flac", "opus", "wma",
+    // Image files (for image clips)
+    "png", "jpg", "jpeg", "webp", "bmp", "gif",
+];
+
+/// Validate a media file path before importing it into the engine.
+///
+/// Checks performed:
+/// 1. The path is non-empty and not longer than 4096 chars.
+/// 2. The path does not contain `..` traversal segments.
+/// 3. The file exists on disk.
+/// 4. The file extension is in the allowlist.
+/// 5. The file size is under `MAX_MEDIA_FILE_SIZE_BYTES`.
+///
+/// Returns the canonicalized path on success, or an error string
+/// explaining which check failed.
+///
+/// # Security
+///
+/// This guards against path-traversal attacks where a malicious
+/// content URI or user-supplied path attempts to escape the app's
+/// scoped storage. See AUDIT_REPORT.md §9.2.
+pub fn validate_media_path(file_path: &str) -> Result<String, String> {
+    if file_path.is_empty() {
+        return Err("Media path is empty".to_string());
+    }
+    if file_path.len() > 4096 {
+        return Err(format!(
+            "Media path is too long ({} chars, max 4096)",
+            file_path.len()
+        ));
+    }
+
+    // Reject any path containing `..` segments — these are almost always
+    // either a path-traversal attempt or a mistake.
+    let normalized = file_path.replace('\\', "/");
+    for segment in normalized.split('/') {
+        if segment == ".." {
+            return Err(format!(
+                "Media path contains a '..' traversal segment: {}",
+                file_path
+            ));
+        }
+    }
+
+    // Verify the file exists.
+    let path = std::path::Path::new(file_path);
+    if !path.exists() {
+        return Err(format!("Media file does not exist: {}", file_path));
+    }
+
+    // Check the extension.
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+    if ext.is_empty() {
+        return Err(format!(
+            "Media file has no extension (expected one of: {})",
+            ALLOWED_MEDIA_EXTENSIONS.join(", ")
+        ));
+    }
+    if !ALLOWED_MEDIA_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!(
+            "Media file extension '.{}' is not supported (allowed: {})",
+            ext,
+            ALLOWED_MEDIA_EXTENSIONS.join(", ")
+        ));
+    }
+
+    // Check the file size.
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("Failed to read file metadata: {}", e))?;
+    if metadata.len() > MAX_MEDIA_FILE_SIZE_BYTES {
+        return Err(format!(
+            "Media file is too large: {} bytes (max: {})",
+            metadata.len(),
+            MAX_MEDIA_FILE_SIZE_BYTES
+        ));
+    }
+
+    // Return the canonicalized path so callers can be sure they're
+    // working with an absolute, normalized path.
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|e| format!("Failed to canonicalize path: {}", e))?;
+    canonical
+        .to_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Canonicalized path is not valid UTF-8".to_string())
+}
+
 // ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]

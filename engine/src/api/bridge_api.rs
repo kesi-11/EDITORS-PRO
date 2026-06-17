@@ -472,6 +472,18 @@ impl EditorsProEngineApi {
         })
     }
 
+    /// Phase B.12: invalidate the decoded-frame cache.
+    ///
+    /// Flushes all cached RGBA frames so the next `get_frame` call
+    /// re-decodes from source. Useful when a media file has been
+    /// modified on disk, or as a manual "force refresh" trigger.
+    pub fn invalidate_frame_cache(&self) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.invalidate_frame_cache();
+            Ok(())
+        })
+    }
+
     /// Undo the last action.
     pub fn undo(&self) -> Result<(), String> {
         self.with_engine_recovery(|engine| engine.undo())

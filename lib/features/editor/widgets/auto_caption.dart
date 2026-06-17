@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/extensions/context_extensions.dart';
+import '../../settings/providers/settings_provider.dart';
 import '../providers/transcription_provider.dart';
 
 /// Available language options for transcription
@@ -79,6 +80,18 @@ class _AutoCaptionState extends ConsumerState<AutoCaption> {
 
   @override
   Widget build(BuildContext context) {
+    // Phase B.7: hide the Auto Caption UI entirely unless the user has
+    // opted in via Settings > Experimental > Auto Captions. The Rust
+    // transcription engine is a simulation that produces placeholder
+    // segments; exposing the UI without real Whisper integration would
+    // mislead users. See AUDIT_REPORT.md §1.4.
+    final autoCaptionsEnabled = ref.watch(
+      settingsProvider.select((s) => s.experimentalAutoCaptions),
+    );
+    if (!autoCaptionsEnabled) {
+      return const SizedBox.shrink();
+    }
+
     final transcriptionState = ref.watch(transcriptionProvider);
 
     return Container(

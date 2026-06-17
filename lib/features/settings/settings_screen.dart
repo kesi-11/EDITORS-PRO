@@ -422,8 +422,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           const SizedBox(height: 24),
 
-          // ─── Cloud Sync ────────────────────────────────────────
-          _SectionHeader(title: 'Cloud Sync'),
+          // ─── Cloud Sync (Phase B.7: gated behind experimental flag) ───
+          // The entire Cloud Sync section is hidden when the experimental
+          // flag is off, since the Rust backend is a placeholder.
+          if (settings.experimentalCloudSync) ...[
+            _SectionHeader(title: 'Cloud Sync'),
           _SettingsCard(
             children: [
               _SettingsDropdown(
@@ -504,7 +507,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ],
           ),
 
-          const SizedBox(height: 24),
+            const SizedBox(height: 24),
+          ],
 
           // ─── Privacy & Data ────────────────────────────────
           _SectionHeader(title: 'Privacy & Data'),
@@ -522,6 +526,42 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 subtitle: 'Share anonymous usage data to improve features',
                 value: settings.analyticsEnabled,
                 onChanged: (v) => settingsNotifier.setAnalytics(v),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 32),
+
+          // ─── Experimental (Phase B.7) ──────────────────────
+          // Features whose UI ships but whose Rust-side implementation
+          // is a placeholder. Defaults to OFF so regular users never
+          // see broken behavior. See AUDIT_REPORT.md §1.4-1.5.
+          _SectionHeader(title: 'Experimental'),
+          _SettingsCard(
+            children: [
+              _SettingsSwitch(
+                label: 'Auto Captions',
+                subtitle:
+                    'Enable transcription UI (currently simulated; real Whisper coming in Phase D)',
+                value: settings.experimentalAutoCaptions,
+                onChanged: (v) => settingsNotifier.setExperimentalAutoCaptions(v),
+              ),
+              const Divider(height: 1),
+              _SettingsSwitch(
+                label: 'Cloud Sync',
+                subtitle:
+                    'Show the Cloud tab (placeholder backend; Google Drive coming in Phase D)',
+                value: settings.experimentalCloudSync,
+                onChanged: (v) => settingsNotifier.setExperimentalCloudSync(v),
+              ),
+              const Divider(height: 1),
+              _SettingsSwitch(
+                label: 'AI Background Removal',
+                subtitle:
+                    'Enable U²-Net effect (not yet wired; ONNX Runtime coming in Phase D)',
+                value: settings.experimentalAiBackgroundRemoval,
+                onChanged: (v) =>
+                    settingsNotifier.setExperimentalAiBackgroundRemoval(v),
               ),
             ],
           ),

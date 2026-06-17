@@ -265,7 +265,7 @@ fn bench_buffer_pool(c: &mut Criterion) {
 // ─── LRU Cache ────────────────────────────────────────────────────
 
 fn bench_lru_cache(c: &mut Criterion) {
-    use editors_pro_engine::system::lru_cache::{LruCache, LruCacheConfig};
+    use editors_pro_engine::storage::lru_cache::{LruCache, LruCacheConfig};
 
     let mut group = c.benchmark_group("lru_cache");
 

@@ -167,8 +167,21 @@ impl AudioDecoder {
                 * 1000.0
                 * f64::from(audio_stream.time_base())) as u64;
         } else {
-            // Fallback: estimate from format duration
-            self.duration_ms = input.duration() as u64 * 1000 / ff::sys::AV_TIME_BASE as u64;
+            // Fallback: estimate from format duration.
+            // Phase A fix: guard against AV_NOPTS_VALUE (INT64_MIN) which
+            // would overflow on `as u64` + `* 1000`.
+            const AV_NOPTS_VALUE: i64 = i64::MIN;
+            let container_duration = input.duration();
+            self.duration_ms = if container_duration > 0
+                && container_duration != AV_NOPTS_VALUE
+            {
+                (container_duration as u64)
+                    .saturating_mul(1000)
+                    .checked_div(ff::sys::AV_TIME_BASE as u64)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
         }
 
         self.file_path = Some(file_path.to_string());

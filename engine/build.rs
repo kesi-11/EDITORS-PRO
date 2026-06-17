@@ -1,43 +1,27 @@
 //! Build script for editors-pro-engine.
 //!
-//! Generates C header files for the FFI bridge using cbindgen.
-//! When the `ffmpeg` feature is enabled for Android cross-compilation,
-//! configures the correct library search paths.
+//! Previously this file ran `cbindgen` to generate C headers for an FFI
+//! bridge. As of Phase A of the upgrade plan, cbindgen has been removed
+//! because `flutter_rust_bridge` v2 generates its own bindings from the
+//! Rust source directly — there is no need for a separate C header.
+//!
+//! The only remaining responsibility of this build script is to wire up
+//! FFmpeg library search paths when cross-compiling for Android with the
+//! `ffmpeg` feature enabled.
 
 fn main() {
-    // Only generate headers if cbindgen is available and we're not
-    // in a check/build that doesn't need it.
+    // docs.rs builds don't need any linker configuration.
     if std::env::var("DOCS_RS").is_ok() {
         return;
     }
 
-    let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-
-    match cbindgen::Builder::new()
-        .with_crate(&crate_dir)
-        .with_language(cbindgen::Language::C)
-        .generate()
-    {
-        Ok(bindings) => {
-            let out_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| "target".to_string());
-            let header_path = format!("{}/editors_pro_engine.h", out_dir);
-            bindings.write_to_file(&header_path);
-            println!("cargo:warning=Generated C header: {}", header_path);
-        }
-        Err(e) => {
-            // cbindgen may fail if the crate doesn't compile yet.
-            // This is not a hard error for the build.
-            println!("cargo:warning=cbindgen failed: {}", e);
-        }
-    }
-
-    // When building for Android with FFmpeg, set up library paths
+    // When building for Android with FFmpeg, set up library paths.
     let target = std::env::var("TARGET").unwrap_or_default();
     if target.contains("android") && std::env::var("CARGO_FEATURE_FFMPEG").is_ok() {
         // Check for FFMPEG_DIR environment variable
         if let Ok(ffmpeg_dir) = std::env::var("FFMPEG_DIR") {
             let ffmpeg_path = std::path::Path::new(&ffmpeg_dir);
-            
+
             // Add library search path
             let lib_dir = ffmpeg_path.join("lib");
             if lib_dir.exists() {
@@ -65,4 +49,8 @@ fn main() {
             println!("cargo:warning=Or build without FFmpeg: cargo ndk -t arm64-v8a build --release --no-default-features");
         }
     }
+
+    // Re-run if these env vars change.
+    println!("cargo:rerun-if-env-changed=FFMPEG_DIR");
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
 }

@@ -6,6 +6,7 @@ import 'core/theme/app_theme.dart';
 import 'features/projects/presentation/project_home_screen.dart';
 import 'features/editor/presentation/editor_screen.dart';
 import 'features/export/presentation/export_screen.dart';
+import 'features/settings/providers/settings_provider.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/onboarding/presentation/onboarding_screen.dart';
 import 'features/splash/splash_screen.dart';
@@ -13,6 +14,13 @@ import 'features/cloud/presentation/cloud_screen.dart';
 import 'features/templates/presentation/template_browser.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
+  // Phase B.7: gate the /cloud route behind the experimental feature
+  // flag so users don't see a non-functional cloud screen. The flag
+  // can be toggled in Settings > Experimental.
+  final showCloud = ref.watch(
+    settingsProvider.select((s) => s.experimentalCloudSync),
+  );
+
   return GoRouter(
     initialLocation: '/splash',
     debugLogDiagnostics: true,
@@ -53,11 +61,15 @@ final routerProvider = Provider<GoRouter>((ref) {
         name: 'settings',
         builder: (context, state) => const SettingsScreen(),
       ),
-      GoRoute(
-        path: '/cloud',
-        name: 'cloud',
-        builder: (context, state) => const CloudScreen(),
-      ),
+      // Phase B.7: only register the /cloud route if the experimental
+      // flag is enabled. This also removes it from the navigation drawer
+      // for users who haven't opted in.
+      if (showCloud)
+        GoRoute(
+          path: '/cloud',
+          name: 'cloud',
+          builder: (context, state) => const CloudScreen(),
+        ),
       GoRoute(
         path: '/templates',
         name: 'templates',

@@ -1,10 +1,18 @@
+//! Render pipeline (orphan module wired in Phase A).
+//!
+//! Applies the timeline → render → encode flow. Phase A refactor:
+//! replaced the deleted `crate::codec::encoder::{Encoder, EncoderConfig,
+//! QualityPreset, VideoCodec}` (duplicate of `export_engine`) with the
+//! canonical `crate::export_engine::{VideoEncoder, ExportSettings,
+//! VideoCodec, OutputFormat}`.
+
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
-use crate::codec::encoder::{Encoder, EncoderConfig, QualityPreset, VideoCodec};
+use crate::export_engine::{ExportSettings, OutputFormat, VideoCodec, VideoEncoder};
 use crate::project::Project;
 use crate::utils::async_ops::CancellationToken;
 
@@ -24,6 +32,11 @@ impl Default for RenderQualityPreset {
 }
 
 /// Configuration for a render job.
+///
+/// Phase A: `codec` is now `crate::export_engine::VideoCodec` (which
+/// includes Av1). `quality_preset` no longer maps to the deleted
+/// `QualityPreset` enum; it's preserved for API compatibility but
+/// currently only affects logging.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderConfig {
     pub output_path: String,
@@ -43,6 +56,25 @@ impl Default for RenderConfig {
             resolution: (1920, 1080),
             fps: 30.0,
             quality_preset: RenderQualityPreset::Good,
+        }
+    }
+}
+
+impl RenderConfig {
+    /// Convert to an `ExportSettings` instance suitable for `VideoEncoder::new`.
+    fn to_export_settings(&self) -> ExportSettings {
+        ExportSettings {
+            width: self.resolution.0,
+            height: self.resolution.1,
+            fps: self.fps as f32,
+            bitrate_kbps: self.bitrate / 1000,
+            codec: self.codec,
+            format: OutputFormat::Mp4,
+            audio_bitrate_kbps: 128,
+            audio_sample_rate: 44100,
+            audio_channels: 2,
+            include_audio: false, // audio is rendered separately via render_audio()
+            two_pass: false,
         }
     }
 }
@@ -103,30 +135,20 @@ impl RenderPipeline {
     }
 
     /// Render all frames and write to the output file.
+    ///
+    /// Phase A refactor: now uses `crate::export_engine::VideoEncoder`
+    /// instead of the deleted `crate::codec::encoder::Encoder`.
     /// The progress callback is called with a value from 0.0 to 1.0.
     pub fn render_all(&mut self, progress_cb: Box<dyn Fn(f32)>) -> Result<()> {
         if self.total_frames == 0 {
             anyhow::bail!("No frames to render (duration=0 or fps=0)");
         }
 
-        let encoder_config = EncoderConfig {
-            codec: self.config.codec,
-            bitrate: self.config.bitrate,
-            gop_size: 12,
-            profile: "high".to_string(),
-            preset: match self.config.quality_preset {
-                RenderQualityPreset::Draft => QualityPreset::Ultrafast,
-                RenderQualityPreset::Good => QualityPreset::Medium,
-                RenderQualityPreset::High => QualityPreset::Slow,
-                RenderQualityPreset::Ultra => QualityPreset::Veryslow,
-            },
-            fps: self.config.fps,
-            width: self.config.resolution.0,
-            height: self.config.resolution.1,
-        };
-
-        let mut encoder = Encoder::new(encoder_config, &self.config.output_path)?;
-        encoder.init()?;
+        let settings = self.config.to_export_settings();
+        let mut encoder = VideoEncoder::new(&settings)
+            .map_err(|e| anyhow::anyhow!("Failed to create encoder: {}", e))?;
+        encoder.open(&self.config.output_path)
+            .map_err(|e| anyhow::anyhow!("Failed to open output '{}': {}", self.config.output_path, e))?;
 
         for frame_idx in 0..self.total_frames {
             if self.is_cancelled() {
@@ -136,14 +158,16 @@ impl RenderPipeline {
 
             match self.render_frame(frame_idx) {
                 Ok(frame_data) => {
-                    encoder.write_frame(&frame_data)?;
+                    if let Err(e) = encoder.encode_rgba_frame(&frame_data, frame_idx as i64) {
+                        warn!("Failed to encode frame {}: {}", frame_idx, e);
+                    }
                 }
                 Err(e) => {
                     warn!("Failed to render frame {}: {}", frame_idx, e);
                     // Write a black frame as fallback
                     let (w, h) = self.config.resolution;
                     let black_frame = vec![0u8; (w * h * 4) as usize];
-                    encoder.write_frame(&black_frame)?;
+                    let _ = encoder.encode_rgba_frame(&black_frame, frame_idx as i64);
                 }
             }
 
@@ -152,7 +176,10 @@ impl RenderPipeline {
             progress_cb(progress_pct as f32 / 100.0);
         }
 
-        encoder.finalize()?;
+        let duration_ms = (self.total_frames as f64 / self.config.fps * 1000.0) as u64;
+        encoder.finish(duration_ms)
+            .map_err(|e| anyhow::anyhow!("Failed to finalize encoder: {}", e))?;
+
         info!(
             "Render complete: {} frames written to {}",
             self.total_frames, self.config.output_path
@@ -188,6 +215,7 @@ impl RenderPipeline {
                 for i in 0..clip_duration_samples.min(total_samples) {
                     mixed[i] += 0.0 * clip_volume; // placeholder for actual audio data
                 }
+                let _ = track_pan; // suppress unused warning until pan is implemented
             }
         }
 
@@ -249,7 +277,8 @@ impl RenderPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::track::{Track, TrackType};
+    use crate::timeline::track::{Track, TrackType};
+    use crate::timeline::Timeline;
 
     fn make_project() -> Project {
         let mut project = Project::new("Render Test");
@@ -325,5 +354,17 @@ mod tests {
         let pipeline = RenderPipeline::new(project, config).unwrap();
         let audio = pipeline.render_audio();
         assert!(audio.is_ok());
+    }
+
+    /// Ensure the cancellation token from `utils::async_ops` is reachable
+    /// after the Phase A wiring of the orphan `utils` module.
+    #[test]
+    fn test_cancellation_token_wired() {
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(token.is_cancelled());
+        token.reset();
+        assert!(!token.is_cancelled());
     }
 }

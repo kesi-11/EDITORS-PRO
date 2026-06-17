@@ -20,7 +20,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 
 # Logging
@@ -40,6 +40,15 @@ image = "0.25"
 wgpu = { version = "22.0", features = ["webgpu"] }
 pollster = "0.3"
 
+# Crossbeam channels for the dedicated decode thread + push-based frame streaming
+crossbeam-channel = "0.5"
+
+# flume channels for async task queue (used by utils/async_ops.rs)
+flume = "0.11"
+
+# SQLite bindings for project_store
+rusqlite = { version = "0.32", features = ["bundled"] }
+
 # Audio processing (Phase 2+)
 # cpal = "0.15"
 # rubato = "0.15"
@@ -55,6 +64,9 @@ crc32fast = "1.4"
 
 # Memory-aligned data for GPU interop
 bytemuck = "1.16"
+
+# once_cell for the global FFI dispatcher Mutex (Phase A.1)
+once_cell = "1.20"
 
 # Flutter Rust Bridge (required for StreamSink support in bridge_api.rs)
 flutter_rust_bridge = "2.9"
@@ -72,8 +84,8 @@ ffmpeg = ["dep:ffmpeg-next"]
 ndk-sys = "0.6"
 jni = "0.21"
 
-[build-dependencies]
-cbindgen = "0.27"
+# cbindgen removed — flutter_rust_bridge v2 generates its own bindings.
+# See flutter_rust_bridge.yaml for codegen configuration.
 
 [profile.release]
 opt-level = 3
