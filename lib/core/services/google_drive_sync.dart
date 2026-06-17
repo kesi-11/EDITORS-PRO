@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -200,9 +199,10 @@ class GoogleDriveSync {
 
   /// Upload a project `.epp` file to Google Drive.
   ///
-  /// Uses a multipart upload to set both the filename and the file
-  /// content. If a file with the same name already exists in the
-  /// EDITORS-PRO folder, it's updated (not duplicated).
+  /// Uses `http.MultipartRequest` to build a multipart/related body
+  /// with the JSON metadata part and the binary file content part.
+  /// If a file with the same name already exists in the EDITORS-PRO
+  /// folder, it's updated (not duplicated).
   ///
   /// Returns the Drive file ID on success.
   Future<String> uploadProject(String projectId, String filePath) async {
@@ -220,40 +220,54 @@ class GoogleDriveSync {
     // Check if a file with this name already exists in the folder.
     final existingFileId = await _findFileByName(token, folderId, fileName);
 
-    final boundary = 'editors-pro-${DateTime.now().millisecondsSinceEpoch}';
+    // Build the multipart request. Google Drive's API expects a
+    // multipart/related body with exactly two parts:
+    // 1. application/json — the file metadata (name, parents)
+    // 2. application/octet-stream — the raw file bytes
+    //
+    // We use http.MultipartRequest instead of manual string concatenation
+    // because the latter corrupts binary data (String.fromCharCodes
+    // mangles bytes > 127 into multi-byte UTF-8 sequences).
     final uri = existingFileId != null
         ? Uri.parse(
-            'https://www.googleapis.com/upload/drive/v3/files/$existingFileId?uploadType=multipart&fields=id,name,modifiedTime,size',
+            'https://www.googleapis.com/upload/drive/v3/files/$existingFileId'
+            '?uploadType=multipart&fields=id,name,modifiedTime,size',
           )
         : Uri.parse(
-            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,modifiedTime,size',
+            'https://www.googleapis.com/upload/drive/v3/files'
+            '?uploadType=multipart&fields=id,name,modifiedTime,size',
           );
 
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $token';
+
+    // Metadata part — set Content-Type via headers since MultipartFile
+    // doesn't accept a string contentType directly.
     final metadata = {
       'name': fileName,
       if (existingFileId == null) 'parents': [folderId],
     };
-
-    final body = StringBuffer()
-      ..writeln('--$boundary')
-      ..writeln('Content-Type: application/json; charset=UTF-8')
-      ..writeln()
-      ..writeln(jsonEncode(metadata))
-      ..writeln('--$boundary')
-      ..writeln('Content-Type: application/octet-stream')
-      ..writeln()
-      ..write(String.fromCharCodes(bytes))
-      ..writeln()
-      ..writeln('--$boundary--');
-
-    final response = await http.post(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'multipart/related; boundary=$boundary',
-      },
-      body: body.toString(),
+    request.files.add(
+      http.MultipartFile.fromString(
+        'metadata',
+        jsonEncode(metadata),
+        headers: {
+          'Content-Type': ['application/json; charset=UTF-8'],
+        },
+      ),
     );
+
+    // File content part — pass raw bytes directly. MultipartFile.fromBytes
+    // defaults to application/octet-stream which is correct for binary data.
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'media',
+        bytes,
+      ),
+    );
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode != 200) {
       throw Exception(

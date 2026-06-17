@@ -967,7 +967,18 @@ class EditorsProEngineApi {
         ? '{}'
         : jsonEncode(args, toEncodable: (obj) {
             if (obj is BigInt) return obj.toString();
-            if (obj?.toJson != null) return obj!.toJson();
+            // Try to call toJson() on the object if it has one.
+            // This handles DTOs like BridgeProjectSettings, BridgeExportSettings, etc.
+            // that were passed as objects rather than pre-converted Maps.
+            // Using a dynamic dispatch with try/catch because `obj?.toJson`
+            // would try to access `toJson` as a getter (tear-off) rather
+            // than checking if it's a method.
+            try {
+              final json = (obj as dynamic).toJson();
+              if (json is Map) return json;
+            } catch (_) {
+              // No toJson method — fall through to toString()
+            }
             return obj.toString();
           });
   }
@@ -1127,7 +1138,15 @@ class EditorsProEngineApi {
     final result = await _call<dynamic>('get_frame', {
       'time_ms': timeMs.toString(),
     });
-    return result as typed_data.Uint8List;
+    // The dispatcher returns a JSON array of ints (from Rust Vec<u8>).
+    // jsonDecode produces a List<dynamic>, which we convert to Uint8List.
+    if (result is typed_data.Uint8List) return result;
+    if (result is List) {
+      return typed_data.Uint8List.fromList(result.cast<int>());
+    }
+    throw FormatException(
+      'Expected Uint8List or List from get_frame, got ${result.runtimeType}',
+    );
   }
 
   /// Phase C.14: stream frames from `startMs` to `endMs` at the given `fps`.

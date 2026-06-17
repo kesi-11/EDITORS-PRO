@@ -136,7 +136,7 @@ pub struct BufferPoolHandle {
 }
 
 /// Statistics for buffer pool usage
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct BufferPoolStats {
     /// Total buffers currently in the pool (available for reuse)
     pub pooled_count: AtomicU64,

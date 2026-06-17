@@ -78,7 +78,7 @@ impl HardwareDecoder {
         // or the device doesn't support the codec), we silently fall back
         // to the software codec.
         #[cfg(target_os = "android")]
-        let context = self.try_swap_to_mediacodec(context, video_stream.parameters());
+        let context = self.try_swap_to_mediacodec(context, &video_stream.parameters());
 
         let decoder = context.decoder().video()
             .map_err(|e| format!("Failed to create video decoder: {}", e))?;
@@ -147,10 +147,11 @@ impl HardwareDecoder {
     /// FFmpeg exposes hardware decoders as separate codecs with a
     /// `_mediacodec` suffix (e.g., `h264_mediacodec`, `hevc_mediacodec`).
     /// To use them, we:
-    /// 1. Inspect the stream's codec ID.
-    /// 2. Look up the corresponding `_mediacodec` codec via `find_by_name`.
-    /// 3. If found, build a new `Context` wrapping it and copy the
-    ///    stream parameters over.
+    /// 1. Inspect the stream's codec ID (`ffmpeg::codec::Id`).
+    /// 2. Look up the corresponding `_mediacodec` codec name.
+    /// 3. Use the FFmpeg C API `avcodec_find_decoder_by_name` to check
+    ///    whether the MediaCodec variant is compiled into this FFmpeg
+    ///    build.
     ///
     /// If the MediaCodec variant isn't found (e.g., FFmpeg was built
     /// without `--enable-mediacodec`, or the device doesn't support
@@ -160,21 +161,39 @@ impl HardwareDecoder {
     fn try_swap_to_mediacodec(
         &self,
         original: ffmpeg::codec::context::Context,
-        params: ffmpeg::codec::Parameters,
+        params: &ffmpeg::codec::Parameters,
     ) -> ffmpeg::codec::context::Context {
-        // Determine the software codec name from the stream parameters.
+        // `params.id()` returns `ffmpeg::codec::Id` (the Rust enum),
+        // not `ffmpeg::sys::AVCodecID` (the raw C enum). We match on
+        // the Rust enum and map to the MediaCodec codec name.
         let codec_id = params.id();
         let mediacodec_name: Option<&'static str> = match codec_id {
-            ffmpeg::sys::AVCodecID::AV_CODEC_ID_H264 => Some("h264_mediacodec"),
-            ffmpeg::sys::AVCodecID::AV_CODEC_ID_HEVC => Some("hevc_mediacodec"),
-            ffmpeg::sys::AVCodecID::AV_CODEC_ID_VP8 => Some("vp8_mediacodec"),
-            ffmpeg::sys::AVCodecID::AV_CODEC_ID_VP9 => Some("vp9_mediacodec"),
-            ffmpeg::sys::AVCodecID::AV_CODEC_ID_AV1 => Some("av1_mediacodec"),
+            ffmpeg::codec::Id::H264 => Some("h264_mediacodec"),
+            ffmpeg::codec::Id::HEVC => Some("hevc_mediacodec"),
+            ffmpeg::codec::Id::VP8 => Some("vp8_mediacodec"),
+            ffmpeg::codec::Id::VP9 => Some("vp9_mediacodec"),
+            ffmpeg::codec::Id::AV1 => Some("av1_mediacodec"),
             _ => None,
         };
 
         if let Some(name) = mediacodec_name {
-            if let Some(_hw_codec) = ffmpeg::decoder::find_by_name(name) {
+            // Use the FFmpeg C API to check whether the MediaCodec
+            // decoder is compiled into this build. `ffmpeg-next` doesn't
+            // expose a high-level `find_by_name` for decoders, so we
+            // call the C function directly via `ffmpeg::sys`.
+            //
+            // SAFETY: `avcodec_find_decoder_by_name` takes a null-terminated
+            // C string and returns a pointer to a static `AVCodec` (or NULL).
+            // The pointer is owned by FFmpeg and valid for the program's
+            // lifetime. We only check for null, so no UB.
+            let codec_ptr = std::ffi::CString::new(name)
+                .ok()
+                .and_then(|c_name| {
+                    unsafe { ffmpeg::sys::avcodec_find_decoder_by_name(c_name.as_ptr()) }
+                        .as_mut()
+                });
+
+            if codec_ptr.is_some() {
                 log::info!(
                     "Phase C.18: MediaCodec HW decoder '{}' is available \
                      for codec_id={:?}",

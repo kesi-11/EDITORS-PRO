@@ -19,7 +19,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:io' show Platform;
-import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -190,8 +189,3 @@ ffi.DynamicLibrary _loadNativeLibrary() {
     'Native engine library not configured for platform ${Platform.operatingSystem}',
   );
 }
-
-/// Suppress unused-import warning for [TypedData] (kept for future use
-/// when transferring raw frame bytes via FFI rather than JSON).
-// ignore: unused_element
-void _useTypedData(TypedData _) {}
