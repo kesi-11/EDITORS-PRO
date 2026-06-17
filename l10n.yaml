@@ -1,0 +1,15 @@
+# Phase E.7: Flutter localization configuration.
+#
+# Run `flutter gen-l10n` to generate the AppLocalizations class from
+# the .arb files in lib/l10n/. The generated code is placed in
+# .dart_tool/flutter_gen/gen_l10n/ and is imported as:
+#
+#   import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+#
+# See https://docs.flutter.dev/ui/accessibility-and-internationalization/internationalization
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+# Also generate a synthetic package so the import path is stable
+# across Flutter versions.
+synthetic-package: true

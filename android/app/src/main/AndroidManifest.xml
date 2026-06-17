@@ -30,7 +30,15 @@
         android:icon="@mipmap/ic_launcher"
         android:largeHeap="true"
         android:hardwareAccelerated="true"
-        android:allowBackup="true">
+        android:allowBackup="true"
+        android:supportsRtl="true"
+        android:localeConfig="@xml/locales_config">
+
+        <!--
+            Phase E.7: locales_config declares the supported languages
+            so that Android 13+ can offer per-app language preferences
+            in system settings. See res/xml/locales_config.xml.
+        -->
 
         <activity
             android:name=".MainActivity"

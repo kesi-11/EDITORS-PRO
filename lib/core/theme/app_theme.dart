@@ -142,6 +142,20 @@ class AppTheme {
   static const double clipMinWidth = 24.0;
   static const double playheadWidth = 2.0;
 
+  // ─── Light Theme Tones (Phase E.5) ──────────────────────────────
+  // A light variant for outdoor / bright-environment editing. Brand
+  // colors (primary, secondary, accent) are shared with the dark theme
+  // for consistency; only the surface tones and text colors change.
+  static const Color lightBackground = Color(0xFFF6F6FA);
+  static const Color lightSurface = Color(0xFFFFFFFF);
+  static const Color lightSurfaceVariant = Color(0xFFEEEEF4);
+  static const Color lightCardColor = Color(0xFFFFFFFF);
+  static const Color lightBorder = Color(0xFFD8D8E2);
+  static const Color lightBorderLight = Color(0xFFC0C0CE);
+  static const Color lightTextPrimary = Color(0xFF1A1A26);
+  static const Color lightTextSecondary = Color(0xFF5A5A72);
+  static const Color lightTextDisabled = Color(0xFFB0B0BE);
+
   static final ThemeData darkTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
@@ -311,6 +325,185 @@ class AppTheme {
       labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textPrimary),
       labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: textSecondary),
       labelSmall: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: textDisabled),
+    ),
+  );
+
+  /// Phase E.5: Light theme variant.
+  ///
+  /// Shares brand colors (primary, secondary, accent) with [darkTheme]
+  /// for consistency. Only surface tones, borders, and text colors are
+  /// swapped to light equivalents. Use this when the user has selected
+  /// "Light" in Settings > Appearance, or when the system is in light
+  /// mode and the user has chosen "Follow system".
+  static final ThemeData lightTheme = ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.light,
+    colorSchemeSeed: primary,
+    scaffoldBackgroundColor: lightBackground,
+    fontFamily: 'Inter',
+
+    appBarTheme: const AppBarTheme(
+      backgroundColor: lightSurface,
+      foregroundColor: lightTextPrimary,
+      elevation: 0,
+      centerTitle: false,
+      titleTextStyle: TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 20,
+        fontWeight: FontWeight.w700,
+        color: lightTextPrimary,
+      ),
+    ),
+
+    cardTheme: CardTheme(
+      color: lightCardColor,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radiusLarge),
+      ),
+      margin: const EdgeInsets.symmetric(horizontal: spacing16, vertical: spacing8),
+    ),
+
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: primary,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(horizontal: spacing24, vertical: spacing12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radiusMedium),
+        ),
+        textStyle: const TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ),
+
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: primary,
+        side: const BorderSide(color: primary, width: 1.5),
+        padding: const EdgeInsets.symmetric(horizontal: spacing24, vertical: spacing12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radiusMedium),
+        ),
+        textStyle: const TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ),
+
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: primaryDark,
+        textStyle: const TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    ),
+
+    iconTheme: const IconThemeData(
+      color: lightTextSecondary,
+      size: 24,
+    ),
+
+    bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+      backgroundColor: lightSurface,
+      selectedItemColor: primary,
+      unselectedItemColor: lightTextDisabled,
+      type: BottomNavigationBarType.fixed,
+      elevation: 8,
+    ),
+
+    dividerTheme: const DividerThemeData(
+      color: lightBorder,
+      thickness: 1,
+    ),
+
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: lightSurfaceVariant,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(radiusMedium),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(radiusMedium),
+        borderSide: const BorderSide(color: primary, width: 1.5),
+      ),
+      hintStyle: const TextStyle(color: lightTextDisabled),
+      contentPadding: const EdgeInsets.symmetric(horizontal: spacing16, vertical: spacing12),
+    ),
+
+    sliderTheme: SliderThemeData(
+      activeTrackColor: primary,
+      thumbColor: primaryLight,
+      inactiveTrackColor: lightBorder,
+      trackHeight: 3,
+      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+    ),
+
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: lightSurfaceVariant,
+      contentTextStyle: const TextStyle(color: lightTextPrimary),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radiusMedium),
+      ),
+      behavior: SnackBarBehavior.floating,
+    ),
+
+    dialogTheme: DialogTheme(
+      backgroundColor: lightSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radiusLarge),
+      ),
+    ),
+
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: lightSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(radiusXLarge)),
+      ),
+    ),
+
+    chipTheme: ChipThemeData(
+      backgroundColor: lightSurfaceVariant,
+      selectedColor: primary.withOpacity(0.2),
+      labelStyle: const TextStyle(color: lightTextPrimary, fontSize: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radiusSmall),
+      ),
+      side: BorderSide.none,
+    ),
+
+    tabBarTheme: TabBarTheme(
+      labelColor: primary,
+      unselectedLabelColor: lightTextSecondary,
+      indicatorColor: primary,
+      indicatorSize: TabBarIndicatorSize.label,
+      labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+      unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w400, fontSize: 14),
+    ),
+
+    textTheme: const TextTheme(
+      headlineLarge: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, color: lightTextPrimary, letterSpacing: -0.5),
+      headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: lightTextPrimary),
+      headlineSmall: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: lightTextPrimary),
+      titleLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: lightTextPrimary),
+      titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: lightTextPrimary),
+      titleSmall: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: lightTextPrimary),
+      bodyLarge: TextStyle(fontSize: 16, fontWeight: FontWeight.w400, color: lightTextPrimary),
+      bodyMedium: TextStyle(fontSize: 14, fontWeight: FontWeight.w400, color: lightTextPrimary),
+      bodySmall: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: lightTextSecondary),
+      labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: lightTextPrimary),
+      labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: lightTextSecondary),
+      labelSmall: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: lightTextDisabled),
     ),
   );
 }

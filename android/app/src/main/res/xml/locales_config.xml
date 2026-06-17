@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Phase E.7: Per-app language preferences for Android 13+.
+  Declares the locales EDITORS-PRO supports so the system can offer
+  per-app language selection in Settings > System > Languages & input >
+  App languages. The Flutter side loads the matching .arb file from
+  lib/l10n/ via the delegates configured in app.dart.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="es" />
+    <locale android:name="fr" />
+    <locale android:name="pt" />
+    <locale android:name="hi" />
+    <locale android:name="zh" />
+</locale-config>

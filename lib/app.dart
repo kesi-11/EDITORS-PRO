@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -103,6 +104,10 @@ class _EditorsProAppState extends ConsumerState<EditorsProApp> {
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
+    // Phase E.6: react to the user's theme mode preference.
+    final themeMode = ref.watch(
+      settingsProvider.select((s) => s.themeModeEnum),
+    );
 
     // Phase E.2: listen for editor errors and show a SnackBar.
     // Using ref.listen so we only react to changes, not on every build.
@@ -136,7 +141,25 @@ class _EditorsProAppState extends ConsumerState<EditorsProApp> {
     return MaterialApp.router(
       title: 'EDITORS-PRO',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: themeMode,
+      // Phase E.7: localization delegates + supported locales.
+      // The AppLocalizations class is generated from lib/l10n/*.arb
+      // by `flutter gen-l10n` (configured in l10n.yaml).
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('en'),
+        Locale('es'),
+        Locale('fr'),
+        Locale('pt'),
+        Locale('hi'),
+        Locale('zh'),
+      ],
       routerConfig: router,
     );
   }

@@ -23,7 +23,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, llvm-tools-preview
+          components: clippy, llvm-tools-preview, rustfmt
 
       - name: Cache Cargo registry & build
         uses: actions/cache@v4
@@ -46,6 +46,11 @@ jobs:
             libswscale-dev \
             libswresample-dev \
             pkg-config
+
+      # Phase E.1: enforce `cargo fmt` formatting. Fails the build if any
+      # file is not formatted according to `rustfmt.toml` defaults.
+      - name: Cargo fmt --check
+        run: cargo fmt --manifest-path engine/Cargo.toml --all -- --check
 
       - name: Cargo check
         run: cargo check --manifest-path engine/Cargo.toml
@@ -143,6 +148,11 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
+      # Phase E.1: enforce Dart formatting. Fails the build if any file
+      # is not formatted according to `dart format` defaults.
+      - name: Dart format check
+        run: dart format --set-exit-if-changed .
+
       - name: Flutter analyze
         run: flutter analyze
 
@@ -184,7 +194,9 @@ jobs:
             rust-android-${{ runner.os }}-
 
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk
+        # Phase E.2: use taiki-e/install-action instead of `cargo install`
+        # for ~10x faster CI (pre-built binary vs compiling from source).
+        uses: taiki-e/install-action@cargo-ndk
 
       - name: Install FFmpeg dev libraries
         run: |
@@ -211,24 +223,42 @@ jobs:
         run: sdkmanager --install "ndk;27.0.12077973"
 
       # ── Build Rust engine for Android ───────────────────────────────
-      - name: Build Rust engine (arm64-v8a)
-        run: cargo ndk -t arm64-v8a build --release --manifest-path engine/Cargo.toml
+      # Phase E.3: build for both arm64-v8a (physical devices) and x86_64
+      # (emulators) so the same APK works in both environments.
+      - name: Build Rust engine (arm64-v8a + x86_64)
+        run: cargo ndk -t arm64-v8a -t x86_64 build --release --manifest-path engine/Cargo.toml
 
-      - name: Copy native library to jniLibs
+      - name: Copy native libraries to jniLibs
         run: |
           mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p android/app/src/main/jniLibs/x86_64
           cp engine/target/aarch64-linux-android/release/libeditors_pro_engine.so \
              android/app/src/main/jniLibs/arm64-v8a/
+          cp engine/target/x86_64-linux-android/release/libeditors_pro_engine.so \
+             android/app/src/main/jniLibs/x86_64/
 
       # ── Build Flutter APK ───────────────────────────────────────────
       - name: Build Flutter APK
         run: flutter build apk --release
+
+      # Phase E.3: also build an App Bundle (AAB) for Play Store distribution.
+      # The AAB is the required format for new Play Store submissions since
+      # August 2021; the APK is still useful for sideloading and testing.
+      - name: Build Flutter AAB
+        run: flutter build appbundle --release
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: editors-pro-arm64-release
           path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: editors-pro-aab-release
+          path: build/app/outputs/bundle/release/app-release.aab
           retention-days: 14
 
   # ─── Release on Tag ────────────────────────────────────────────────
@@ -248,10 +278,19 @@ jobs:
           name: editors-pro-arm64-release
           path: ./artifacts/
 
+      # Phase E.3: also include the AAB in the release for Play Store uploads.
+      - name: Download AAB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: editors-pro-aab-release
+          path: ./artifacts/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ./artifacts/app-release.apk
+          files: |
+            ./artifacts/app-release.apk
+            ./artifacts/app-release.aab
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

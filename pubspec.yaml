@@ -3,6 +3,9 @@ description: "EDITORS-PRO: Professional mobile video editor built with Flutter +
 publish_to: 'none'
 version: 0.1.0+1
 
+# Phase E.7: enable Flutter's codegen for localization (.arb → AppLocalizations).
+generate: true
+
 environment:
   sdk: '>=3.0.0 <4.0.0'
 
@@ -50,6 +53,11 @@ dependencies:
   # Utilities
   uuid: ^4.5.1
   intl: ^0.20.2
+
+  # Phase E.7: localization
+  flutter_localizations:
+    sdk: flutter
+
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
   logger: ^2.5.0

@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -48,6 +49,13 @@ class AppSettings {
   // is `false` by default.
   final bool experimentalAiBackgroundRemoval;
 
+  /// Phase E.5/E.6: theme mode preference.
+  ///
+  /// - `'system'` (default): follow the platform's brightness setting.
+  /// - `'light'`: force light theme.
+  /// - `'dark'`: force dark theme.
+  final String themeMode;
+
   const AppSettings({
     this.defaultResolution = '1080p',
     this.defaultCodec = 'H.264',
@@ -63,7 +71,21 @@ class AppSettings {
     this.experimentalAutoCaptions = false,
     this.experimentalCloudSync = false,
     this.experimentalAiBackgroundRemoval = false,
+    this.themeMode = 'system',
   });
+
+  /// Phase E.6: resolve the string preference to a Flutter [ThemeMode].
+  ThemeMode get themeModeEnum {
+    switch (themeMode) {
+      case 'light':
+        return ThemeMode.light;
+      case 'dark':
+        return ThemeMode.dark;
+      case 'system':
+      default:
+        return ThemeMode.system;
+    }
+  }
 
   AppSettings copyWith({
     String? defaultResolution,
@@ -80,6 +102,7 @@ class AppSettings {
     bool? experimentalAutoCaptions,
     bool? experimentalCloudSync,
     bool? experimentalAiBackgroundRemoval,
+    String? themeMode,
   }) {
     return AppSettings(
       defaultResolution: defaultResolution ?? this.defaultResolution,
@@ -104,6 +127,7 @@ class AppSettings {
       experimentalAiBackgroundRemoval:
           experimentalAiBackgroundRemoval ??
               this.experimentalAiBackgroundRemoval,
+      themeMode: themeMode ?? this.themeMode,
     );
   }
 }
@@ -136,6 +160,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   static const _keyExperimentalAiBackgroundRemoval =
       'settings_experimental_ai_bg_removal';
 
+  // Phase E.5/E.6: theme mode key.
+  static const _keyThemeMode = 'settings_theme_mode';
+
   SettingsNotifier(this._prefs) : super(const AppSettings()) {
     _loadFromPrefs();
   }
@@ -164,6 +191,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(_keyExperimentalCloudSync) ?? false,
       experimentalAiBackgroundRemoval:
           _prefs.getBool(_keyExperimentalAiBackgroundRemoval) ?? false,
+      themeMode: _prefs.getString(_keyThemeMode) ?? 'system',
     );
   }
 
@@ -239,6 +267,19 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setExperimentalAiBackgroundRemoval(bool enabled) async {
     await _prefs.setBool(_keyExperimentalAiBackgroundRemoval, enabled);
     state = state.copyWith(experimentalAiBackgroundRemoval: enabled);
+  }
+
+  // ─── Theme mode mutator (Phase E.6) ──────────────────────────────
+
+  /// Set the theme mode. Valid values: 'system', 'light', 'dark'.
+  Future<void> setThemeMode(String mode) async {
+    final normalized = switch (mode) {
+      'light' => 'light',
+      'dark' => 'dark',
+      _ => 'system',
+    };
+    await _prefs.setString(_keyThemeMode, normalized);
+    state = state.copyWith(themeMode: normalized);
   }
 }
 

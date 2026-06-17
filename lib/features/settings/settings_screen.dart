@@ -218,6 +218,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           const SizedBox(height: 24),
 
+          // ─── Appearance (Phase E.5/E.6) ─────────────────────
+          _SectionHeader(title: 'Appearance'),
+          _SettingsCard(
+            children: [
+              _SettingsDropdown(
+                label: 'Theme',
+                value: settings.themeMode == 'light'
+                    ? 'Light'
+                    : settings.themeMode == 'dark'
+                        ? 'Dark'
+                        : 'Follow system',
+                options: const ['Follow system', 'Light', 'Dark'],
+                onChanged: (v) {
+                  final mode = switch (v) {
+                    'Light' => 'light',
+                    'Dark' => 'dark',
+                    _ => 'system',
+                  };
+                  settingsNotifier.setThemeMode(mode);
+                },
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
           // ─── Editor Behavior ───────────────────────────────
           _SectionHeader(title: 'Editor Behavior'),
           _SettingsCard(
