@@ -19,6 +19,104 @@ pub struct SubtitleEntry {
     pub text: String,
 }
 
+/// Phase E.18: styling options for subtitle rendering.
+///
+/// Controls the visual appearance of subtitles on the preview and in
+/// exported video. Stored alongside the project so the same style is
+/// applied consistently across all subtitle clips.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SubtitleStyle {
+    /// Font family name (e.g., "Inter", "Arial"). Must be a font that's
+    /// bundled with the app or available on the device.
+    pub font_family: String,
+
+    /// Font size in pixels at the project's native resolution.
+    pub font_size: f32,
+
+    /// Whether the text is bold.
+    pub bold: bool,
+
+    /// Whether the text is italic.
+    pub italic: bool,
+
+    /// Whether the text is underlined.
+    pub underline: bool,
+
+    /// Text color as RGBA (0.0-1.0 per channel).
+    pub text_color: [f32; 4],
+
+    /// Outline (stroke) color as RGBA.
+    pub outline_color: [f32; 4],
+
+    /// Outline thickness in pixels. 0 disables the outline.
+    pub outline_width: f32,
+
+    /// Shadow color as RGBA.
+    pub shadow_color: [f32; 4],
+
+    /// Shadow offset in pixels (dx, dy). (0, 0) disables the shadow.
+    pub shadow_offset: [f32; 2],
+
+    /// Shadow blur radius in pixels.
+    pub shadow_blur: f32,
+
+    /// Background color as RGBA (for the "box" behind the text).
+    /// Fully transparent (alpha=0) disables the background.
+    pub background_color: [f32; 4],
+
+    /// Horizontal alignment: -1 = left, 0 = center, 1 = right.
+    pub alignment: i32,
+
+    /// Vertical position: 0 = top, 0.5 = middle, 1 = bottom.
+    /// Defaults to 0.9 (near the bottom, like most subtitles).
+    pub vertical_position: f32,
+
+    /// Animation preset for subtitle appearance.
+    pub animation: SubtitleAnimation,
+}
+
+/// Phase E.18: animation presets for subtitle appearance.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubtitleAnimation {
+    /// No animation — subtitle appears instantly.
+    None,
+    /// Fade in from transparent.
+    FadeIn,
+    /// Slide up from below.
+    SlideUp,
+    /// Slide in from the left.
+    SlideLeft,
+    /// Scale up from 50% to 100%.
+    ScaleUp,
+    /// Typewriter effect (characters appear one at a time).
+    Typewriter,
+    /// Bounce in (overshoot then settle).
+    Bounce,
+}
+
+impl Default for SubtitleStyle {
+    fn default() -> Self {
+        Self {
+            font_family: "Inter".to_string(),
+            font_size: 48.0,
+            bold: false,
+            italic: false,
+            underline: false,
+            text_color: [1.0, 1.0, 1.0, 1.0], // white
+            outline_color: [0.0, 0.0, 0.0, 1.0], // black
+            outline_width: 2.0,
+            shadow_color: [0.0, 0.0, 0.0, 0.6], // semi-transparent black
+            shadow_offset: [2.0, 2.0],
+            shadow_blur: 4.0,
+            background_color: [0.0, 0.0, 0.0, 0.0], // transparent
+            alignment: 0,                            // center
+            vertical_position: 0.9,                  // near bottom
+            animation: SubtitleAnimation::FadeIn,
+        }
+    }
+}
+
 /// Parse an SRT file and return all subtitle entries
 pub fn parse_srt_file(file_path: &str) -> Result<Vec<SubtitleEntry>, String> {
     let path = Path::new(file_path);

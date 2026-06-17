@@ -53,6 +53,10 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     final project = ref.watch(currentProjectProvider);
     final screenWidth = MediaQuery.of(context).size.width;
     final isNarrowScreen = screenWidth < 600;
+    // Phase E.19: tablet/large-screen breakpoint. On tablets (>=1200px)
+    // the left panel is wider (320px vs 240px) and the inspector takes
+    // more space, giving professional editors room to work.
+    final isTablet = screenWidth >= 1200;
 
     return Scaffold(
       body: Column(
@@ -65,7 +69,8 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             child: Row(
               children: [
                 // Left: Media library / Tools (hidden on narrow screens)
-                if (!isNarrowScreen) _buildLeftPanel(context, editorState),
+                if (!isNarrowScreen)
+                  _buildLeftPanel(context, editorState, isTablet: isTablet),
 
                 // Center: Preview viewport
                 Expanded(
@@ -143,9 +148,12 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
 
                 // Right: Inspector / Properties (hidden on narrow screens)
                 if (!isNarrowScreen)
-                  const Expanded(
-                    flex: 1,
-                    child: InspectorPanel(),
+                  Expanded(
+                    // Phase E.19: give the inspector more room on tablets
+                    // (flex 2) so color grading wheels and effect chains
+                    // aren't cramped. On phones it's flex 1.
+                    flex: isTablet ? 2 : 1,
+                    child: const InspectorPanel(),
                   ),
               ],
             ),
@@ -232,9 +240,12 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     );
   }
 
-  Widget _buildLeftPanel(BuildContext context, EditorState state) {
+  Widget _buildLeftPanel(BuildContext context, EditorState state,
+      {bool isTablet = false}) {
     return Container(
-      width: 240,
+      // Phase E.19: tablets get a wider left panel (320 vs 240) so
+      // media thumbnails and effect names don't truncate.
+      width: isTablet ? 320 : 240,
       color: AppTheme.surface,
       child: Column(
         children: [
