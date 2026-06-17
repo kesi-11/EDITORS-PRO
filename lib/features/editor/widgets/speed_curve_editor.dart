@@ -64,6 +64,61 @@ class _SpeedCurveEditorState extends ConsumerState<SpeedCurveEditor> {
     'linear', 'ease_in', 'ease_out', 'ease_in_out', 'cubic_bezier'
   ];
 
+  // Phase E.17: CapCut-style named velocity ramp presets.
+  // Each preset defines a list of (startSpeed, endSpeed, easing) tuples
+  // that are applied as consecutive segments across the clip's duration.
+  // The presets are inspired by CapCut's "Velocity" templates.
+  static const List<_VelocityPreset> _velocityPresets = [
+    _VelocityPreset(
+      name: 'Montage',
+      icon: Icons.movie_filter_outlined,
+      // Smooth ramp from 1x → 2x → 1x (typical montage beat-sync feel).
+      segments: [
+        (1.0, 2.0, 'ease_in_out'),
+        (2.0, 1.0, 'ease_in_out'),
+      ],
+    ),
+    _VelocityPreset(
+      name: 'Hero',
+      icon: Icons.flash_on_outlined,
+      // Slow-motion hero entrance: 1x → 0.5x → 1x.
+      segments: [
+        (1.0, 0.5, 'ease_out'),
+        (0.5, 1.0, 'ease_in'),
+      ],
+    ),
+    _VelocityPreset(
+      name: 'Bullet',
+      icon: Icons.bolt_outlined,
+      // Bullet-time effect: 1x → 0.25x → 4x → 1x.
+      segments: [
+        (1.0, 0.25, 'ease_out'),
+        (0.25, 4.0, 'ease_in_out'),
+        (4.0, 1.0, 'ease_in'),
+      ],
+    ),
+    _VelocityPreset(
+      name: 'Rollercoaster',
+      icon: Icons.waves_outlined,
+      // Wavy speed: 1x → 2x → 0.5x → 2x → 1x.
+      segments: [
+        (1.0, 2.0, 'ease_in_out'),
+        (2.0, 0.5, 'ease_in_out'),
+        (0.5, 2.0, 'ease_in_out'),
+        (2.0, 1.0, 'ease_in_out'),
+      ],
+    ),
+    _VelocityPreset(
+      name: 'Flash',
+      icon: Icons.timer_outlined,
+      // Quick acceleration to 4x then snap back to 1x.
+      segments: [
+        (1.0, 4.0, 'ease_in'),
+        (4.0, 1.0, 'linear'),
+      ],
+    ),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -150,6 +205,39 @@ class _SpeedCurveEditorState extends ConsumerState<SpeedCurveEditor> {
                   fontSize: 11,
                 ),
                 selectedColor: AppTheme.primary,
+                backgroundColor: AppTheme.surfaceVariant,
+                side: BorderSide(color: const Color(0xFF2A2A3E)),
+                visualDensity: VisualDensity.compact,
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
+
+          // Phase E.17: CapCut-style velocity ramp presets.
+          // These are named speed-ramp patterns that apply a multi-segment
+          // curve to the clip. Tapping a preset calls _applyVelocityPreset
+          // which constructs the appropriate SpeedSegmentData list.
+          const Text(
+            'Velocity Ramps',
+            style: TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: _velocityPresets.map((preset) {
+              return ActionChip(
+                label: Text(preset.name),
+                avatar: Icon(preset.icon, size: 16, color: AppTheme.primary),
+                onPressed: () => _applyVelocityPreset(preset),
+                labelStyle: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 11,
+                ),
                 backgroundColor: AppTheme.surfaceVariant,
                 side: BorderSide(color: const Color(0xFF2A2A3E)),
                 visualDensity: VisualDensity.compact,
@@ -268,6 +356,39 @@ class _SpeedCurveEditorState extends ConsumerState<SpeedCurveEditor> {
         endSpeed: speed,
         easingName: _selectedEasing,
       ));
+    });
+    _applyCurve();
+  }
+
+  /// Phase E.17: apply a named velocity ramp preset to the clip.
+  ///
+  /// Divides the clip duration into N equal segments (where N is the
+  /// preset's segment count) and assigns each segment the preset's
+  /// (startSpeed, endSpeed, easing) values. The user can then fine-tune
+  /// individual segments via the existing drag UI.
+  void _applyVelocityPreset(_VelocityPreset preset) {
+    setState(() {
+      _segments.clear();
+      final segCount = preset.segments.length;
+      final segDuration = widget.clipDurationMs ~/ segCount;
+      for (int i = 0; i < segCount; i++) {
+        final (startSpeed, endSpeed, easing) = preset.segments[i];
+        _segments.add(SpeedSegmentData(
+          startMs: i * segDuration,
+          endMs: (i == segCount - 1)
+              ? widget.clipDurationMs
+              : (i + 1) * segDuration,
+          startSpeed: startSpeed,
+          endSpeed: endSpeed,
+          easingName: easing,
+        ));
+      }
+      // Set the current speed to the average of the preset's segment
+      // speeds so the speed preset chips reflect the applied state.
+      final avgSpeed = preset.segments
+          .map((s) => (s.$1 + s.$2) / 2)
+          .reduce((a, b) => a + b) / segCount;
+      _currentSpeed = avgSpeed;
     });
     _applyCurve();
   }
@@ -565,4 +686,22 @@ class _SpeedCurvePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _SpeedCurvePainter oldDelegate) =>
       segments != oldDelegate.segments || durationMs != oldDelegate.durationMs || currentSpeed != oldDelegate.currentSpeed;
+}
+
+/// Phase E.17: a named velocity ramp preset (CapCut-style).
+///
+/// Each preset is a list of (startSpeed, endSpeed, easing) tuples that
+/// are applied as consecutive segments across the clip's duration. The
+/// segments divide the clip evenly — e.g., a 3-segment preset on a
+/// 10-second clip gets segments of [0-3.33s, 3.33-6.67s, 6.67-10s].
+class _VelocityPreset {
+  final String name;
+  final IconData icon;
+  final List<(double, double, String)> segments;
+
+  const _VelocityPreset({
+    required this.name,
+    required this.icon,
+    required this.segments,
+  });
 }
