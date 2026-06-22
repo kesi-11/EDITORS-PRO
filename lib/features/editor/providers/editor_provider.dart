@@ -892,14 +892,12 @@ class EditorNotifier extends StateNotifier<EditorState> {
     if (!_engineReady) return;
     try {
       final api = EngineService.instance.api;
-      // The bridge API may use setClipSpeed or a generic setClipProperty.
-      // For now, we log and will wire up when the Phase 7 Rust API is ready.
       developer.log(
         'setClipSpeed: clipId=$clipId, speed=$speed',
         name: 'EditorNotifier',
       );
-      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
-      // await api.setClipSpeed(clipId: clipId, speed: speed);
+      final curve = BridgeSpeedCurve.constant(speed);
+      await api.setClipSpeedCurve(clipId: clipId, curve: curve);
       _refreshEngineState();
     } catch (e) {
       developer.log('setClipSpeed failed: $e', name: 'EditorNotifier');
@@ -911,12 +909,22 @@ class EditorNotifier extends StateNotifier<EditorState> {
   Future<void> setClipSpeedCurve(String clipId, List<dynamic> segments) async {
     if (!_engineReady) return;
     try {
+      final api = EngineService.instance.api;
       developer.log(
         'setClipSpeedCurve: clipId=$clipId, segments=${segments.length}',
         name: 'EditorNotifier',
       );
-      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
-      // await api.setClipSpeedCurve(clipId: clipId, segments: segments);
+      final bridgeSegments = segments.map((s) {
+        return BridgeSpeedSegment(
+          startMs: s['start_ms'] as int? ?? 0,
+          endMs: s['end_ms'] as int? ?? 0,
+          startSpeed: (s['start_speed'] as num?)?.toDouble() ?? 1.0,
+          endSpeed: (s['end_speed'] as num?)?.toDouble() ?? 1.0,
+          easingName: s['easing_name'] as String? ?? 'linear',
+        );
+      }).toList();
+      final curve = BridgeSpeedCurve(segments: bridgeSegments);
+      await api.setClipSpeedCurve(clipId: clipId, curve: curve);
       _refreshEngineState();
     } catch (e) {
       developer.log('setClipSpeedCurve failed: $e', name: 'EditorNotifier');
@@ -934,19 +942,14 @@ class EditorNotifier extends StateNotifier<EditorState> {
   ) async {
     if (!_engineReady) return;
     try {
-      developer.log(
-        'addKeyframe: clipId=$clipId, property=$property, '
-        'timeMs=$timeMs, value=$value, easing=$easingName',
-        name: 'EditorNotifier',
+      final api = EngineService.instance.api;
+      await api.addKeyframe(
+        clipId: clipId,
+        property: property,
+        timeMs: BigInt.from(timeMs),
+        value: value,
+        easingName: easingName,
       );
-      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
-      // await api.addKeyframe(
-      //   clipId: clipId,
-      //   property: property,
-      //   timeMs: BigInt.from(timeMs),
-      //   value: value,
-      //   easingName: easingName,
-      // );
       _refreshEngineState();
     } catch (e) {
       developer.log('addKeyframe failed: $e', name: 'EditorNotifier');
@@ -962,17 +965,12 @@ class EditorNotifier extends StateNotifier<EditorState> {
   ) async {
     if (!_engineReady) return;
     try {
-      developer.log(
-        'removeKeyframe: clipId=$clipId, property=$property, '
-        'keyframeId=$keyframeId',
-        name: 'EditorNotifier',
+      final api = EngineService.instance.api;
+      await api.removeKeyframe(
+        clipId: clipId,
+        property: property,
+        keyframeId: keyframeId,
       );
-      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
-      // await api.removeKeyframe(
-      //   clipId: clipId,
-      //   property: property,
-      //   keyframeId: keyframeId,
-      // );
       _refreshEngineState();
     } catch (e) {
       developer.log('removeKeyframe failed: $e', name: 'EditorNotifier');
@@ -990,19 +988,14 @@ class EditorNotifier extends StateNotifier<EditorState> {
   }) async {
     if (!_engineReady) return;
     try {
-      developer.log(
-        'updateKeyframe: clipId=$clipId, property=$property, '
-        'keyframeId=$keyframeId, value=$value, easing=$easing',
-        name: 'EditorNotifier',
+      final api = EngineService.instance.api;
+      await api.updateKeyframe(
+        clipId: clipId,
+        property: property,
+        keyframeId: keyframeId,
+        value: value,
+        easingName: easing,
       );
-      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
-      // await api.updateKeyframe(
-      //   clipId: clipId,
-      //   property: property,
-      //   keyframeId: keyframeId,
-      //   value: value,
-      //   easingName: easing,
-      // );
       _refreshEngineState();
     } catch (e) {
       developer.log('updateKeyframe failed: $e', name: 'EditorNotifier');
@@ -1014,16 +1007,39 @@ class EditorNotifier extends StateNotifier<EditorState> {
   Future<List<dynamic>> getKeyframes(String clipId, String property) async {
     if (!_engineReady) return [];
     try {
-      developer.log(
-        'getKeyframes: clipId=$clipId, property=$property',
-        name: 'EditorNotifier',
-      );
-      // TODO: Wire to engine bridge when Phase 7 Rust API is complete
-      // return await api.getKeyframes(clipId: clipId, property: property);
-      return [];
+      final api = EngineService.instance.api;
+      return await api.getKeyframes(clipId: clipId, property: property);
     } catch (e) {
       developer.log('getKeyframes failed: $e', name: 'EditorNotifier');
       return [];
+    }
+  }
+
+  /// Update a clip transform property (position, scale, rotation) via keyframes.
+  ///
+  /// This is called by the transform handles in the preview viewport when
+  /// the user drags to move, scale, or rotate a clip. It adds or updates
+  /// a keyframe at the current playhead time.
+  Future<void> updateClipTransform({
+    required String clipId,
+    required String property,
+    required double delta,
+  }) async {
+    if (!_engineReady) return;
+    try {
+      final api = EngineService.instance.api;
+      final timeMs = BigInt.from(state.currentTimeMs);
+      // Get existing keyframes at this time, or add a new one
+      await api.addKeyframe(
+        clipId: clipId,
+        property: property,
+        timeMs: timeMs,
+        value: delta,
+        easingName: 'Linear',
+      );
+      _refreshEngineState();
+    } catch (e) {
+      developer.log('updateClipTransform failed: $e', name: 'EditorNotifier');
     }
   }
 

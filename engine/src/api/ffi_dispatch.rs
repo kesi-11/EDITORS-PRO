@@ -311,12 +311,21 @@ fn dispatch_method(
         "undo" => to_json_string::<()>(api.undo()),
         "redo" => to_json_string::<()>(api.redo()),
 
+        // ─── Move clip ───────────────────────────────────────────────────
+        "move_clip" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let new_start_ms = parse_u64(args, "new_start_ms");
+            let new_track_id = args
+                .get("new_track_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            to_json_string::<()>(api.move_clip(clip_id, new_start_ms, new_track_id))
+        }
+
         // ─── Cache management (Phase B.12) ────────────────────────────────
-        // Mutation methods (add_clip, trim_clip, etc.) call
-        // `invalidate_frame_cache` automatically before returning, so
-        // the next `get_frame` re-decodes from source. Exposing it
-        // here lets the Dart side manually flush the cache if it
-        // suspects staleness (e.g. after a file was modified on disk).
         "invalidate_frame_cache" => to_json_string::<()>(api.invalidate_frame_cache()),
 
         // ─── Preview ──────────────────────────────────────────────────────
@@ -340,7 +349,348 @@ fn dispatch_method(
             };
             to_json_string(api.export_video(output_path, settings))
         }
+        "export_video_with_callback" => {
+            let output_path = match args.get("output_path").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'output_path'"),
+            };
+            let settings = match args.get("settings") {
+                Some(v) if !v.is_null() => match serde_json::from_value(v.clone()) {
+                    Ok(s) => s,
+                    Err(e) => return to_json_err(format!("invalid 'settings': {}", e)),
+                },
+                _ => return to_json_err("missing 'settings'"),
+            };
+            to_json_string(api.export_video_with_callback(output_path, settings))
+        }
         "cancel_export" => to_json_string::<()>(api.cancel_export()),
+        "get_export_presets" => to_json_ok(&api.get_export_presets()),
+        "get_export_preset" => {
+            let name = match args.get("name").and_then(|v| v.as_str()) {
+                Some(n) => n.to_string(),
+                None => return to_json_err("missing 'name'"),
+            };
+            to_json_ok(&api.get_export_preset(name))
+        }
+
+        // ─── Audio ────────────────────────────────────────────────────────
+        "set_track_volume" => {
+            let track_id = match args.get("track_id").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'track_id'"),
+            };
+            let volume = parse_f32(args, "volume");
+            to_json_string::<()>(api.set_track_volume(track_id, volume))
+        }
+        "toggle_track_visibility" => {
+            let track_id = match args.get("track_id").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'track_id'"),
+            };
+            to_json_string::<()>(api.toggle_track_visibility(track_id))
+        }
+        "get_audio_samples" => {
+            let asset_id = match args.get("asset_id").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => return to_json_err("missing 'asset_id'"),
+            };
+            let start_ms = parse_u64(args, "start_ms");
+            let duration_ms = parse_u64(args, "duration_ms");
+            to_json_string(api.get_audio_samples(asset_id, start_ms, duration_ms))
+        }
+        "mix_audio_at_time" => {
+            let start_ms = parse_u64(args, "start_ms");
+            let duration_ms = parse_u64(args, "duration_ms");
+            to_json_string(api.mix_audio_at_time(start_ms, duration_ms))
+        }
+        "get_waveform" => {
+            let asset_id = match args.get("asset_id").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => return to_json_err("missing 'asset_id'"),
+            };
+            let num_bins = args.get("num_bins").and_then(|v| v.as_u64()).unwrap_or(200) as u32;
+            to_json_string(api.get_waveform(asset_id, num_bins))
+        }
+        "set_ducking" => {
+            let track_id = match args.get("track_id").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'track_id'"),
+            };
+            let enabled = args.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let duck_level = parse_f32(args, "duck_level");
+            to_json_string::<()>(api.set_ducking(track_id, enabled, duck_level))
+        }
+        "get_ducking_config" => {
+            let track_id = match args.get("track_id").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'track_id'"),
+            };
+            to_json_ok(&api.get_ducking_config(track_id))
+        }
+        "get_audio_info" => {
+            let file_path = match args.get("file_path").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'file_path'"),
+            };
+            to_json_string(api.get_audio_info(file_path))
+        }
+
+        // ─── Text Operations ─────────────────────────────────────────────
+        "add_text_clip" => {
+            let track_id = match args.get("track_id").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'track_id'"),
+            };
+            let text = match args.get("text").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'text'"),
+            };
+            let font_family = args.get("font_family").and_then(|v| v.as_str()).unwrap_or("Inter").to_string();
+            let font_size = parse_f32(args, "font_size");
+            let color_hex = args.get("color_hex").and_then(|v| v.as_str()).unwrap_or("#FFFFFF").to_string();
+            let position_x = parse_f32(args, "position_x");
+            let position_y = parse_f32(args, "position_y");
+            let start_ms = parse_u64(args, "start_ms");
+            let duration_ms = parse_u64(args, "duration_ms");
+            to_json_string(api.add_text_clip(track_id, text, font_family, font_size, color_hex, position_x, position_y, start_ms, duration_ms))
+        }
+        "set_text_position" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let position_x = parse_f32(args, "position_x");
+            let position_y = parse_f32(args, "position_y");
+            to_json_string::<()>(api.set_text_position(clip_id, position_x, position_y))
+        }
+        "set_text_style" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let font_family = args.get("font_family").and_then(|v| v.as_str()).unwrap_or("Inter").to_string();
+            let font_size = parse_f32(args, "font_size");
+            let color_hex = args.get("color_hex").and_then(|v| v.as_str()).unwrap_or("#FFFFFF").to_string();
+            to_json_string::<()>(api.set_text_style(clip_id, font_family, font_size, color_hex))
+        }
+        "get_available_fonts" => to_json_ok(&api.get_available_fonts()),
+        "import_subtitles" => {
+            let file_path = match args.get("file_path").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'file_path'"),
+            };
+            to_json_string(api.import_subtitles(file_path))
+        }
+
+        // ─── Effect Operations ────────────────────────────────────────────
+        "add_effect" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let filter_type_name = match args.get("filter_type_name").and_then(|v| v.as_str()) {
+                Some(f) => f.to_string(),
+                None => return to_json_err("missing 'filter_type_name'"),
+            };
+            to_json_string(api.add_effect(clip_id, filter_type_name))
+        }
+        "remove_effect" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let effect_id = match args.get("effect_id").and_then(|v| v.as_str()) {
+                Some(e) => e.to_string(),
+                None => return to_json_err("missing 'effect_id'"),
+            };
+            to_json_string::<()>(api.remove_effect(clip_id, effect_id))
+        }
+        "set_effect_parameter" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let effect_id = match args.get("effect_id").and_then(|v| v.as_str()) {
+                Some(e) => e.to_string(),
+                None => return to_json_err("missing 'effect_id'"),
+            };
+            let param_name = match args.get("param_name").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'param_name'"),
+            };
+            let value = parse_f32(args, "value");
+            to_json_string::<()>(api.set_effect_parameter(clip_id, effect_id, param_name, value))
+        }
+        "get_clip_effects" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            to_json_string(api.get_clip_effects(clip_id))
+        }
+        "toggle_effect" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let effect_id = match args.get("effect_id").and_then(|v| v.as_str()) {
+                Some(e) => e.to_string(),
+                None => return to_json_err("missing 'effect_id'"),
+            };
+            to_json_string::<()>(api.toggle_effect(clip_id, effect_id))
+        }
+        "add_chroma_key_effect" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let target_hue = parse_f32(args, "target_hue");
+            let hue_tolerance = parse_f32(args, "hue_tolerance");
+            let saturation_tolerance = parse_f32(args, "saturation_tolerance");
+            let softness = parse_f32(args, "softness");
+            let spill_suppression = parse_f32(args, "spill_suppression");
+            to_json_string(api.add_chroma_key_effect(clip_id, target_hue, hue_tolerance, saturation_tolerance, softness, spill_suppression))
+        }
+        "pick_color_from_frame" => {
+            let time_ms = parse_u64(args, "time_ms");
+            let x = args.get("x").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let y = args.get("y").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            to_json_string(api.pick_color_from_frame(time_ms, x, y))
+        }
+        "get_filter_catalog" => to_json_ok(&api.get_filter_catalog()),
+        "get_filter_presets" => to_json_ok(&api.get_filter_presets()),
+        "apply_filter_preset" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let preset_id = match args.get("preset_id").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'preset_id'"),
+            };
+            to_json_string::<()>(api.apply_filter_preset(clip_id, preset_id))
+        }
+
+        // ─── Transition Operations ────────────────────────────────────────
+        "add_transition" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let transition_type = match args.get("transition_type").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'transition_type'"),
+            };
+            let duration_ms = parse_u64(args, "duration_ms");
+            let direction = match args.get("direction").and_then(|v| v.as_str()) {
+                Some(d) => d.to_string(),
+                None => return to_json_err("missing 'direction'"),
+            };
+            to_json_string(api.add_transition(clip_id, transition_type, duration_ms, direction))
+        }
+        "get_clip_transition" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let direction = match args.get("direction").and_then(|v| v.as_str()) {
+                Some(d) => d.to_string(),
+                None => return to_json_err("missing 'direction'"),
+            };
+            to_json_ok(&api.get_clip_transition(clip_id, direction))
+        }
+        "remove_transition" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let direction = match args.get("direction").and_then(|v| v.as_str()) {
+                Some(d) => d.to_string(),
+                None => return to_json_err("missing 'direction'"),
+            };
+            to_json_string::<()>(api.remove_transition(clip_id, direction))
+        }
+        "get_transition_catalog" => to_json_ok(&api.get_transition_catalog()),
+
+        // ─── Speed Curve & Keyframe Operations ────────────────────────────
+        "set_clip_speed_curve" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let curve = match args.get("curve") {
+                Some(v) if !v.is_null() => match serde_json::from_value(v.clone()) {
+                    Ok(c) => c,
+                    Err(e) => return to_json_err(format!("invalid 'curve': {}", e)),
+                },
+                _ => return to_json_err("missing 'curve'"),
+            };
+            to_json_string::<()>(api.set_clip_speed_curve(clip_id, curve))
+        }
+        "get_clip_speed_curve" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            to_json_string(api.get_clip_speed_curve(clip_id))
+        }
+        "add_keyframe" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let property = match args.get("property").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'property'"),
+            };
+            let time_ms = parse_u64(args, "time_ms");
+            let value = parse_f32(args, "value");
+            let easing = args.get("easing").and_then(|v| v.as_str()).unwrap_or("Linear").to_string();
+            to_json_string(api.add_keyframe(clip_id, property, time_ms, value, easing))
+        }
+        "remove_keyframe" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let property = match args.get("property").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'property'"),
+            };
+            let keyframe_id = match args.get("keyframe_id").and_then(|v| v.as_str()) {
+                Some(k) => k.to_string(),
+                None => return to_json_err("missing 'keyframe_id'"),
+            };
+            to_json_string::<()>(api.remove_keyframe(clip_id, property, keyframe_id))
+        }
+        "update_keyframe" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let property = match args.get("property").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'property'"),
+            };
+            let keyframe_id = match args.get("keyframe_id").and_then(|v| v.as_str()) {
+                Some(k) => k.to_string(),
+                None => return to_json_err("missing 'keyframe_id'"),
+            };
+            let value = args.get("value").and_then(|v| v.as_f64()).map(|v| v as f32);
+            let easing = args.get("easing").and_then(|v| v.as_str()).map(|s| s.to_string());
+            to_json_string::<()>(api.update_keyframe(clip_id, property, keyframe_id, value, easing))
+        }
+        "get_keyframes" => {
+            let clip_id = match args.get("clip_id").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => return to_json_err("missing 'clip_id'"),
+            };
+            let property = match args.get("property").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'property'"),
+            };
+            to_json_string(api.get_keyframes(clip_id, property))
+        }
 
         // ─── GPU ──────────────────────────────────────────────────────────
         "is_gpu_available" => to_json_ok(&api.is_gpu_available()),
@@ -351,6 +701,152 @@ fn dispatch_method(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             to_json_string::<()>(api.set_gpu_acceleration(enabled))
+        }
+        "export_video_hardware" => {
+            let output_path = match args.get("output_path").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'output_path'"),
+            };
+            let settings = match args.get("settings") {
+                Some(v) if !v.is_null() => match serde_json::from_value(v.clone()) {
+                    Ok(s) => s,
+                    Err(e) => return to_json_err(format!("invalid 'settings': {}", e)),
+                },
+                _ => return to_json_err("missing 'settings'"),
+            };
+            to_json_string(api.export_video_hardware(output_path, settings))
+        }
+
+        // ─── Cloud Sync ──────────────────────────────────────────────────
+        "sync_project" => {
+            let project_id = match args.get("project_id").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'project_id'"),
+            };
+            to_json_string(api.sync_project(project_id))
+        }
+        "get_sync_status" => {
+            let project_id = match args.get("project_id").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'project_id'"),
+            };
+            to_json_ok(&api.get_sync_status(project_id))
+        }
+        "get_cloud_projects" => to_json_ok(&api.get_cloud_projects()),
+        "resolve_sync_conflict" => {
+            let project_id = match args.get("project_id").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'project_id'"),
+            };
+            let resolution = match args.get("resolution").and_then(|v| v.as_str()) {
+                Some(r) => r.to_string(),
+                None => return to_json_err("missing 'resolution'"),
+            };
+            to_json_string(api.resolve_sync_conflict(project_id, resolution))
+        }
+
+        // ─── Templates ───────────────────────────────────────────────────
+        "get_templates" => to_json_ok(&api.get_templates()),
+        "get_template_details" => {
+            let template_id = match args.get("template_id").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'template_id'"),
+            };
+            to_json_ok(&api.get_template_details(template_id))
+        }
+        "instantiate_template" => {
+            let template_id = match args.get("template_id").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'template_id'"),
+            };
+            let assignments: std::collections::HashMap<String, String> = args
+                .get("assignments")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            to_json_string(api.instantiate_template(template_id, assignments))
+        }
+
+        // ─── Transcription ───────────────────────────────────────────────
+        "transcribe_audio" => {
+            let asset_id = match args.get("asset_id").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => return to_json_err("missing 'asset_id'"),
+            };
+            let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
+            to_json_string(api.transcribe_audio(asset_id, language))
+        }
+        "add_subtitles_from_transcription" => {
+            let asset_id = match args.get("asset_id").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => return to_json_err("missing 'asset_id'"),
+            };
+            let track_id = match args.get("track_id").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return to_json_err("missing 'track_id'"),
+            };
+            to_json_string(api.add_subtitles_from_transcription(asset_id, track_id))
+        }
+
+        // ─── Proxy Workflow ──────────────────────────────────────────────
+        "generate_proxy" => {
+            let asset_id = match args.get("asset_id").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => return to_json_err("missing 'asset_id'"),
+            };
+            let source_path = match args.get("source_path").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => return to_json_err("missing 'source_path'"),
+            };
+            to_json_string(api.generate_proxy(asset_id, source_path))
+        }
+        "get_proxy_path" => {
+            let asset_id = match args.get("asset_id").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => return to_json_err("missing 'asset_id'"),
+            };
+            to_json_ok(&api.get_proxy_path(asset_id))
+        }
+        "set_proxy_quality" => {
+            let quality = match args.get("quality").and_then(|v| v.as_str()) {
+                Some(q) => q.to_string(),
+                None => return to_json_err("missing 'quality'"),
+            };
+            to_json_string::<()>(api.set_proxy_quality(quality))
+        }
+        "get_proxy_quality" => to_json_ok(&api.get_proxy_quality()),
+        "clear_proxy_cache" => to_json_string(api.clear_proxy_cache()),
+        "get_proxy_cache_size" => to_json_string(api.get_proxy_cache_size()),
+        "get_proxy_count" => to_json_ok(&api.get_proxy_count()),
+        "set_cache_dir" => {
+            let path = match args.get("path").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return to_json_err("missing 'path'"),
+            };
+            to_json_string::<()>(api.set_cache_dir(path))
+        }
+        "set_auto_proxy" => {
+            let enabled = args.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            to_json_string::<()>(api.set_auto_proxy(enabled))
+        }
+        "is_auto_proxy_enabled" => to_json_ok(&api.is_auto_proxy_enabled()),
+        "get_proxy_info" => {
+            let asset_id = match args.get("asset_id").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => return to_json_err("missing 'asset_id'"),
+            };
+            to_json_ok(&api.get_proxy_info(asset_id))
+        }
+        "regenerate_proxy" => {
+            let asset_id = match args.get("asset_id").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => return to_json_err("missing 'asset_id'"),
+            };
+            to_json_string(api.regenerate_proxy(asset_id))
+        }
+        "should_generate_proxy" => {
+            let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            to_json_ok(&api.should_generate_proxy(width, height))
         }
 
         // ─── Profiling (free functions, not methods on EditorsProEngineApi) ───
@@ -385,17 +881,10 @@ fn dispatch_method(
         }
 
         // ─── Stream-based methods (Phase C.14) ─────────────────────────────
-        // `stream_frames` is NOT exposed via the FFI dispatcher because
-        // it requires a `flutter_rust_bridge::StreamSink<BridgeFrame>`
-        // which cannot be passed across a plain C FFI boundary. The
-        // method is only usable when `flutter_rust_bridge_codegen generate`
-        // has been run to produce idiomatic per-method bindings.
-        //
-        // Until then, the Dart side can poll `get_frame` as a fallback.
-        // The performance difference is:
-        //   - Polling: 30 FFI round-trips/sec, 30 mutex locks/sec
-        //   - Streaming: 1 FFI call, 30 StreamSink.add() calls (lock-free)
-        // The streaming path is ~3x faster in practice.
+        // `stream_frames` and `export_video_streaming` are NOT exposed via
+        // the FFI dispatcher because they require StreamSink which cannot
+        // be passed across a plain C FFI boundary. Use polling fallbacks:
+        // get_frame / export_video_with_callback.
 
         // ─── Catch-all ────────────────────────────────────────────────────
         _ => to_json_err(format!("unknown method: {}", method)),
@@ -411,6 +900,17 @@ fn parse_u64(args: &serde_json::Value, key: &str) -> u64 {
                 .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
         })
         .unwrap_or(0)
+}
+
+/// Parse an f32 from a JSON value, accepting both numbers and numeric strings.
+fn parse_f32(args: &serde_json::Value, key: &str) -> f32 {
+    args.get(key)
+        .and_then(|v| {
+            v.as_f64()
+                .map(|f| f as f32)
+                .or_else(|| v.as_str().and_then(|s| s.parse::<f32>().ok()))
+        })
+        .unwrap_or(0.0)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

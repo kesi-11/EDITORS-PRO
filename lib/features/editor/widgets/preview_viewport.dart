@@ -395,28 +395,38 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
       rotation: 0.0,
       isSelected: true,
       onMove: (delta) {
-        // Move the clip position via keyframe or direct property
-        developer.log(
-          'Transform move: delta=${delta.dx},${delta.dy}',
-          name: 'PreviewViewport',
+        // Convert pixel delta to normalized position and update via keyframe
+        final normalizedDx = delta.dx / 320; // approximate preview width
+        final normalizedDy = delta.dy / 180; // approximate preview height
+        ref.read(editorProvider.notifier).updateClipTransform(
+          clipId: selectedClip!.id,
+          property: 'position_x',
+          delta: normalizedDx,
+        );
+        ref.read(editorProvider.notifier).updateClipTransform(
+          clipId: selectedClip!.id,
+          property: 'position_y',
+          delta: normalizedDy,
         );
       },
       onScaleStart: (handleType) {
-        developer.log(
-          'Transform scale start: $handleType',
-          name: 'PreviewViewport',
-        );
+        // Track initial scale for this handle type
       },
       onScaleUpdate: (delta) {
-        developer.log(
-          'Transform scale update: delta=${delta.dx},${delta.dy}',
-          name: 'PreviewViewport',
+        // Convert pixel delta to normalized scale change
+        final scaleDelta = 1.0 + (delta.dx + delta.dy) / 400;
+        ref.read(editorProvider.notifier).updateClipTransform(
+          clipId: selectedClip!.id,
+          property: 'scale',
+          delta: scaleDelta - 1.0,
         );
       },
       onRotate: (angleDelta) {
-        developer.log(
-          'Transform rotate: ${angleDelta.toStringAsFixed(3)} rad',
-          name: 'PreviewViewport',
+        // Add a rotation keyframe at the current time
+        ref.read(editorProvider.notifier).updateClipTransform(
+          clipId: selectedClip!.id,
+          property: 'rotation',
+          delta: angleDelta,
         );
       },
     );
