@@ -101,8 +101,8 @@ class _EffectCatalogState extends ConsumerState<EffectCatalog>
       itemCount: _filterCatalog.length,
       itemBuilder: (context, index) {
         final filter = _filterCatalog[index];
-        final name = filter.name ?? filter['name'] ?? 'Unknown';
-        final icon = filter.icon ?? filter['icon'] ?? 'filter';
+        final String name = (filter.name as String?) ?? (filter['name'] as String?) ?? 'Unknown';
+        final String icon = (filter.icon as String?) ?? (filter['icon'] as String?) ?? 'filter';
 
         return _FilterCard(
           name: name,
@@ -126,9 +126,9 @@ class _EffectCatalogState extends ConsumerState<EffectCatalog>
       itemCount: _presets.length,
       itemBuilder: (context, index) {
         final preset = _presets[index];
-        final id = preset.id ?? preset['id'] ?? '';
-        final name = preset.name ?? preset['name'] ?? 'Unknown';
-        final description = preset.description ?? preset['description'] ?? '';
+        final String id = (preset.id as String?) ?? (preset['id'] as String?) ?? '';
+        final String name = (preset.name as String?) ?? (preset['name'] as String?) ?? 'Unknown';
+        final String description = (preset.description as String?) ?? (preset['description'] as String?) ?? '';
 
         return Card(
           color: AppTheme.surfaceVariant,

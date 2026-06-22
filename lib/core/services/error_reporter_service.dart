@@ -113,7 +113,7 @@ class ErrorReporterService {
   final Map<ErrorCategory, int> _errorCounts = {};
 
   final _errorController = StreamController<EngineError>.broadcast();
-  static const _criticalErrorController = StreamController<EngineError>.broadcast();
+  static final _criticalErrorController = StreamController<EngineError>.broadcast();
 
   /// Stream of all reported errors
   Stream<EngineError> get onError => _errorController.stream;

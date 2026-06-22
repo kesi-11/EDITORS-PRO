@@ -118,10 +118,10 @@ class _TransitionPickerState extends ConsumerState<TransitionPicker> {
                   itemCount: _transitions.length,
                   itemBuilder: (context, index) {
                     final transition = _transitions[index];
-                    final name = transition.name ?? transition['name'] ?? 'Unknown';
-                    final icon = transition.icon ?? transition['icon'] ?? 'transition';
-                    final defaultDuration = transition.defaultDurationMs ??
-                        transition['default_duration_ms'] ?? 500;
+                    final String name = (transition.name as String?) ?? (transition['name'] as String?) ?? 'Unknown';
+                    final String icon = (transition.icon as String?) ?? (transition['icon'] as String?) ?? 'transition';
+                    final int defaultDuration = (transition.defaultDurationMs as int?) ??
+                        (transition['default_duration_ms'] as int?) ?? 500;
 
                     return _TransitionCard(
                       name: name,
