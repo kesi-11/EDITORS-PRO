@@ -1,0 +1,4 @@
+description = "Motion Tracking — motion track, track point, planar track"
+prompt = """
+Motion track. Pick high-contrast feature. Track forward. Verify frame-by-frame. Fix drift with manual keyframes. Smooth the track. Attach the effect. Verify attachment. EDITORS-PRO has point-track (centroid) — mark with `video:` for planar/camera upgrade if needed.
+"""

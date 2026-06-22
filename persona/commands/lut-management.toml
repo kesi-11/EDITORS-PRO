@@ -1,0 +1,4 @@
+description = "LUT Management — apply lut, cube file, 3dl"
+prompt = """
+Apply LUT management. Load the .cube/.3dl file via effects/lut.rs. Technical LUT first (Log→Rec.709), then grade, then creative LUT last. Verify legal range after LUT. Never stack multiple creative LUTs — grade in the node graph instead. Mark any LUT shortcut with a `video:` comment and its ceiling.
+"""

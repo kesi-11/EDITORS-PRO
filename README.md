@@ -166,6 +166,47 @@ EDITORS-PRO/
 - Workspace layouts
 - Auto-save and crash recovery
 
+### Pro Tools (Phase F — persona-driven videographer toolkit)
+
+A curated professional videographer toolkit inspired by the [ponytail](https://github.com/DietrichGebert/ponytail) persona framework. Adds 11 new engine modules, 10 Flutter UI panels, and a 24-skill persona system with safety carve-outs pinned by a CI checker.
+
+**New engine modules** (`engine/src/`):
+- `effects/lut.rs` — .cube LUT parser (1D + 3D) with trilinear interpolation
+- `effects/stabilization.rs` — 2D deshake via block-matching motion estimation
+- `effects/motion_tracking.rs` — point tracker (centroid + KLT stub)
+- `effects/color_match.rs` — histogram-based shot matching
+- `effects/sky_replace.rs` — luminance-key sky replacement
+- `effects/legalizer.rs` — Rec.709 broadcast-legal clamping with soft-clip
+- `analysis/scopes.rs` — waveform, vectorscope, RGB parade, histogram
+- `analysis/beat_detect.rs` — spectral-flux onset detection + BPM estimation
+- `export_engine/batch.rs` — batch export queue
+- `project/interop.rs` — EDL / FCPXML / OpenTimelineIO export
+- `timeline/advanced_trim.rs` — ripple / roll / slip / slide trim modes
+
+**New Flutter UI panels** (`lib/features/editor/widgets/`):
+- `lut_browser.dart` — LUT import + intensity slider
+- `color_scopes_panel.dart` — waveform/vectorscope/RGB parade/histogram
+- `lens_correction_panel.dart` — K1/K2/K3 + CA + vignette controls
+- `film_grain_picker.dart` — 17 stock presets + halation
+- `noise_reduction_panel.dart` — Bilateral / Wiener / NLM / Temporal
+- `audio_loudness_meter.dart` — LUFS + dBTP with platform targets
+- `batch_export_queue.dart` — multi-job queue UI
+- `stabilization_panel.dart` — smoothing + crop + motion mode
+- `multicam_switcher.dart` — angle grid for real-time switching
+- `advanced_trim_modes.dart` — ripple/roll/slip/slide toolbar
+- `markers_panel.dart` — colored markers with 7 types
+
+**Persona system** (`persona/`):
+- `AGENTS.md` — canonical "professional videographer" ruleset (always-on)
+- `skills/<trick>/SKILL.md` × 24 — LUT, scopes, color match, dialogue cleanup, loudness, beat sync, narrative pacing, proxy workflow, delivery encode, green screen, film grain, sky replacement, stabilization, motion tracking, multicam, mask animation, lens correction, noise reduction, batch export, format interop, ripple-roll trim, keyframe curves, HDR delivery, broadcast legal
+- `commands/*.toml` × 24 — slash-command shortcuts
+- `hooks/` — SessionStart + UserPromptSubmit (intensity dial)
+- `scripts/check-video-invariants.js` — CI checker pinning 15 safety phrases
+- `scripts/video-debt-ledger.js` — harvests `video:` markers into a tracked ledger
+- `docs/nle-native.md` — "you think you need X / the NLE already has Y" lookup
+
+The persona has a 7-rung ladder (YAGNI → reuse → NLE-native → platform-native → plugin → one node → minimum graph), three intensity levels (`lite` social, `full` broadcast, `ultra` feature grade), and an explicit never-cut list (loudness, true-peak, legal range, title-safe, frame-rate, color space tagging, delivery spec, data loss).
+
 ### Performance
 - Zero-allocation buffer pool (500x allocation speedup)
 - O(1) LRU cache with hit/miss tracking

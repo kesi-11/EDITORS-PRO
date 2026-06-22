@@ -1,0 +1,4 @@
+description = "Beat-Synced Cutting — beat sync, cut on beat, music sync"
+prompt = """
+Beat-sync cuts. Detect beats (analysis/beat_detect.rs). Snap cuts to beat markers with magnetic snapping. Cut on accented beats (1 and 3 in 4/4), not every beat. Leave breathing room. Verify sync by ear. Don't cut on every beat — feels mechanical.
+"""

@@ -1,0 +1,4 @@
+description = "Dialogue Cleanup — clean dialogue, remove noise, denoise voice"
+prompt = """
+Clean dialogue: NR (subtle, 5-15 dB) → de-reverb → de-esser → high-pass 80 Hz → EQ boost 3 kHz → compressor 3:1 → limiter. Don't over-denoise (avoid the underwater sound). True-peak ≤ −1 dBTP streaming, −2 dBTP broadcast. If EDITORS-PRO engine lacks the tool, clean externally and re-link — mark with `video:` debt.
+"""

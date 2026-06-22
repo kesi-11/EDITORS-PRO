@@ -1,0 +1,4 @@
+description = "Color Scopes (Waveform, Vectorscope, RGB Parade, Histogram) — scopes, waveform, vectorscope"
+prompt = """
+Open color scopes. Waveform (Y) for luma distribution, vectorscope for chroma, RGB parade for white balance, histogram for distribution. Verify: blacks ≥ 16, highlights ≤ 235 (8-bit) or 64/940 (10-bit), skin tones on I-line. In full/ultra: scopes required before sign-off. Don't grade by eye alone.
+"""

@@ -23,6 +23,7 @@
 
 pub mod encoder;
 pub mod hardware_encoder;
+pub mod batch;
 
 #[cfg(test)]
 mod tests;

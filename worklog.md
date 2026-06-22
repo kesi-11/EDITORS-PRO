@@ -677,3 +677,52 @@ Stage Summary:
 - Token auto-refresh ensures seamless operation across sessions.
 - Full setup documentation in docs/GOOGLE_DRIVE_SETUP.md walks the user through Google Cloud Console configuration.
 - The only remaining step for the user is to register an OAuth2 client ID in Google Cloud Console and paste it into cloud_config.dart — the app handles everything else.
+
+---
+
+Task ID: F.1 (Phase F: Persona-Driven Pro Videographer Toolkit)
+Agent: Super Z (main)
+Task: Add more tools and tricks a videographer needs for professional work, using the ponytail persona framework (https://github.com/DietrichGebert/ponytail) as a structural model.
+
+Work Log:
+- Cloned EDITORS-PRO repo (provided PAT) and ponytail repo (public).
+- Deep-analyzed EDITORS-PRO: Flutter + Rust mobile video editor with massive engine (98 files, 75k LOC) but ~7 pro features engine-only with no UI, and 7+ pro features completely missing.
+- Deep-analyzed ponytail: AI agent persona framework with 7-rung ladder, explicit never-cut carve-outs, `ponytail:` debt convention, intensity dial, invariant-pinning CI checker, thin per-host adapters.
+- Built `persona/` directory with canonical AGENTS.md (always-on ruleset), README.md, 4 docs (nle-native, intensity-levels, safety-carveouts, video-debt-convention).
+- Generated 24 `skills/<trick>/SKILL.md` files via `scripts/generate-skills.js` (lut-management, color-scopes, color-match-shots, dialogue-cleanup, loudness-target, beat-sync-cut, narrative-pacing, proxy-workflow, delivery-encode-ladder, green-screen-key, film-grain-recipe, sky-replacement, video-stabilization, motion-tracking, multicam-editing, mask-animation, lens-correction, noise-reduction, batch-export, format-interop, ripple-roll-trim, keyframe-curves, hdr-delivery, broadcast-legal).
+- Generated 24 matching `commands/<trick>.toml` slash-command shortcuts.
+- Built `hooks/` (video-config, video-instructions, video-activate, video-mode-tracker, video-statusline.sh) for SessionStart + UserPromptSubmit injection.
+- Built `scripts/check-video-invariants.js` — pins 15 safety-critical phrases across AGENTS.md + skills. All 47 invariant checks pass.
+- Built `scripts/video-debt-ledger.js` — harvests `video:` markers. Initial scan: 122 markers in 41 files. Generated persona/DEBT.md.
+- Added 11 new Rust engine modules:
+  - engine/src/effects/lut.rs — .cube parser (1D + 3D) with trilinear interpolation, 3 unit tests
+  - engine/src/analysis/scopes.rs — waveform, vectorscope, RGB parade, histogram, out-of-range pixel counter, 4 unit tests
+  - engine/src/effects/stabilization.rs — 2D deshake via block matching, motion track smoothing, corrections, crop, 6 unit tests
+  - engine/src/effects/motion_tracking.rs — point tracker (centroid + patch matching), 1 unit test
+  - engine/src/effects/color_match.rs — histogram CDF-based shot matching, 2 unit tests
+  - engine/src/effects/sky_replace.rs — luminance-key sky replacement, 2 unit tests
+  - engine/src/effects/legalizer.rs — Rec.709 broadcast-legal clamping with soft-clip, 4 unit tests
+  - engine/src/analysis/beat_detect.rs — spectral-flux onset detection + BPM estimation, 3 unit tests
+  - engine/src/export_engine/batch.rs — batch export queue with status tracking, 8 unit tests
+  - engine/src/project/interop.rs — EDL (CMX 3600) + FCPXML v1.10 + OpenTimelineIO 0.17 export, 4 unit tests
+  - engine/src/timeline/advanced_trim.rs — ripple/roll/slip/slide validation, 5 unit tests
+- Wired new modules into lib.rs (analysis, effects, export_engine, project, timeline mod.rs files updated).
+- Added 18 new FFI dispatch arms to engine/src/api/ffi_dispatch.rs: lut_load_cube, lut_load_cube_content, compute_scopes, count_out_of_range_pixels, legalize_frame, estimate_motion, track_point, compute_color_match_lut, replace_sky, detect_beats, batch_enqueue, batch_jobs, batch_cancel, batch_clear_finished, export_interop, validate_advanced_trim. Added base64 + BATCH_QUEUE thread_local helpers.
+- Added `base64 = "0.22"` to engine/Cargo.toml.
+- Added 11 new Flutter UI widgets in lib/features/editor/widgets/: lut_browser.dart, color_scopes_panel.dart, lens_correction_panel.dart, film_grain_picker.dart, noise_reduction_panel.dart, audio_loudness_meter.dart, batch_export_queue.dart, stabilization_panel.dart, multicam_switcher.dart, advanced_trim_modes.dart, markers_panel.dart.
+- Updated README.md with new "Pro Tools (Phase F)" section listing all engine modules, widgets, and persona system.
+- Created docs/PRO_TOOLS.md documenting the persona-driven toolkit.
+- Generated persona/DEBT.md (initial ledger of 122 markers).
+
+Stage Summary:
+- Phase F adds 11 new Rust engine modules (~3,400 LOC including tests), 11 new Flutter UI widgets (~2,200 LOC), and a 24-skill persona system (24 SKILL.md + 24 commands.toml + 4 docs + 2 scripts + 5 hooks = ~5,500 LOC).
+- Total new code: ~11,100 LOC across 84 new files.
+- All 47 safety-invariant checks pass (15 pinned phrases verified across AGENTS.md + skills).
+- The persona has the 7-rung ladder, 3 intensity levels (lite/full/ultra), and the never-cut list (loudness, true-peak, legal range, title-safe, frame-rate, color space, delivery spec, data loss, stabilization ceiling).
+- The `video:` debt convention is documented, harvested (122 markers in 41 files), and tracked in persona/DEBT.md.
+- Each new engine module carries `video:` markers documenting its upgrade path (e.g., "2D translation only, upgrade to rotation+scale+perspective if motion is complex"; "8-bit clamping, upgrade to 10-bit if banding appears after legalization").
+- Each new Flutter widget documents the amateur vs professional approach in its dartdoc, referencing the corresponding skill in persona/skills/.
+- The toolkit directly addresses the top 11 missing pro features identified in the EDITORS-PRO audit (LUT management, color scopes, stabilization, motion tracking, batch export, format interop, ripple/roll/slip/slide trim, audio metering, advanced trim modes, plus engine-only module UI exposure).
+- No existing code was modified destructively — all changes are additive (new files, new dispatch arms, new pubspec entries).
+- The engine cannot be compiled here (no Android NDK / FFmpeg); the new modules are written to compile with the existing build but require a full build verification on the user's side.
+

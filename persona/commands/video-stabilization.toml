@@ -1,0 +1,4 @@
+description = "Video Stabilization — stabilize, deshake, stabilization"
+prompt = """
+Stabilize. 2D deshake via effects/stabilization.rs. Smoothing 30-60%, crop 8-12% to hide edge artifacts. Don't crank smoothing to 100% — jelly artifacts. If motion is parallax-heavy, upgrade to 3D camera solve (mark with `video:` debt). Verify no wobble.
+"""

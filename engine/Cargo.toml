@@ -71,6 +71,11 @@ once_cell = "1.20"
 # Flutter Rust Bridge (required for StreamSink support in bridge_api.rs)
 flutter_rust_bridge = "2.9"
 
+# Phase F: base64 for encoding/decoding frames across the FFI boundary
+# (used by the pro tools dispatch arms: compute_scopes, legalize_frame,
+# estimate_motion, replace_sky, etc.)
+base64 = "0.22"
+
 [features]
 # Default: include FFmpeg for full functionality
 default = ["ffmpeg"]

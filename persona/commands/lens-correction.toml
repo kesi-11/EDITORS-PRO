@@ -1,0 +1,4 @@
+description = "Lens Correction — lens correction, lens distortion, chromatic aberration"
+prompt = """
+Lens correction. Pick profile if known, else dial K1/K2/K3 with grid overlay. Fix CA at 200% zoom (red/blue offsets). Vignette: subtle removal or stylized addition. Use lens_correction_panel.dart widget. Don't over-correct — straight lines should be straight, not wobbly.
+"""

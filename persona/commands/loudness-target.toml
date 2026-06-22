@@ -1,0 +1,4 @@
+description = "Loudness Targeting (EBU R128 / ATSC A/85 / Platform) — loudness, lufs, ebu r128"
+prompt = """
+Target loudness. Measure integrated LUFS and true-peak. EBU R128: −23 LUFS, ≤ −1 dBTP. ATSC A/85: −24 LKFS. YouTube: −14 LUFS. TikTok: −18 LUFS. ≤ −1 dBTP streaming, ≤ −2 dBTP broadcast. Never ship without measuring. Use audio_loudness_meter.dart widget to verify live.
+"""

@@ -4,6 +4,7 @@
 //! including timeline state, media references, and settings.
 
 pub mod format;
+pub mod interop;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

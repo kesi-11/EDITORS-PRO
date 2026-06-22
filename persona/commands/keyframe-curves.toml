@@ -1,0 +1,4 @@
+description = "Keyframe Curves (Bezier) — keyframe curve, bezier keyframe, easing"
+prompt = """
+Keyframe curves. Use bezier, not linear. Ease-in for entering, ease-out for leaving, ease-in-out for settling. Shape tangents in the graph editor. Per-property lanes. Verify with real-time preview. Use keyframe_graph_editor.dart widget.
+"""

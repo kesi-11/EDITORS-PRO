@@ -1,0 +1,4 @@
+description = "Multicam Editing — multicam, multi-cam, multi angle"
+prompt = """
+Multicam. Group angles. Sync via audio cross-correlation or timecode. Live-switch by tapping. Refine cuts. Hard cuts for energy, dissolves for soft transitions. Audio from the best angle (usually board feed). Use multicam_switcher.dart widget.
+"""

@@ -1,0 +1,4 @@
+description = "Film Grain Recipe — film grain, add grain, grain recipe"
+prompt = """
+Film grain. Pick the right stock (Kodak Vision3 warm, Fuji cool, Ilford B&W). Grain at 15-30%. Halation on highlights for film emulation. Match grain to footage color temperature. Verify grain doesn't push encode bitrate over budget. Use film_grain_picker.dart widget.
+"""

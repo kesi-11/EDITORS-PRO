@@ -4,6 +4,7 @@
 //! (video, audio, text, effect) arranged vertically, and clips
 //! arranged horizontally on each track representing segments of media.
 
+pub mod advanced_trim;
 pub mod clip;
 pub mod command;
 pub mod keyframe;
