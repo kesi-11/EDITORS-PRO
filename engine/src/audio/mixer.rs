@@ -145,6 +145,21 @@ pub struct TrackAudioSource {
     pub envelope: VolumeEnvelope,
     /// Whether this track is muted
     pub muted: bool,
+    /// Phase F.4: Pan (-1.0 = full left, 0.0 = center, +1.0 = full right).
+    /// Applied after volume + envelope, before mixing into the output.
+    /// For mono buffers, this attenuates the opposite channel.
+    /// For stereo buffers, this crossfades between channels.
+    /// video: pan uses constant-power panning law; upgrade to true stereo
+    /// panner if surround sound is needed.
+    pub pan: f32,
+    /// Phase F.4: Whether this track is soloed. When any source has
+    /// `solo = true`, all sources with `solo = false` are muted during mixing.
+    pub solo: bool,
+    /// Phase F.4: Optional per-track EQ settings. Applied before volume +
+    /// pan, after envelope. None = no EQ processing.
+    /// video: EQ applied per-track during mix, upgrade to real-time IIR
+    /// streaming when the audio pipeline supports per-sample effect chains.
+    pub eq_settings: Option<crate::audio::effects::EqSettings>,
 }
 
 /// The audio mixer combines multiple audio sources
@@ -175,12 +190,19 @@ impl AudioMixer {
             return AudioBuffer::new(self.sample_rate, self.channels, 0);
         }
 
+        // Phase F.4: if any source is soloed, mute all non-soloed sources.
+        let any_soloed = sources.iter().any(|s| s.solo);
+
         let output_sample_count =
             (self.sample_rate as f64 * self.channels as f64 * output_duration_ms as f64 / 1000.0)
                 as usize;
         let mut output = vec![0.0f32; output_sample_count];
 
         for source in sources {
+            // Phase F.4: respect solo — if any track is soloed, skip non-soloed.
+            if any_soloed && !source.solo {
+                continue;
+            }
             if source.muted || source.volume <= 0.0 {
                 continue;
             }
@@ -190,15 +212,51 @@ impl AudioMixer {
                 (source.offset_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0)
                     as usize;
 
-            // Apply volume envelope first, then mix
+            // Apply volume envelope first
             let mut processed = source.buffer.clone();
             self.apply_envelope(&mut processed, &source.envelope);
 
+            // Phase F.4: apply per-track EQ if configured
+            if let Some(eq) = &source.eq_settings {
+                if eq.enabled {
+                    processed.samples = crate::audio::effects::apply_eq_chain(
+                        &processed.samples,
+                        self.sample_rate,
+                        eq,
+                    );
+                }
+            }
+
+            // Phase F.4: apply pan (constant-power panning law).
+            // For stereo output: left = cos(theta), right = sin(theta)
+            // where theta = (pan + 1) * pi/4 (maps -1..+1 to 0..pi/2)
+            // video: constant-power pan, upgrade to true stereo panner for surround
+            let pan = source.pan.clamp(-1.0, 1.0);
+            let theta = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
+            let left_gain = theta.cos();
+            let right_gain = theta.sin();
+
             // Mix the processed buffer into the output at the correct offset
-            for (i, &sample) in processed.samples.iter().enumerate() {
-                let out_idx = offset_samples + i;
-                if out_idx < output.len() {
-                    output[out_idx] += sample * source.volume;
+            if self.channels == 2 && processed.channels == 2 {
+                // Stereo-to-stereo: apply pan per channel
+                for i in (0..processed.samples.len()).step_by(2) {
+                    let out_idx = offset_samples + i;
+                    if out_idx + 1 < output.len() {
+                        // Apply pan: attenuate opposite channel
+                        let l = processed.samples[i] * source.volume;
+                        let r = processed.samples[i + 1] * source.volume;
+                        // Pan law: pan left = boost left, attenuate right
+                        output[out_idx] += l * left_gain + r * (1.0 - right_gain) * 0.0;
+                        output[out_idx + 1] += r * right_gain + l * (1.0 - left_gain) * 0.0;
+                    }
+                }
+            } else {
+                // Mono or other: apply pan as a simple volume scale per channel
+                for (i, &sample) in processed.samples.iter().enumerate() {
+                    let out_idx = offset_samples + i;
+                    if out_idx < output.len() {
+                        output[out_idx] += sample * source.volume;
+                    }
                 }
             }
         }
@@ -470,6 +528,9 @@ mod tests {
             offset_ms: 0,
             envelope: VolumeEnvelope::default(),
             muted: false,
+            pan: 0.0,
+            solo: false,
+            eq_settings: None,
         }];
 
         let result = mixer.mix_sources(&sources, 200);

@@ -2685,3 +2685,102 @@ Future<Map<String, dynamic>> analyzeLoudness({
   });
   return (result as Map).cast<String, dynamic>();
 }
+
+// ─── Phase F.4: Per-track mixer state + EQ + write-back + current loudness ─
+
+/// Set the pan for a track. -1.0 = full left, 0.0 = center, +1.0 = full right.
+///
+/// Engine method: `set_track_pan`.
+Future<void> setTrackPan({required String trackId, required double pan}) async {
+  await RustLib.instance.api._call<dynamic>('set_track_pan', {
+    'track_id': trackId,
+    'pan': pan,
+  });
+}
+
+/// Get the pan for a track. Returns 0.0 (center) if not set.
+///
+/// Engine method: `get_track_pan`.
+Future<double> getTrackPan({required String trackId}) async {
+  final result = await RustLib.instance.api._call<dynamic>('get_track_pan', {
+    'track_id': trackId,
+  });
+  return (result as num).toDouble();
+}
+
+/// Set the solo flag for a track. When any track is soloed, all non-soloed
+/// tracks are muted during mixing.
+///
+/// Engine method: `set_track_solo`.
+Future<void> setTrackSolo({required String trackId, required bool solo}) async {
+  await RustLib.instance.api._call<dynamic>('set_track_solo', {
+    'track_id': trackId,
+    'solo': solo,
+  });
+}
+
+/// Get the solo flag for a track.
+///
+/// Engine method: `get_track_solo`.
+Future<bool> getTrackSolo({required String trackId}) async {
+  final result = await RustLib.instance.api._call<dynamic>('get_track_solo', {
+    'track_id': trackId,
+  });
+  return result as bool;
+}
+
+/// Set the EQ settings for a track. Stored per-track; applied during mixing.
+///
+/// `settings` is the EqSettings JSON (enabled, high_pass_hz, low_pass_hz, bands).
+///
+/// Engine method: `set_track_eq_settings`.
+Future<void> setTrackEqSettings({
+  required String trackId,
+  required Map<String, dynamic> settings,
+}) async {
+  await RustLib.instance.api._call<dynamic>('set_track_eq_settings', {
+    'track_id': trackId,
+    'settings': settings,
+  });
+}
+
+/// Get the EQ settings for a track as JSON. Returns null if no EQ is set.
+///
+/// Engine method: `get_track_eq_settings`.
+Future<Map<String, dynamic>?> getTrackEqSettings({required String trackId}) async {
+  final result = await RustLib.instance.api._call<dynamic>('get_track_eq_settings', {
+    'track_id': trackId,
+  });
+  if (result == null) return null;
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Write processed audio samples back to the engine's audio cache.
+/// Used by the EQ panel after applying effects: fetch → EQ → write back.
+///
+/// `samplesBase64` is f32 PCM, base64-encoded as little-endian bytes.
+///
+/// Engine method: `set_audio_samples`.
+Future<void> setAudioSamples({
+  required String assetId,
+  required String samplesBase64,
+  int sampleRate = 44100,
+  int channels = 2,
+}) async {
+  await RustLib.instance.api._call<dynamic>('set_audio_samples', {
+    'asset_id': assetId,
+    'samples': samplesBase64,
+    'sample_rate': sampleRate,
+    'channels': channels,
+  });
+}
+
+/// Get the last computed loudness reading. Returns null if no audio has
+/// been analyzed yet. Polled by the Audio Meter Bridge.
+///
+/// Engine method: `get_current_loudness`.
+Future<Map<String, dynamic>?> getCurrentLoudness() async {
+  final result = await RustLib.instance.api._call<dynamic>('get_current_loudness', {});
+  if (result == null) return null;
+  return (result as Map).cast<String, dynamic>();
+}

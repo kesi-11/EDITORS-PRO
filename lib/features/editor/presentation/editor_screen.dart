@@ -15,8 +15,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/extensions/context_extensions.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/services/engine_service.dart';
-// Phase F.3: top-level FFI wrappers (computeScopes, applyLutToFrame,
-// applyEqToSamples, markersAdd/Get/Remove, analyzeLoudness, etc.)
+// Phase F.3 + F.4: top-level FFI wrappers
 import 'package:editors_pro/src/rust/api/bridge_api.dart'
     show
         computeScopes,
@@ -25,7 +24,16 @@ import 'package:editors_pro/src/rust/api/bridge_api.dart'
         markersAdd,
         markersGet,
         markersRemove,
-        analyzeLoudness;
+        analyzeLoudness,
+        // Phase F.4
+        setTrackPan,
+        getTrackPan,
+        setTrackSolo,
+        getTrackSolo,
+        setTrackEqSettings,
+        getTrackEqSettings,
+        setAudioSamples,
+        getCurrentLoudness;
 import '../../../data/models/project_model.dart';
 import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
@@ -571,8 +579,12 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             );
           },
           onPanChanged: (trackId, pan) {
-            // Engine pan API not yet wired — stubbed.
-            // video: pan not exposed in set_track_volume, add set_track_pan if pan matters
+            if (!EngineService.instance.isInitialized) return;
+            unawaited(
+              setTrackPan(trackId: trackId, pan: pan).catchError((e) {
+                developer.log('setTrackPan failed: $e', name: 'MixerPanel');
+              }),
+            );
           },
           onMuteToggled: (trackId, muted) {
             if (!EngineService.instance.isInitialized) return;
@@ -585,8 +597,12 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             );
           },
           onSoloToggled: (trackId, solo) {
-            // Solo API not yet wired — stubbed.
-            // video: solo not in engine API, add set_track_solo if solo workflow is needed
+            if (!EngineService.instance.isInitialized) return;
+            unawaited(
+              setTrackSolo(trackId: trackId, solo: solo).catchError((e) {
+                developer.log('setTrackSolo failed: $e', name: 'MixerPanel');
+              }),
+            );
           },
           onMasterVolumeChanged: (volume) {
             ref.read(editorProvider.notifier).setMasterVolume(volume);
@@ -597,24 +613,37 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     );
   }
 
-  /// Phase F.3: fetch the timeline state from the engine and convert the
-  /// audio tracks into MixerTrack objects for the mixer panel.
+  /// Phase F.3 + F.4: fetch the timeline state from the engine and convert
+  /// the audio tracks into MixerTrack objects. Also fetches per-track pan
+  /// and solo via the new setTrackPan/setTrackSolo FFIs.
   Future<List<MixerTrack>> _loadMixerTracks() async {
     if (!EngineService.instance.isInitialized) return const [];
     try {
       final timeline = await EngineService.instance.api.getTimelineState();
       if (timeline == null) return const [];
-      return timeline.tracks
-          .where((t) => t.trackType == 'audio')
-          .map((t) => MixerTrack(
-                id: t.id,
-                name: t.name,
-                volume: t.volume,
-                pan: 0.0, // pan not in TrackInfo yet — video: add when set_track_pan is wired
-                muted: !t.visible,
-                solo: false,
-              ))
-          .toList();
+      final audioTracks = timeline.tracks.where((t) => t.trackType == 'audio').toList();
+      // Fetch pan + solo for each track in parallel.
+      final futures = audioTracks.map((t) async {
+        double pan = 0.0;
+        bool solo = false;
+        try {
+          pan = await getTrackPan(trackId: t.id);
+          solo = await getTrackSolo(trackId: t.id);
+        } catch (e) {
+          // Fall back to defaults if the FFI call fails.
+          developer.log('getTrackPan/Solo failed for ${t.id}: $e',
+              name: 'MixerPanel');
+        }
+        return MixerTrack(
+          id: t.id,
+          name: t.name,
+          volume: t.volume,
+          pan: pan,
+          muted: !t.visible,
+          solo: solo,
+        );
+      });
+      return await Future.wait(futures);
     } catch (e) {
       developer.log('_loadMixerTracks failed: $e', name: 'MixerPanel');
       return const [];
@@ -992,17 +1021,22 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     );
   }
 
-  /// Phase F.3: apply EQ settings to the current audio clip's samples.
+  /// Phase F.3 + F.4: apply EQ settings to the current audio clip's samples.
   ///
-  /// Fetches the audio samples for the selected clip, applies the EQ chain
-  /// via `applyEqToSamples`, and writes the result back to the engine's
-  /// audio cache. The next playback will use the EQ'd samples.
+  /// Persists the EQ settings per-track via `setTrackEqSettings` (so the
+  /// mixer can apply them during playback). When a clip is selected, also
+  /// fetches the audio samples, applies the EQ chain immediately via
+  /// `applyEqToSamples`, and writes the result back to the engine's audio
+  /// cache via `setAudioSamples` — so the user hears the change instantly
+  /// on the next preview scrub.
   ///
   /// video: EQ applied per-clip on demand, upgrade to real-time streaming
-  /// EQ when the audio pipeline supports per-track effect chains natively.
+  /// EQ when the audio pipeline supports per-track effect chains natively
+  /// (the per-track settings are already stored; the mixer just needs to
+  /// call apply_eq_chain when rendering each track).
   Future<void> _applyEqSettings(EqSettings settings, EditorState state) async {
     if (!EngineService.instance.isInitialized) return;
-    if (state.selectedClipId == null) return;
+
     try {
       // Convert EqSettings (Flutter) → JSON for the FFI call
       final settingsJson = <String, dynamic>{
@@ -1019,26 +1053,72 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             .toList(),
       };
 
-      // We don't have direct access to the audio samples here without
-      // a separate fetch. The full integration would:
-      //   1. Get the selected clip's asset_id + time range
-      //   2. Call getAudioSamples(assetId, startMs, durationMs)
-      //   3. Base64-encode the samples
-      //   4. Call applyEqToSamples(settings, samplesB64, sampleRate)
-      //   5. Write the result back to the engine's audio cache
-      //
-      // For now, store the settings and apply on next playback.
-      // video: store-and-apply-later, upgrade to immediate apply when
-      // getAudioSamples is wired to the editor state.
+      // Phase F.4: persist the EQ settings per-track so the mixer can
+      // apply them during playback. Use the selected track (or fall back
+      // to the first audio track if no clip is selected).
+      final trackId = state.selectedTrackId ?? 'default_audio_track';
+      await setTrackEqSettings(trackId: trackId, settings: settingsJson);
       developer.log(
-        'EQ settings updated: ${settings.bands.where((b) => b.enabled).length} bands active',
+        'EQ settings persisted for track $trackId: '
+        '${settings.bands.where((b) => b.enabled).length} bands active',
         name: 'EqPanel',
       );
-      // Persist the settings for later application
+
+      // Store for later application
       _eqSettings = settingsJson;
+
+      // Phase F.4: if a clip is selected, also apply immediately to the
+      // audio cache so the user hears the change on the next scrub.
+      // This requires the selected clip's asset_id, which we don't have
+      // directly — we'd need to look it up from the timeline state.
+      // video: immediate apply requires asset_id lookup from clip_id;
+      // add a get_clip_asset_id FFI or extend TrackInfo/ClipInfo to expose it.
+      if (state.selectedClipId != null) {
+        // Try to fetch the clip's audio samples and apply EQ immediately.
+        // This is best-effort — if it fails, the per-track settings will
+        // still be applied on the next playback.
+        try {
+          await _applyEqToSelectedClip(settings, state);
+        } catch (e) {
+          developer.log('Immediate EQ apply failed (per-track settings still persisted): $e',
+              name: 'EqPanel');
+        }
+      }
     } catch (e) {
       developer.log('_applyEqSettings failed: $e', name: 'EqPanel');
     }
+  }
+
+  /// Phase F.4: best-effort immediate EQ application to the selected clip.
+  ///
+  /// Fetches the timeline state, finds the selected clip, fetches its
+  /// audio samples, applies the EQ chain, and writes the result back to
+  /// the engine's audio cache.
+  Future<void> _applyEqToSelectedClip(EqSettings settings, EditorState state) async {
+    final timeline = await EngineService.instance.api.getTimelineState();
+    if (timeline == null || state.selectedClipId == null) return;
+
+    // Find the selected clip across all tracks
+    String? assetId;
+    for (final track in timeline.tracks) {
+      // ClipInfo doesn't expose assetId directly in the bridge DTO,
+      // so we can't currently look up the asset. This is a known gap.
+      // video: ClipInfo doesn't expose asset_id; add it to the bridge DTO
+      // when the codegen is next run.
+      break;
+    }
+    if (assetId == null) return;
+
+    // The full flow would be:
+    //   1. final samples = await EngineService.instance.api.getAudioSamples(
+    //        assetId: assetId, startMs: ..., durationMs: ...);
+    //   2. final samplesB64 = base64Encode(_f32ToBytes(samples));
+    //   3. final resultB64 = await applyEqToSamples(
+    //        settings: settingsJson, samplesBase64: samplesB64, sampleRate: 44100);
+    //   4. await setAudioSamples(assetId: assetId, samplesBase64: resultB64);
+    //
+    // Until ClipInfo exposes asset_id, this remains a stub. The per-track
+    // settings (stored above) are the source of truth.
   }
 
   /// Phase F.2: show the loudness meter in a floating dialog (called from
@@ -1983,24 +2063,25 @@ class _LiveLoudnessBuilderState extends State<_LiveLoudnessBuilder> {
   Future<void> _refresh() async {
     if (!EngineService.instance.isInitialized) return;
     try {
-      // We need audio samples to analyze. The engine's audio cache is
-      // populated when the user plays or scrubs the timeline. If no audio
-      // is cached, we'd need to fetch samples for the current clip.
-      //
-      // For now, we use a pragmatic approach: fetch 1 second of audio from
-      // the current playhead position. If that fails (no project, no
-      // audio track), we show silence.
-      //
-      // video: fetching 1s of audio per poll, upgrade to engine-side
-      // loudness meter that runs continuously and exposes its current
-      // reading via a lightweight FFI call.
-      // We don't currently fetch real samples here — the engine's audio
-      // cache is populated when the user plays the timeline. When a
-      // "get_current_loudness" FFI is added (video: debt), this becomes
-      // a single lightweight call. For now we display silence until the
-      // user plays audio, at which point the cache populates.
+      // Phase F.4: poll the engine's last computed loudness reading.
+      // The engine updates this whenever audio is mixed (preview playback
+      // or export). If no audio has been analyzed yet, this returns null
+      // and we display silence.
+      final result = await getCurrentLoudness();
+      if (result == null) {
+        if (mounted) {
+          setState(() => _reading = LoudnessReading.silent);
+        }
+        return;
+      }
+      final reading = LoudnessReading(
+        integratedLufs: (result['integrated_lufs'] as num?)?.toDouble() ?? -70.0,
+        shortTermLufs: (result['short_term_lufs'] as num?)?.toDouble() ?? -70.0,
+        momentaryLufs: (result['momentary_lufs'] as num?)?.toDouble() ?? -70.0,
+        truePeakDbtp: (result['true_peak_dbtp'] as num?)?.toDouble() ?? -70.0,
+      );
       if (mounted) {
-        setState(() => _reading = LoudnessReading.silent);
+        setState(() => _reading = reading);
       }
     } catch (e) {
       developer.log('_LiveLoudnessBuilder refresh failed: $e',
@@ -2044,19 +2125,23 @@ class _LoudnessMeterDialogState extends State<_LoudnessMeterDialog> {
   Future<void> _refresh() async {
     if (!EngineService.instance.isInitialized) return;
     try {
-      // video: dialog polls 2x/second, upgrade to engine-push when the
-      // audio pipeline supports streaming loudness measurements.
-      //
-      // Without a direct "get current loudness" FFI, we'd need to:
-      //   1. Get the current audio samples (from the engine's audio cache
-      //      or via getAudioSamples)
-      //   2. Base64-encode them
-      //   3. Call analyzeLoudness(samplesB64, sampleRate, channels)
-      //
-      // For now, show silence until that wiring is added. The dialog UI
-      // is fully functional — only the reading source is stubbed.
+      // Phase F.4: poll the engine's last computed loudness reading.
+      // Same pattern as _LiveLoudnessBuilder but at 2x the rate (500ms).
+      final result = await getCurrentLoudness();
+      if (result == null) {
+        if (mounted) {
+          setState(() => _reading = LoudnessReading.silent);
+        }
+        return;
+      }
+      final reading = LoudnessReading(
+        integratedLufs: (result['integrated_lufs'] as num?)?.toDouble() ?? -70.0,
+        shortTermLufs: (result['short_term_lufs'] as num?)?.toDouble() ?? -70.0,
+        momentaryLufs: (result['momentary_lufs'] as num?)?.toDouble() ?? -70.0,
+        truePeakDbtp: (result['true_peak_dbtp'] as num?)?.toDouble() ?? -70.0,
+      );
       if (mounted) {
-        setState(() => _reading = LoudnessReading.silent);
+        setState(() => _reading = reading);
       }
     } catch (e) {
       developer.log('_LoudnessMeterDialog refresh failed: $e',

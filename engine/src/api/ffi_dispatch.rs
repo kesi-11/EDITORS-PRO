@@ -1218,6 +1218,75 @@ fn dispatch_method(
             }
         }
 
+        // Get the last computed loudness reading (null if no audio analyzed).
+        // Polled by the Flutter Audio Meter Bridge.
+        "get_current_loudness" => {
+            match api.get_current_loudness() {
+                Ok(Some(result)) => to_json_ok(&serde_json::to_value(&result).unwrap_or_default()),
+                Ok(None) => to_json_ok(&serde_json::Value::Null),
+                Err(e) => to_json_err(e),
+            }
+        }
+
+        // ─── Phase F.4: Per-track mixer state (pan, solo) ────────────────
+
+        "set_track_pan" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let pan = args.get("pan").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            to_json_string::<()>(api.set_track_pan(track_id, pan))
+        }
+        "get_track_pan" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            to_json_string(api.get_track_pan(track_id))
+        }
+        "set_track_solo" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let solo = args.get("solo").and_then(|v| v.as_bool()).unwrap_or(false);
+            to_json_string::<()>(api.set_track_solo(track_id, solo))
+        }
+        "get_track_solo" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            to_json_string(api.get_track_solo(track_id))
+        }
+
+        // ─── Phase F.4: Per-track EQ settings ────────────────────────────
+
+        "set_track_eq_settings" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let settings_json = match args.get("settings") {
+                Some(v) => v,
+                None => return to_json_err("missing 'settings' arg".into()),
+            };
+            let settings: crate::audio::effects::EqSettings = match serde_json::from_value(settings_json.clone()) {
+                Ok(s) => s,
+                Err(e) => return to_json_err(format!("settings parse error: {}", e)),
+            };
+            to_json_string::<()>(api.set_track_eq_settings(track_id, settings))
+        }
+        "get_track_eq_settings" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            match api.get_track_eq_settings(track_id) {
+                Ok(Some(s)) => to_json_ok(&serde_json::to_value(&s).unwrap_or_default()),
+                Ok(None) => to_json_ok(&serde_json::Value::Null),
+                Err(e) => to_json_err(e),
+            }
+        }
+
+        // ─── Phase F.4: Audio cache write-back ───────────────────────────
+
+        "set_audio_samples" => {
+            let asset_id = args.get("asset_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let samples_b64 = args.get("samples").and_then(|v| v.as_str()).unwrap_or("");
+            let sample_rate = args.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(44100) as u32;
+            let channels = args.get("channels").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+            match base64_decode_f32_samples(samples_b64) {
+                Some(samples) => {
+                    to_json_string::<()>(api.set_audio_samples(asset_id, samples, sample_rate, channels))
+                }
+                None => to_json_err("invalid base64 samples".into()),
+            }
+        }
+
         // ─── Stream-based methods (Phase C.14) ─────────────────────────────
         // `stream_frames` and `export_video_streaming` are NOT exposed via
         // the FFI dispatcher because they require StreamSink which cannot
