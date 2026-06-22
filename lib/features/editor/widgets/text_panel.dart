@@ -24,6 +24,12 @@ class _TextPanelState extends ConsumerState<TextPanel> {
   bool _isBold = false;
   bool _isItalic = false;
   String _selectedAnimation = 'None';
+  bool _enableStroke = false;
+  double _strokeWidth = 2.0;
+  String _strokeColor = '#000000';
+  bool _enableShadow = false;
+  double _shadowBlur = 4.0;
+  String _shadowColor = '#000000';
   List<Map<String, String>> _availableFonts = [];
 
   static const List<Map<String, String>> _defaultFonts = [
@@ -139,10 +145,18 @@ class _TextPanelState extends ConsumerState<TextPanel> {
 
     const defaultDurationMs = 5000;
 
+    // Build font family string with style suffixes for bold/italic
+    String fontFamily = _selectedFont;
+    if (_isBold) fontFamily += '-Bold';
+    if (_isItalic) fontFamily += '-Italic';
+
+    // Log selected animation for future engine-side implementation
+    debugPrint('[TextPanel] Animation selected: $_selectedAnimation');
+
     await ref.read(editorProvider.notifier).addTextClip(
           trackId: textTrack.id,
           text: _textController.text,
-          fontFamily: _selectedFont,
+          fontFamily: fontFamily,
           fontSize: _fontSize,
           colorHex: _selectedColor,
           positionX: 0.5,
@@ -363,6 +377,119 @@ class _TextPanelState extends ConsumerState<TextPanel> {
             ),
           ),
           const SizedBox(height: 20),
+
+          // ─── Stroke / Outline ───────────────────────────────
+          _buildSectionLabel('STROKE / OUTLINE'),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Switch(
+                value: _enableStroke,
+                onChanged: (v) => setState(() => _enableStroke = v),
+                activeColor: AppTheme.primary,
+              ),
+              const Text('Enable Stroke', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+          if (_enableStroke) ...[
+            Row(
+              children: [
+                const Text('Width', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                Expanded(
+                  child: Slider(
+                    value: _strokeWidth,
+                    min: 0.5,
+                    max: 10.0,
+                    divisions: 19,
+                    activeColor: AppTheme.primary,
+                    label: _strokeWidth.toStringAsFixed(1),
+                    onChanged: (v) => setState(() => _strokeWidth = v),
+                  ),
+                ),
+                Text(_strokeWidth.toStringAsFixed(1), style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+              ],
+            ),
+            Row(
+              children: [
+                const Text('Color', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () {
+                    // Toggle between common stroke colors
+                    final strokeColors = ['#000000', '#FFFFFF', '#FF0000', '#333333'];
+                    final idx = strokeColors.indexOf(_strokeColor);
+                    setState(() => _strokeColor = strokeColors[(idx + 1) % strokeColors.length]);
+                  },
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: _parseHexColor(_strokeColor),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: AppTheme.textSecondary, width: 1),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
+
+          // ─── Shadow ──────────────────────────────────────────
+          _buildSectionLabel('SHADOW'),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Switch(
+                value: _enableShadow,
+                onChanged: (v) => setState(() => _enableShadow = v),
+                activeColor: AppTheme.primary,
+              ),
+              const Text('Enable Shadow', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+          if (_enableShadow) ...[
+            Row(
+              children: [
+                const Text('Blur', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                Expanded(
+                  child: Slider(
+                    value: _shadowBlur,
+                    min: 0.0,
+                    max: 20.0,
+                    divisions: 20,
+                    activeColor: AppTheme.primary,
+                    label: _shadowBlur.toStringAsFixed(0),
+                    onChanged: (v) => setState(() => _shadowBlur = v),
+                  ),
+                ),
+                Text(_shadowBlur.toStringAsFixed(0), style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+              ],
+            ),
+            Row(
+              children: [
+                const Text('Color', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () {
+                    final shadowColors = ['#000000', '#333333', '#1a1a2e', '#0f0f23'];
+                    final idx = shadowColors.indexOf(_shadowColor);
+                    setState(() => _shadowColor = shadowColors[(idx + 1) % shadowColors.length]);
+                  },
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: _parseHexColor(_shadowColor),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: AppTheme.textSecondary, width: 1),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
 
           // ─── Add Text Button ────────────────────────────────
           SizedBox(

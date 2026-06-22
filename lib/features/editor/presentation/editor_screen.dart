@@ -875,43 +875,123 @@ class _MediaAssetItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      leading: Container(
-        width: 48,
-        height: 32,
-        decoration: BoxDecoration(
-          color: AppTheme.surfaceVariant,
-          borderRadius: BorderRadius.circular(4),
+    final isVideo = asset.mediaType == MediaType.video;
+    final isAudio = asset.mediaType == MediaType.audio;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      color: AppTheme.surfaceVariant,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onAddToTimeline,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              // Thumbnail
+              Container(
+                width: 64,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: isVideo
+                      ? AppTheme.videoTrackColor.withOpacity(0.15)
+                      : isAudio
+                          ? AppTheme.audioTrackColor.withOpacity(0.15)
+                          : AppTheme.primary.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Icon(
+                      isVideo
+                          ? Icons.videocam
+                          : isAudio
+                              ? Icons.audiotrack
+                              : Icons.image,
+                      color: isVideo
+                          ? AppTheme.videoTrackColor
+                          : isAudio
+                              ? AppTheme.audioTrackColor
+                              : AppTheme.primary,
+                      size: 24,
+                    ),
+                    if (asset.durationMs != null)
+                      Positioned(
+                        bottom: 2,
+                        right: 4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            Duration(milliseconds: asset.durationMs!).formatted,
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              // Info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      asset.fileName,
+                      style: context.textTheme.bodySmall
+                          ?.copyWith(fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        if (asset.width != null && asset.height != null)
+                          '${asset.width}×${asset.height}',
+                        if (asset.durationMs != null)
+                          Duration(milliseconds: asset.durationMs!).formatted,
+                        if (asset.fileSizeBytes > 0)
+                          _formatBytes(asset.fileSizeBytes),
+                      ].join(' · '),
+                      style: context.textTheme.labelSmall
+                          ?.copyWith(color: AppTheme.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              // Add button
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(Icons.add, size: 18, color: AppTheme.primary),
+              ),
+            ],
+          ),
         ),
-        child: Icon(
-          asset.mediaType == MediaType.video
-              ? Icons.videocam
-              : asset.mediaType == MediaType.audio
-                  ? Icons.audiotrack
-                  : Icons.image,
-          color: AppTheme.textSecondary,
-          size: 18,
-        ),
-      ),
-      title: Text(
-        asset.fileName,
-        style: context.textTheme.bodySmall,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: asset.durationMs != null
-          ? Text(
-              Duration(milliseconds: asset.durationMs!).formatted,
-              style: context.textTheme.labelSmall,
-            )
-          : null,
-      trailing: IconButton(
-        icon: const Icon(Icons.add_circle, size: 18, color: AppTheme.primary),
-        onPressed: onAddToTimeline,
-        tooltip: 'Add to timeline',
       ),
     );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1073741824) return '${(bytes / 1073741824).toStringAsFixed(1)} GB';
+    if (bytes >= 1048576) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '$bytes B';
   }
 }
 

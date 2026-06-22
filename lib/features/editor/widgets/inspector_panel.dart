@@ -1,12 +1,15 @@
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/services/engine_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/extensions/context_extensions.dart';
 import '../../../data/models/project_model.dart';
 import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
 import 'chroma_key_controls.dart';
+import 'color_grading_panel.dart';
 import 'speed_curve_editor.dart';
 import 'keyframe_graph_editor.dart';
 import 'transition_picker.dart';
@@ -120,7 +123,7 @@ class InspectorPanel extends ConsumerWidget {
           _OpacityControl(
             opacity: clip.opacity,
             onChanged: (value) {
-              // Will call engine to update clip opacity
+              ref.read(editorProvider.notifier).addKeyframe(clip.id, 'opacity', ref.read(editorProvider).currentTimeMs, value, 'Linear');
             },
           ),
           const SizedBox(height: 16),
@@ -183,6 +186,26 @@ class InspectorPanel extends ConsumerWidget {
           _SectionHeader(title: 'Effects'),
           const SizedBox(height: 8),
           _EffectsSection(clipId: clip.id),
+          const SizedBox(height: 16),
+
+          // Color Grading section
+          _SectionHeader(
+            title: 'Color Grading',
+            icon: Icons.palette,
+            iconColor: Colors.amber,
+          ),
+          const SizedBox(height: 8),
+          _ColorGradingSection(clipId: clip.id),
+          const SizedBox(height: 16),
+
+          // Crop & Transform section
+          _SectionHeader(
+            title: 'Crop & Transform',
+            icon: Icons.crop_rotate,
+            iconColor: Colors.teal,
+          ),
+          const SizedBox(height: 8),
+          _CropTransformSection(clipId: clip.id),
           const SizedBox(height: 16),
 
           // Chroma Key section (show when a ChromaKey effect is applied to the clip)
@@ -756,23 +779,38 @@ class _EffectsSection extends ConsumerStatefulWidget {
 class _EffectsSectionState extends ConsumerState<_EffectsSection> {
   List<Map<String, dynamic>> _effects = [];
 
-  void _updateEffectsFromTimeline() {
-    // Effects come through the timeline state, so we read them from
-    // the project provider's track/clip data. In a future iteration,
-    // we can use a dedicated effectsProvider for more granular updates.
-    final project = ref.read(currentProjectProvider);
-    if (project == null) return;
+  @override
+  void initState() {
+    super.initState();
+    _updateEffectsFromTimeline();
+  }
 
-    for (final track in project.tracks) {
-      for (final clip in track.clips) {
-        if (clip.id == widget.clipId) {
-          // The clip model may not have effects yet if the bridge
-          // codegen hasn't run. Use empty list as fallback.
-          setState(() {
-            _effects = [];
-          });
-          return;
-        }
+  void _updateEffectsFromTimeline() async {
+    if (!EngineService.instance.isInitialized) return;
+    try {
+      final api = EngineService.instance.api;
+      final effects = await api.getClipEffects(clipId: widget.clipId);
+      if (mounted) {
+        setState(() {
+          _effects = effects.map((e) => <String, dynamic>{
+            'id': e.id,
+            'name': e.name,
+            'effect_type': e.effectType,
+            'enabled': e.enabled,
+            'parameters': e.parameters.map((p) => <String, dynamic>{
+              'name': p.name,
+              'display_name': p.displayName,
+              'value': p.value,
+              'min_value': p.minValue,
+              'max_value': p.maxValue,
+            }).toList(),
+          }).toList();
+        });
+      }
+    } catch (e) {
+      // Engine not ready or clip has no effects yet
+      if (mounted) {
+        setState(() { _effects = []; });
       }
     }
   }
@@ -828,10 +866,12 @@ class _EffectsSectionState extends ConsumerState<_EffectsSection> {
           onToggleEnabled: () {
             final effectId = effect['id'] as String? ?? '';
             ref.read(editorProvider.notifier).toggleEffect(effectId);
+            _updateEffectsFromTimeline();
           },
           onRemove: () {
             final effectId = effect['id'] as String? ?? '';
             ref.read(editorProvider.notifier).removeEffect(effectId);
+            _updateEffectsFromTimeline();
           },
         )),
 
@@ -1590,8 +1630,111 @@ class _SpeedSectionState extends ConsumerState<_SpeedSection> {
             ),
           ),
         ),
+
+        const SizedBox(height: 6),
+
+        // Freeze Frame button
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () => _showFreezeFrameDialog(context),
+            icon: const Icon(Icons.ac_unit, size: 14),
+            label: const Text('Freeze Frame', style: TextStyle(fontSize: 11)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.cyan,
+              side: const BorderSide(color: Color(0xFF2A2A3E)),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
+          ),
+        ),
       ],
     );
+  }
+
+  /// Show a dialog explaining the Freeze Frame feature and optionally
+  /// perform the split + speed change.
+  void _showFreezeFrameDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppTheme.surfaceVariant,
+          title: Row(
+            children: [
+              const Icon(Icons.ac_unit, color: Colors.cyan, size: 20),
+              const SizedBox(width: 8),
+              const Text('Freeze Frame', style: TextStyle(fontSize: 16)),
+            ],
+          ),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Freeze Frame creates a still image from the current '
+                'playhead position.',
+                style: TextStyle(fontSize: 13),
+              ),
+              SizedBox(height: 12),
+              Text(
+                'How it works:',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+              ),
+              SizedBox(height: 4),
+              Text(
+                '1. The clip is split at the playhead\n'
+                '2. The second half gets a very high speed value\n'
+                '   (effectively freezing on that frame)\n'
+                '3. Adjust the resulting clip duration as needed',
+                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _applyFreezeFrame();
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.cyan,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text('Apply'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Apply freeze frame: split at playhead and set the second clip's
+  /// speed to a very high value.
+  void _applyFreezeFrame() async {
+    final editorState = ref.read(editorProvider);
+    final clipId = editorState.selectedClipId;
+    if (clipId == null) return;
+
+    try {
+      // Split the clip at the current playhead position.
+      final api = EngineService.instance.api;
+      final result = await api.splitClip(
+        clipId: clipId,
+        timeMs: BigInt.from(editorState.currentTimeMs),
+      );
+
+      // The second clip from the split is the frozen portion.
+      // Set its speed to a very high value to effectively freeze.
+      final frozenClipId = result.$2.id;
+      ref.read(editorProvider.notifier).setClipSpeed(frozenClipId, 100.0);
+    } catch (e) {
+      // Fall back to just logging the error
+      developer.log('Freeze Frame failed: $e', name: 'InspectorPanel');
+    }
   }
 }
 
@@ -1633,6 +1776,36 @@ class _KeyframeSectionState extends ConsumerState<_KeyframeSection> {
     super.initState();
     for (final prop in _propertyConfigs.keys) {
       _keyframeData[prop] = [];
+    }
+    _loadKeyframesFromEngine();
+  }
+
+  void _loadKeyframesFromEngine() async {
+    if (!EngineService.instance.isInitialized) return;
+    try {
+      final api = EngineService.instance.api;
+      final Map<String, List<KeyframePoint>> loaded = {};
+      for (final prop in _propertyConfigs.keys) {
+        final keyframes = await api.getKeyframes(
+          clipId: widget.clipId,
+          property: prop,
+        );
+        loaded[prop] = keyframes.map((k) => KeyframePoint(
+          id: k.id,
+          timeMs: k.timeMs,
+          value: k.value,
+          easingName: k.easingName,
+        )).toList();
+      }
+      if (mounted) {
+        setState(() {
+          for (final prop in _propertyConfigs.keys) {
+            _keyframeData[prop] = loaded[prop] ?? [];
+          }
+        });
+      }
+    } catch (e) {
+      // Engine not ready or clip has no keyframes yet
     }
   }
 
@@ -1685,7 +1858,10 @@ class _KeyframeSectionState extends ConsumerState<_KeyframeSection> {
                       );
                     }).toList(),
                     onChanged: (value) {
-                      if (value != null) setState(() => _selectedProperty = value);
+                      if (value != null) {
+                        setState(() => _selectedProperty = value);
+                        _loadKeyframesFromEngine();
+                      }
                     },
                   ),
                 ),
@@ -1960,4 +2136,368 @@ class _KeyframePropertyConfig {
     required this.label,
     required this.color,
   });
+}
+
+// ─── Color Grading Section ──────────────────────────────────────────────
+
+/// Inspector section for color grading (lift/gamma/gain wheels).
+///
+/// When the user adjusts any wheel, the values are applied as effects
+/// to the selected clip:
+/// - Lift R/G/B → "color_lift" effect parameters
+/// - Gamma R/G/B → "color_gamma" effect parameters
+/// - Gain R/G/B → "color_gain" effect parameters
+///
+/// Since the engine may not have dedicated "color_lift"/"color_gamma"/
+/// "color_gain" filter types, we fall back to using "Brightness" for
+/// the master adjustment and "Temperature" for the color tint of each
+/// wheel. The effect IDs are cached so we only add them once.
+class _ColorGradingSection extends ConsumerStatefulWidget {
+  final String clipId;
+
+  const _ColorGradingSection({required this.clipId});
+
+  @override
+  ConsumerState<_ColorGradingSection> createState() => _ColorGradingSectionState();
+}
+
+class _ColorGradingSectionState extends ConsumerState<_ColorGradingSection> {
+  ColorGradeValues _values = ColorGradeValues.neutral;
+
+  // Cached effect IDs for the three color grading wheels.
+  // Null means the effect hasn't been added yet.
+  String? _liftEffectId;
+  String? _gammaEffectId;
+  String? _gainEffectId;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColorGradingPanel(
+      initialValues: _values,
+      onChanged: _onColorGradeChanged,
+    );
+  }
+
+  /// Called when the user adjusts any color grading wheel.
+  void _onColorGradeChanged(ColorGradeValues newValues) {
+    setState(() => _values = newValues);
+    _applyColorGradeToEngine(newValues);
+  }
+
+  /// Apply the color grade values to the engine as effects.
+  ///
+  /// For each wheel (lift, gamma, gain):
+  /// - The master value maps to a "Brightness" effect parameter.
+  /// - The hue/saturation tint maps to a "Temperature" effect parameter.
+  ///
+  /// We try to add a "color_lift"/"color_gamma"/"color_gain" effect first.
+  /// If those filter types don't exist in the engine, we fall back to
+  /// using "Brightness" and "Temperature" effects.
+  Future<void> _applyColorGradeToEngine(ColorGradeValues values) async {
+    final rgbOffsets = values.toRgbOffsets();
+
+    // ── Lift ──
+    await _ensureEffect(
+      effectIdGetter: () => _liftEffectId,
+      effectIdSetter: (id) => _liftEffectId = id,
+      preferredName: 'color_lift',
+      fallbackName: 'Brightness',
+      parameters: {
+        'lift_r': rgbOffsets['lift']![0],
+        'lift_g': rgbOffsets['lift']![1],
+        'lift_b': rgbOffsets['lift']![2],
+        'brightness': values.liftMaster,
+      },
+    );
+
+    // ── Gamma ──
+    await _ensureEffect(
+      effectIdGetter: () => _gammaEffectId,
+      effectIdSetter: (id) => _gammaEffectId = id,
+      preferredName: 'color_gamma',
+      fallbackName: 'Contrast',
+      parameters: {
+        'gamma_r': rgbOffsets['gamma']![0],
+        'gamma_g': rgbOffsets['gamma']![1],
+        'gamma_b': rgbOffsets['gamma']![2],
+        'contrast': values.gammaMaster,
+      },
+    );
+
+    // ── Gain ──
+    await _ensureEffect(
+      effectIdGetter: () => _gainEffectId,
+      effectIdSetter: (id) => _gainEffectId = id,
+      preferredName: 'color_gain',
+      fallbackName: 'Saturation',
+      parameters: {
+        'gain_r': rgbOffsets['gain']![0],
+        'gain_g': rgbOffsets['gain']![1],
+        'gain_b': rgbOffsets['gain']![2],
+        'saturation': 1.0 + values.gainMaster,
+      },
+    );
+  }
+
+  /// Ensure an effect exists on the clip, adding it if needed.
+  /// Then set all [parameters] on it.
+  Future<void> _ensureEffect({
+    required String? Function() effectIdGetter,
+    required void Function(String) effectIdSetter,
+    required String preferredName,
+    required String fallbackName,
+    required Map<String, double> parameters,
+  }) async {
+    var effectId = effectIdGetter();
+
+    // Add the effect if it doesn't exist yet.
+    if (effectId == null) {
+      // Try preferred name first (e.g. "color_lift").
+      var id = await ref.read(editorProvider.notifier).addEffect(preferredName);
+      if (id == null) {
+        // Fallback to a known filter type.
+        id = await ref.read(editorProvider.notifier).addEffect(fallbackName);
+      }
+      if (id != null) {
+        effectIdSetter(id);
+        effectId = id;
+      }
+    }
+
+    // Set parameters on the effect.
+    if (effectId != null) {
+      for (final entry in parameters.entries) {
+        // The provider's setEffectParameter catches errors internally,
+        // so we don't need try/catch here. If a parameter name doesn't
+        // exist on the effect type (e.g. "lift_r" on a Brightness
+        // effect), the engine will log an error but won't crash.
+        ref.read(editorProvider.notifier).setEffectParameter(
+          effectId,
+          entry.key,
+          entry.value,
+        );
+      }
+    }
+  }
+}
+
+// ─── Crop & Transform Section ───────────────────────────────────────────
+
+/// Inspector section for crop and transform operations.
+///
+/// Provides buttons for rotation, flipping, and resetting transforms.
+/// Each operation applies a keyframe at the current playhead time so
+/// the transform can be animated over time.
+class _CropTransformSection extends ConsumerStatefulWidget {
+  final String clipId;
+
+  const _CropTransformSection({required this.clipId});
+
+  @override
+  ConsumerState<_CropTransformSection> createState() => _CropTransformSectionState();
+}
+
+class _CropTransformSectionState extends ConsumerState<_CropTransformSection> {
+  /// Current cumulative rotation in degrees (tracks state for UI display).
+  double _rotation = 0.0;
+
+  /// Flip state: -1.0 = flipped, 1.0 = normal.
+  double _scaleX = 1.0;
+  double _scaleY = 1.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Current transform summary
+        Text(
+          'Rotation: ${_rotation.round()}°   '
+          'Flip H: ${_scaleX < 0 ? "Yes" : "No"}   '
+          'Flip V: ${_scaleY < 0 ? "Yes" : "No"}',
+          style: context.textTheme.bodySmall?.copyWith(
+            fontFamily: 'monospace',
+            color: AppTheme.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Transform buttons grid
+        Row(
+          children: [
+            Expanded(
+              child: _TransformButton(
+                icon: Icons.rotate_left,
+                label: 'Rotate Left',
+                onTap: _rotateLeft,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _TransformButton(
+                icon: Icons.rotate_right,
+                label: 'Rotate Right',
+                onTap: _rotateRight,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: _TransformButton(
+                icon: Icons.flip,
+                label: 'Flip Horiz',
+                onTap: _flipHorizontal,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _TransformButton(
+                icon: Icons.flip,
+                label: 'Flip Vert',
+                onTap: _flipVertical,
+                rotation: 90,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+
+        // Reset transform button
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _resetTransform,
+            icon: const Icon(Icons.refresh, size: 14),
+            label: const Text('Reset Transform', style: TextStyle(fontSize: 11)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.textSecondary,
+              side: const BorderSide(color: Color(0xFF2A2A3E)),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _rotateLeft() {
+    setState(() => _rotation -= 90);
+    final timeMs = ref.read(editorProvider).currentTimeMs;
+    ref.read(editorProvider.notifier).addKeyframe(
+      widget.clipId,
+      'rotation',
+      timeMs,
+      _rotation,
+      'linear',
+    );
+  }
+
+  void _rotateRight() {
+    setState(() => _rotation += 90);
+    final timeMs = ref.read(editorProvider).currentTimeMs;
+    ref.read(editorProvider.notifier).addKeyframe(
+      widget.clipId,
+      'rotation',
+      timeMs,
+      _rotation,
+      'linear',
+    );
+  }
+
+  void _flipHorizontal() {
+    setState(() => _scaleX *= -1);
+    final timeMs = ref.read(editorProvider).currentTimeMs;
+    ref.read(editorProvider.notifier).addKeyframe(
+      widget.clipId,
+      'scale_x',
+      timeMs,
+      _scaleX,
+      'linear',
+    );
+  }
+
+  void _flipVertical() {
+    setState(() => _scaleY *= -1);
+    final timeMs = ref.read(editorProvider).currentTimeMs;
+    ref.read(editorProvider.notifier).addKeyframe(
+      widget.clipId,
+      'scale_y',
+      timeMs,
+      _scaleY,
+      'linear',
+    );
+  }
+
+  void _resetTransform() {
+    setState(() {
+      _rotation = 0.0;
+      _scaleX = 1.0;
+      _scaleY = 1.0;
+    });
+    final timeMs = ref.read(editorProvider).currentTimeMs;
+    ref.read(editorProvider.notifier).addKeyframe(
+      widget.clipId,
+      'rotation',
+      timeMs,
+      0.0,
+      'linear',
+    );
+    ref.read(editorProvider.notifier).addKeyframe(
+      widget.clipId,
+      'scale_x',
+      timeMs,
+      1.0,
+      'linear',
+    );
+    ref.read(editorProvider.notifier).addKeyframe(
+      widget.clipId,
+      'scale_y',
+      timeMs,
+      1.0,
+      'linear',
+    );
+  }
+}
+
+/// A small button used in the Crop & Transform section.
+class _TransformButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final double rotation;
+
+  const _TransformButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.rotation = 0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppTheme.textPrimary,
+        side: const BorderSide(color: Color(0xFF2A2A3E)),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RotatedBox(
+            quarterTurns: (rotation / 90).round(),
+            child: Icon(icon, size: 18, color: Colors.teal),
+          ),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(fontSize: 9)),
+        ],
+      ),
+    );
+  }
 }

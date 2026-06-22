@@ -63,7 +63,7 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen>
           ],
         ),
       ),
-      floatingActionButton: _buildCreateButton(context),
+      floatingActionButton: projectState.projects.isEmpty ? null : _buildCreateButton(context),
     );
   }
 
@@ -116,7 +116,16 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen>
           _buildHeaderIconButton(
             icon: AppIcons.search,
             onTap: () {
-              // Search — extension point for future feature
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Search coming soon!'),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
             },
           ),
           const SizedBox(width: 8),

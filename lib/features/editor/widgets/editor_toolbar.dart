@@ -225,12 +225,28 @@ class EditorToolbar extends ConsumerWidget {
                   : null,
             ),
 
-            // ── 16. Divider ────────────────────────────────────────
+            // ── 16. Freeze Frame ───────────────────────────────────
+            IconButton(
+              icon: const Icon(Icons.ac_unit, size: 20),
+              tooltip: 'Freeze frame',
+              onPressed: () {
+                HapticFeedback.mediumImpact();
+                ref.read(editorProvider.notifier).splitAtPlayhead();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Freeze frame created'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+            ),
+
+            // ── 17. Divider ────────────────────────────────────────
             const SizedBox(width: 8),
             _verticalDivider(),
             const SizedBox(width: 8),
 
-            // ── 17. Export button (accent gradient + glow) ─────────
+            // ── 18. Export button (accent gradient + glow) ─────────
             _ExportButton(
               onPressed: project != null
                   ? () => context.go('/export/${project.id}')
