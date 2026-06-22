@@ -2560,3 +2560,128 @@ Future<bool> validateAdvancedTrim({
   final result = await RustLib.instance.api._call<dynamic>('validate_advanced_trim', args);
   return result as bool;
 }
+
+// ─── Phase F.3: Engine-wired pro tools FFI wrappers ────────────────────
+//
+// These wrappers finish the F.2 stubbed integrations. Each calls the
+// matching engine dispatch arm added in Phase F.3:
+//   - applyLutToFrame  → apply_lut_to_frame  (effects/lut.rs)
+//   - applyEqToSamples → apply_eq_to_samples (audio/effects.rs)
+//   - markersAdd       → markers_add         (effects/markers.rs)
+//   - markersGet       → markers_get         (effects/markers.rs)
+//   - markersRemove    → markers_remove      (effects/markers.rs)
+//   - analyzeLoudness  → analyze_loudness    (analysis/loudness.rs)
+
+/// Apply a previously-loaded LUT to a frame.
+///
+/// `lutJson` is the parsed LUT returned by [lutLoadCubeContent].
+/// `frameBase64` is the RGBA8 pixel data, base64-encoded.
+/// `intensity` is 0.0 (no LUT) to 1.0 (full LUT).
+///
+/// Returns the LUT-applied frame as base64.
+///
+/// Engine method: `apply_lut_to_frame`.
+/// See persona/skills/lut-management/SKILL.md.
+Future<String> applyLutToFrame({
+  required Map<String, dynamic> lutJson,
+  required String frameBase64,
+  required int width,
+  required int height,
+  double intensity = 1.0,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('apply_lut_to_frame', {
+    'lut_json': lutJson,
+    'frame': frameBase64,
+    'width': width,
+    'height': height,
+    'intensity': intensity,
+  });
+  return result as String;
+}
+
+/// Apply an EQ chain (HPF + 8 peaking bands + LPF) to f32 PCM samples.
+///
+/// `samplesBase64` is the f32 PCM, base64-encoded as little-endian bytes.
+/// Returns the EQ-processed samples as base64 (same encoding).
+///
+/// Engine method: `apply_eq_to_samples`.
+/// See persona/skills/dialogue-cleanup/SKILL.md.
+Future<String> applyEqToSamples({
+  required Map<String, dynamic> settings,
+  required String samplesBase64,
+  int sampleRate = 44100,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('apply_eq_to_samples', {
+    'settings': settings,
+    'samples': samplesBase64,
+    'sample_rate': sampleRate,
+  });
+  return result as String;
+}
+
+/// Add a marker to the timeline. Persisted in the engine's marker manager.
+///
+/// `color` must be one of: red, orange, yellow, green, blue, purple, pink, gray.
+/// `markerType` must be one of: standard, chapter, comment, todo, error, musicbeat, custom.
+///
+/// Returns the created marker (with assigned ID) as JSON.
+///
+/// Engine method: `markers_add`.
+/// See persona/skills/broadcast-legal/SKILL.md (markers tab).
+Future<Map<String, dynamic>> markersAdd({
+  required String name,
+  required double positionMs,
+  String color = 'blue',
+  String markerType = 'standard',
+  String comment = '',
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('markers_add', {
+    'name': name,
+    'position_ms': positionMs,
+    'color': color,
+    'marker_type': markerType,
+    'comment': comment,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Get all markers, sorted by position.
+///
+/// Engine method: `markers_get`.
+Future<List<Map<String, dynamic>>> markersGet() async {
+  final result = await RustLib.instance.api._call<dynamic>('markers_get', {});
+  return (result as List)
+      .map((e) => (e as Map).cast<String, dynamic>())
+      .toList();
+}
+
+/// Remove a marker by ID. Returns the removed marker as JSON, or throws
+/// if the marker was not found.
+///
+/// Engine method: `markers_remove`.
+Future<Map<String, dynamic>> markersRemove({required String id}) async {
+  final result = await RustLib.instance.api._call<dynamic>('markers_remove', {
+    'id': id,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Analyze loudness of arbitrary f32 PCM samples.
+///
+/// `samplesBase64` is the f32 PCM, base64-encoded as little-endian bytes.
+/// Returns `{integrated_lufs, short_term_lufs, momentary_lufs, rms_db, peak_db, true_peak_dbtp}`.
+///
+/// Engine method: `analyze_loudness`.
+/// See persona/skills/loudness-target/SKILL.md.
+Future<Map<String, dynamic>> analyzeLoudness({
+  required String samplesBase64,
+  int sampleRate = 44100,
+  int channels = 2,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('analyze_loudness', {
+    'samples': samplesBase64,
+    'sample_rate': sampleRate,
+    'channels': channels,
+  });
+  return (result as Map).cast<String, dynamic>();
+}

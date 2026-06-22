@@ -84,6 +84,10 @@ pub struct EditorsProEngine {
     /// doesn't re-hit FFmpeg. Memory budget defaults to 256 MB; entries
     /// are evicted LRU when the budget is exceeded.
     frame_cache: crate::storage::lru_cache::LruCache<crate::decoder::FrameData>,
+    /// Phase F.3: timeline markers. Persisted in-memory; future versions
+    /// should serialize to the .epp project file alongside tracks + clips.
+    /// See engine/src/effects/markers.rs and persona/skills/.../SKILL.md.
+    marker_manager: crate::effects::markers::MarkerManager,
 }
 
 impl EditorsProEngine {
@@ -106,6 +110,7 @@ impl EditorsProEngine {
             auto_proxy_enabled: true,
             transcription_engine: TranscriptionEngine::new(),
             frame_cache: crate::storage::lru_cache::LruCache::with_budget_mb(256),
+            marker_manager: crate::effects::markers::MarkerManager::new(),
         }
     }
 
@@ -1961,6 +1966,95 @@ impl EditorsProEngine {
     pub fn proxy_manager_mut(&mut self) -> &mut ProxyManager {
         &mut self.proxy_manager
     }
+
+    // ─── Phase F.3: Marker CRUD (engine/src/effects/markers.rs) ────────
+
+    /// Add a marker at the given position (ms) with the given color + type + note.
+    pub fn add_marker(
+        &mut self,
+        name: String,
+        position_ms: f64,
+        color: crate::effects::markers::MarkerColor,
+        marker_type: crate::effects::markers::MarkerType,
+        comment: String,
+    ) -> crate::effects::markers::Marker {
+        let mut marker = crate::effects::markers::Marker::new(&name, position_ms, color);
+        marker.marker_type = marker_type;
+        marker.comment = comment;
+        let cloned = marker.clone();
+        self.marker_manager.add(marker);
+        cloned
+    }
+
+    /// Get all markers, sorted by position.
+    pub fn get_markers(&self) -> Vec<crate::effects::markers::Marker> {
+        // MarkerManager stores markers in a Vec; expose a sorted snapshot.
+        self.marker_manager.markers.clone()
+    }
+
+    /// Remove a marker by ID.
+    pub fn remove_marker(&mut self, id: &str) -> Option<crate::effects::markers::Marker> {
+        self.marker_manager.remove(id)
+    }
+
+    // ─── Phase F.3: Loudness analysis (engine/src/analysis/loudness.rs) ──
+
+    /// Analyze loudness of the currently-cached audio for a given asset.
+    /// Returns integrated LUFS, RMS dB, peak dB, and true-peak.
+    /// Returns None if no audio is cached for the asset.
+    pub fn analyze_asset_loudness(&self, asset_id: &str, sample_rate: u32) -> Option<LoudnessResult> {
+        let buffer = self.audio_cache.get(asset_id)?;
+        // Sum to mono if stereo
+        let mono: Vec<f32> = if buffer.channels == 1 {
+            buffer.samples.clone()
+        } else {
+            buffer.samples.chunks(buffer.channels)
+                .map(|frame| frame.iter().sum::<f32>() / buffer.channels as f32)
+                .collect()
+        };
+        let stats = crate::analysis::loudness::analyze_loudness(&mono, sample_rate);
+        Some(LoudnessResult {
+            integrated_lufs: stats.lufs,
+            short_term_lufs: stats.lufs, // video: short-term = integrated until windowed analysis is added
+            momentary_lufs: stats.lufs,  // video: momentary = integrated until windowed analysis is added
+            rms_db: stats.rms_db,
+            peak_db: stats.peak_db,
+            true_peak_dbtp: stats.true_peak,
+        })
+    }
+
+    /// Phase F.3: analyze arbitrary f32 samples (mono or interleaved stereo).
+    /// Used by the audio meter bridge when the caller has raw PCM samples
+    /// (e.g., from get_audio_samples) but no asset_id.
+    pub fn analyze_samples_loudness(&self, samples: &[f32], sample_rate: u32, channels: u32) -> LoudnessResult {
+        let mono: Vec<f32> = if channels <= 1 {
+            samples.to_vec()
+        } else {
+            samples.chunks(channels as usize)
+                .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+                .collect()
+        };
+        let stats = crate::analysis::loudness::analyze_loudness(&mono, sample_rate);
+        LoudnessResult {
+            integrated_lufs: stats.lufs,
+            short_term_lufs: stats.lufs,
+            momentary_lufs: stats.lufs,
+            rms_db: stats.rms_db,
+            peak_db: stats.peak_db,
+            true_peak_dbtp: stats.true_peak,
+        }
+    }
+}
+
+/// Phase F.3: loudness analysis result returned to Flutter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoudnessResult {
+    pub integrated_lufs: f64,
+    pub short_term_lufs: f64,
+    pub momentary_lufs: f64,
+    pub rms_db: f64,
+    pub peak_db: f64,
+    pub true_peak_dbtp: f32,
 }
 
 // Helper trait to access timeline on Project

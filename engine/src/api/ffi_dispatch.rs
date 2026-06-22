@@ -1116,6 +1116,108 @@ fn dispatch_method(
             }
         }
 
+        // ─── Phase F.3: Engine-wired pro tools (apply LUT, EQ, markers,
+        //                 loudness) — finishes the F.2 stubbed integrations ──
+
+        // Apply a previously-loaded LUT to a frame.
+        // Args: { "lut_json": <Lut JSON>, "frame_b64": "...", "width": N, "height": N, "intensity": 0.0..1.0 }
+        // Returns: base64-encoded RGBA8 frame with LUT applied.
+        "apply_lut_to_frame" => {
+            let lut_json = match args.get("lut_json") {
+                Some(v) => v,
+                None => return to_json_err("missing 'lut_json' arg".into()),
+            };
+            let lut: crate::effects::lut::Lut = match serde_json::from_value(lut_json.clone()) {
+                Ok(l) => l,
+                Err(e) => return to_json_err(format!("lut parse error: {}", e)),
+            };
+            let frame_b64 = args.get("frame").and_then(|v| v.as_str()).unwrap_or("");
+            let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let intensity = args.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            match base64_decode_bytes(frame_b64) {
+                Some(mut pixels) if pixels.len() == width * height * 4 => {
+                    lut.apply_rgba8(&mut pixels, width, height, intensity);
+                    to_json_ok(&base64_encode_bytes(&pixels))
+                }
+                Some(_) => to_json_err("frame size mismatch".into()),
+                None => to_json_err("invalid base64 frame".into()),
+            }
+        }
+
+        // Apply an EQ chain (HPF + 8 peaking bands + LPF) to f32 PCM samples.
+        // Args: { "settings": <EqSettings JSON>, "samples_b64": "...", "sample_rate": 44100 }
+        // Returns: base64-encoded f32 PCM samples (LE bytes).
+        "apply_eq_to_samples" => {
+            let settings_json = match args.get("settings") {
+                Some(v) => v,
+                None => return to_json_err("missing 'settings' arg".into()),
+            };
+            let settings: crate::audio::effects::EqSettings = match serde_json::from_value(settings_json.clone()) {
+                Ok(s) => s,
+                Err(e) => return to_json_err(format!("settings parse error: {}", e)),
+            };
+            let samples_b64 = args.get("samples").and_then(|v| v.as_str()).unwrap_or("");
+            let sample_rate = args.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(44100) as u32;
+            match base64_decode_f32_samples(samples_b64) {
+                Some(samples) => {
+                    let result = crate::audio::effects::apply_eq_chain(&samples, sample_rate, &settings);
+                    to_json_ok(&base64_encode_f32_samples(&result))
+                }
+                None => to_json_err("invalid base64 samples".into()),
+            }
+        }
+
+        // ─── Markers CRUD (engine/src/effects/markers.rs via EditorsProEngine) ──
+
+        "markers_add" => {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let position_ms = args.get("position_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let color_str = args.get("color").and_then(|v| v.as_str()).unwrap_or("blue");
+            let type_str = args.get("marker_type").and_then(|v| v.as_str()).unwrap_or("standard");
+            let comment = args.get("comment").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let color = parse_marker_color(color_str);
+            let marker_type = parse_marker_type(type_str);
+            match api.add_marker(name, position_ms, color, marker_type, comment) {
+                Ok(m) => to_json_ok(&serde_json::to_value(&m).unwrap_or_default()),
+                Err(e) => to_json_err(e),
+            }
+        }
+        "markers_get" => {
+            match api.get_markers() {
+                Ok(markers) => to_json_ok(&serde_json::to_value(&markers).unwrap_or_default()),
+                Err(e) => to_json_err(e),
+            }
+        }
+        "markers_remove" => {
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            match api.remove_marker(id) {
+                Ok(Some(m)) => to_json_ok(&serde_json::to_value(&m).unwrap_or_default()),
+                Ok(None) => to_json_err("marker not found".into()),
+                Err(e) => to_json_err(e),
+            }
+        }
+
+        // ─── Loudness analysis (engine/src/analysis/loudness.rs) ──────────
+
+        // Analyze loudness of arbitrary f32 PCM samples.
+        // Args: { "samples_b64": "...", "sample_rate": 44100, "channels": 2 }
+        // Returns: { integrated_lufs, short_term_lufs, momentary_lufs, rms_db, peak_db, true_peak_dbtp }
+        "analyze_loudness" => {
+            let samples_b64 = args.get("samples").and_then(|v| v.as_str()).unwrap_or("");
+            let sample_rate = args.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(44100) as u32;
+            let channels = args.get("channels").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+            match base64_decode_f32_samples(samples_b64) {
+                Some(samples) => {
+                    match api.analyze_loudness(samples, sample_rate, channels) {
+                        Ok(result) => to_json_ok(&serde_json::to_value(&result).unwrap_or_default()),
+                        Err(e) => to_json_err(e),
+                    }
+                }
+                None => to_json_err("invalid base64 samples".into()),
+            }
+        }
+
         // ─── Stream-based methods (Phase C.14) ─────────────────────────────
         // `stream_frames` and `export_video_streaming` are NOT exposed via
         // the FFI dispatcher because they require StreamSink which cannot
@@ -1184,6 +1286,43 @@ fn base64_decode_f32_samples(s: &str) -> Option<Vec<f32>> {
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect(),
     )
+}
+
+/// Encode f32 samples to a base64 string (little-endian bytes).
+fn base64_encode_f32_samples(samples: &[f32]) -> String {
+    let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+    base64_encode_bytes(&bytes)
+}
+
+/// Parse a marker color string into the engine enum. Falls back to Blue.
+fn parse_marker_color(s: &str) -> crate::effects::markers::MarkerColor {
+    use crate::effects::markers::MarkerColor;
+    match s.to_lowercase().as_str() {
+        "red" => MarkerColor::Red,
+        "orange" => MarkerColor::Orange,
+        "yellow" => MarkerColor::Yellow,
+        "green" => MarkerColor::Green,
+        "blue" => MarkerColor::Blue,
+        "purple" => MarkerColor::Purple,
+        "pink" => MarkerColor::Pink,
+        "gray" | "grey" => MarkerColor::Gray,
+        _ => MarkerColor::Blue,
+    }
+}
+
+/// Parse a marker type string into the engine enum. Falls back to Standard.
+fn parse_marker_type(s: &str) -> crate::effects::markers::MarkerType {
+    use crate::effects::markers::MarkerType;
+    match s.to_lowercase().as_str() {
+        "standard" => MarkerType::Standard,
+        "chapter" => MarkerType::Chapter,
+        "comment" => MarkerType::Comment,
+        "todo" => MarkerType::Todo,
+        "error" => MarkerType::Error,
+        "musicbeat" | "music_beat" | "beat" => MarkerType::MusicBeat,
+        "custom" => MarkerType::Custom,
+        _ => MarkerType::Standard,
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

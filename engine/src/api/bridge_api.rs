@@ -1526,6 +1526,50 @@ impl EditorsProEngineApi {
         })
         .unwrap_or(false)
     }
+
+    // ─── Phase F.3: Marker CRUD + Loudness analysis ─────────────────────
+    //
+    // These wrappers expose the engine's marker_manager and loudness
+    // analyzer to the FFI dispatcher. The dispatcher arms (markers_add,
+    // markers_get, markers_remove, analyze_loudness) in ffi_dispatch.rs
+    // call these wrappers.
+
+    /// Add a marker at the given position.
+    pub fn add_marker(
+        &self,
+        name: String,
+        position_ms: f64,
+        color: crate::effects::markers::MarkerColor,
+        marker_type: crate::effects::markers::MarkerType,
+        comment: String,
+    ) -> Result<crate::effects::markers::Marker, String> {
+        self.with_engine_recovery(|engine| {
+            Ok(engine.add_marker(name, position_ms, color, marker_type, comment))
+        })
+    }
+
+    /// Get all markers, sorted by position.
+    pub fn get_markers(&self) -> Result<Vec<crate::effects::markers::Marker>, String> {
+        self.with_engine_recovery(|engine| Ok(engine.get_markers()))
+    }
+
+    /// Remove a marker by ID. Returns the removed marker, or None if not found.
+    pub fn remove_marker(&self, id: String) -> Result<Option<crate::effects::markers::Marker>, String> {
+        self.with_engine_recovery(|engine| Ok(engine.remove_marker(&id)))
+    }
+
+    /// Analyze loudness of arbitrary f32 PCM samples.
+    /// Returns integrated LUFS, RMS dB, peak dB, and true-peak.
+    pub fn analyze_loudness(
+        &self,
+        samples: Vec<f32>,
+        sample_rate: u32,
+        channels: u32,
+    ) -> Result<crate::api::LoudnessResult, String> {
+        self.with_engine_recovery(|engine| {
+            Ok(engine.analyze_samples_loudness(&samples, sample_rate, channels))
+        })
+    }
 }
 
 impl From<ExportSettings> for BridgeExportSettings {
