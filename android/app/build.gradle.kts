@@ -5,8 +5,8 @@ plugins {
 
 android {
     namespace = "com.editorspro.editors_pro"
-    compileSdk = 35
-    ndkVersion = "27.0.12077973"
+    compileSdk = 36
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -44,9 +44,11 @@ android {
         applicationId = "com.editorspro.editors_pro"
         // Video editing requires higher minSdk for MediaCodec and hardware acceleration
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["appAuthRedirectScheme"] =
+            "com.googleusercontent.apps.REPLACE_WITH_YOUR_CLIENT_ID"
 
         // Phase B.9: include x86_64 in addition to arm64-v8a so the app
         // runs on Android emulators for development. armeabi-v7a is
@@ -109,10 +111,11 @@ dependencies {
     // artifact (last release June 2023) to its successor `androidx.media3`.
     // The ProGuard rules already referenced `androidx.media3.**`, so the
     // migration is now consistent end-to-end.
-    // Media3 1.5.1 requires compileSdk 35 (already set above) and
+    // Media3 1.5.1 requires compileSdk 35+ (already set above) and
     // Java 17 (also already set in compileOptions).
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("androidx.documentfile:documentfile:1.1.0")
 }
 
 flutter {

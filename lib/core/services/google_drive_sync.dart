@@ -5,6 +5,9 @@ import 'dart:io';
 import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+
+import '../constants/cloud_config.dart';
 
 /// Phase E.20: Google Drive cloud sync via OAuth2 PKCE + Drive REST API.
 ///
@@ -251,9 +254,7 @@ class GoogleDriveSync {
       http.MultipartFile.fromString(
         'metadata',
         jsonEncode(metadata),
-        headers: {
-          'Content-Type': ['application/json; charset=UTF-8'],
-        },
+        contentType: MediaType('application', 'json', {'charset': 'UTF-8'}),
       ),
     );
 

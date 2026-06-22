@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/services/engine_service.dart';
+import '../../../src/rust/api/bridge_api.dart' show TemplateInfo;
 
 /// Template data model for the UI
 class TemplateData {
@@ -67,10 +68,10 @@ class PlaceholderSlotData {
   final String mediaType; // "video" or "image"
   final int startMs;
   final int expectedDurationMs;
-  bool isFilled;
-  String? assignedMediaPath;
+  final bool isFilled;
+  final String? assignedMediaPath;
 
-  PlaceholderSlotData({
+  const PlaceholderSlotData({
     required this.id,
     required this.label,
     required this.mediaType,
@@ -176,7 +177,8 @@ class TemplateNotifier extends StateNotifier<TemplateCreationState> {
     try {
       final templates = await EngineService.instance.listTemplates();
       state = state.copyWith(
-        availableTemplates: templates,
+        availableTemplates:
+            templates.map(TemplateData.fromTemplateInfo).toList(),
         isLoadingTemplates: false,
       );
     } catch (e) {

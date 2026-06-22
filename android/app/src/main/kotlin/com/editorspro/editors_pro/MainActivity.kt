@@ -49,8 +49,10 @@ class MainActivity : FlutterActivity() {
         // Request runtime permissions on startup
         requestRequiredPermissions()
 
+        val messenger = flutterEngine!!.dartExecutor.binaryMessenger
+
         // Set up method channel for export foreground service
-        MethodChannel(flutterEngine?.dartExecutor?.binaryMessenger, EXPORT_CHANNEL)
+        MethodChannel(messenger, EXPORT_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "startExport" -> {
@@ -82,7 +84,7 @@ class MainActivity : FlutterActivity() {
             }
 
         // Set up method channel for audio playback
-        MethodChannel(flutterEngine?.dartExecutor?.binaryMessenger, AUDIO_CHANNEL)
+        MethodChannel(messenger, AUDIO_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "initialize" -> {
@@ -205,7 +207,7 @@ class MainActivity : FlutterActivity() {
             }
 
         // Set up method channel for SAF/MediaStore storage integration
-        MethodChannel(flutterEngine?.dartExecutor?.binaryMessenger, STORAGE_CHANNEL)
+        MethodChannel(messenger, STORAGE_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "copyContentUriToTempFile" -> {

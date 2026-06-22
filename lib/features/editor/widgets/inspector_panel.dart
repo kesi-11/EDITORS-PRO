@@ -9,6 +9,7 @@ import '../providers/editor_provider.dart';
 import 'chroma_key_controls.dart';
 import 'speed_curve_editor.dart';
 import 'keyframe_graph_editor.dart';
+import 'transition_picker.dart';
 
 // Re-export GpuInfo for the GPU settings section
 import 'package:editors_pro/src/rust/api/bridge_api.dart' show GpuInfo;
@@ -51,6 +52,9 @@ class InspectorPanel extends ConsumerWidget {
       return _buildEmptyInspector(context);
     }
 
+    final clip = selectedClip;
+    final track = selectedTrack;
+
     return Container(
       color: AppTheme.surface,
       child: ListView(
@@ -88,21 +92,21 @@ class InspectorPanel extends ConsumerWidget {
           // Timing section
           _SectionHeader(title: 'Timing'),
           const SizedBox(height: 8),
-          _PropertyRow(label: 'Start', value: Duration(milliseconds: selectedClip.startMs).formatted),
-          _PropertyRow(label: 'Duration', value: Duration(milliseconds: selectedClip.durationMs).formatted),
-          _PropertyRow(label: 'Trim Start', value: '${selectedClip.trimStartMs}ms'),
-          _PropertyRow(label: 'Trim End', value: '${selectedClip.trimEndMs}ms'),
+          _PropertyRow(label: 'Start', value: Duration(milliseconds: clip.startMs).formatted),
+          _PropertyRow(label: 'Duration', value: Duration(milliseconds: clip.durationMs).formatted),
+          _PropertyRow(label: 'Trim Start', value: '${clip.trimStartMs}ms'),
+          _PropertyRow(label: 'Trim End', value: '${clip.trimEndMs}ms'),
           const SizedBox(height: 16),
 
           // Speed section (enhanced with presets and curve editor link)
           _SectionHeader(title: 'Speed'),
           const SizedBox(height: 8),
           _SpeedSection(
-            clipId: selectedClip.id,
-            speed: selectedClip.speed,
-            durationMs: selectedClip.durationMs,
+            clipId: clip.id,
+            speed: clip.speed,
+            durationMs: clip.durationMs,
             onSpeedChanged: (value) {
-              ref.read(editorProvider.notifier).setClipSpeed(selectedClip.id, value);
+              ref.read(editorProvider.notifier).setClipSpeed(clip.id, value);
             },
             onOpenCurveEditor: () {
               ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.speed);
@@ -114,7 +118,7 @@ class InspectorPanel extends ConsumerWidget {
           _SectionHeader(title: 'Opacity'),
           const SizedBox(height: 8),
           _OpacityControl(
-            opacity: selectedClip.opacity,
+            opacity: clip.opacity,
             onChanged: (value) {
               // Will call engine to update clip opacity
             },
@@ -125,8 +129,8 @@ class InspectorPanel extends ConsumerWidget {
           _SectionHeader(title: 'Keyframes'),
           const SizedBox(height: 8),
           _KeyframeSection(
-            clipId: selectedClip.id,
-            durationMs: selectedClip.durationMs,
+            clipId: clip.id,
+            durationMs: clip.durationMs,
             onOpenGraphEditor: () {
               ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.keyframes);
             },
@@ -134,23 +138,23 @@ class InspectorPanel extends ConsumerWidget {
           const SizedBox(height: 16),
 
           // Track volume (show for audio and video tracks)
-          if (selectedTrack != null) ...[
+          if (track != null) ...[
             _SectionHeader(title: 'Track Volume'),
             const SizedBox(height: 8),
             _VolumeControl(
-              volume: selectedTrack.volume,
-              isMuted: !selectedTrack.visible,
+              volume: track.volume,
+              isMuted: !track.visible,
               onVolumeChanged: (value) {
-                ref.read(editorProvider.notifier).setTrackVolume(selectedTrack!.id, value);
+              ref.read(editorProvider.notifier).setTrackVolume(track.id, value);
               },
               onMuteToggled: () {
-                ref.read(editorProvider.notifier).toggleTrackVisibility(selectedTrack!.id);
+                ref.read(editorProvider.notifier).toggleTrackVisibility(track.id);
               },
             ),
             const SizedBox(height: 16),
 
             // Audio ducking (show for audio tracks)
-            if (selectedTrack.trackType == TrackType.audio) ...[
+            if (track.trackType == TrackType.audio) ...[
               _SectionHeader(title: 'Audio Ducking'),
               const SizedBox(height: 8),
               _DuckingControl(
@@ -158,14 +162,14 @@ class InspectorPanel extends ConsumerWidget {
                 duckLevel: 0.3,
                 onEnabledChanged: (enabled) {
                   ref.read(editorProvider.notifier).setDucking(
-                    selectedTrack!.id,
+                    track.id,
                     enabled: enabled,
                     duckLevel: 0.3,
                   );
                 },
                 onLevelChanged: (level) {
                   ref.read(editorProvider.notifier).setDucking(
-                    selectedTrack!.id,
+                    track.id,
                     enabled: true,
                     duckLevel: level,
                   );
@@ -178,13 +182,13 @@ class InspectorPanel extends ConsumerWidget {
           // Effects section
           _SectionHeader(title: 'Effects'),
           const SizedBox(height: 8),
-          _EffectsSection(clipId: selectedClip.id),
+          _EffectsSection(clipId: clip.id),
           const SizedBox(height: 16),
 
           // Chroma Key section (show when a ChromaKey effect is applied to the clip)
           Builder(builder: (context) {
             // Check if the clip has a ChromaKey effect
-            final chromaKeyEffects = selectedClip.effects.where(
+            final chromaKeyEffects = clip.effects.where(
               (e) => e.effectType == 'chroma_key' || e.name == 'Chroma Key',
             );
             if (chromaKeyEffects.isNotEmpty) {
@@ -200,7 +204,7 @@ class InspectorPanel extends ConsumerWidget {
                   const SizedBox(height: 8),
                   ChromaKeyControls(
                     effectId: chromaKeyEffect.id,
-                    clipId: selectedClip.id,
+                    clipId: clip.id,
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -212,16 +216,16 @@ class InspectorPanel extends ConsumerWidget {
           // Transitions section
           _SectionHeader(title: 'Transitions'),
           const SizedBox(height: 8),
-          _TransitionsSection(clipId: selectedClip.id),
+          _TransitionsSection(clipId: clip.id),
 
           // Text properties section (show for text track clips)
-          if (selectedTrack?.trackType == TrackType.text) ...[
+          if (track?.trackType == TrackType.text) ...[
             const SizedBox(height: 16),
             _SectionHeader(title: 'Text Properties'),
             const SizedBox(height: 8),
             _TextPropertiesSection(
-              clipId: selectedClip.id,
-              assetId: selectedClip.assetId,
+              clipId: clip.id,
+              assetId: clip.assetId,
             ),
           ],
         ],
@@ -1102,7 +1106,7 @@ class _TransitionsSection extends ConsumerWidget {
             ),
             const Divider(height: 1),
             // Transition picker content
-            const Expanded(
+            Expanded(
               child: TransitionPicker(),
             ),
           ],

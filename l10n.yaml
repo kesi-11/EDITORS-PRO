@@ -10,6 +10,3 @@
 arb-dir: lib/l10n
 template-arb-file: app_en.arb
 output-localization-file: app_localizations.dart
-# Also generate a synthetic package so the import path is stable
-# across Flutter versions.
-synthetic-package: true

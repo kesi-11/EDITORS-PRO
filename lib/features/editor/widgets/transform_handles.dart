@@ -108,9 +108,9 @@ class _TransformHandlesState extends State<TransformHandles> {
               _activeHandle = null;
               _lastPosition = null;
             },
-            child: Container(
-              color: Colors.transparent,
+            child: MouseRegion(
               cursor: SystemMouseCursors.move,
+              child: Container(color: Colors.transparent),
             ),
           ),
         ),

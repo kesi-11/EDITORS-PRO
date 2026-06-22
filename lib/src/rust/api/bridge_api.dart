@@ -776,6 +776,115 @@ class TemplateInfo {
 // Phase 8 — GPU Acceleration DTOs
 // ═══════════════════════════════════════════════════════════════════════
 
+class ProxyInfo {
+  final String assetId;
+  final String originalPath;
+  final String? proxyPath;
+  final String quality;
+  final int originalWidth;
+  final int originalHeight;
+  final int? proxyWidth;
+  final int? proxyHeight;
+  final int? fileSizeBytes;
+
+  const ProxyInfo({
+    required this.assetId,
+    required this.originalPath,
+    this.proxyPath,
+    required this.quality,
+    required this.originalWidth,
+    required this.originalHeight,
+    this.proxyWidth,
+    this.proxyHeight,
+    this.fileSizeBytes,
+  });
+
+  factory ProxyInfo.fromJson(Map<String, dynamic> json) => ProxyInfo(
+        assetId: json['asset_id'] as String,
+        originalPath: json['original_path'] as String,
+        proxyPath: json['proxy_path'] as String?,
+        quality: json['quality'] as String,
+        originalWidth: json['original_width'] as int,
+        originalHeight: json['original_height'] as int,
+        proxyWidth: json['proxy_width'] as int?,
+        proxyHeight: json['proxy_height'] as int?,
+        fileSizeBytes: json['file_size_bytes'] as int?,
+      );
+}
+
+class SyncResultInfo {
+  final bool success;
+  final String message;
+  final String? projectId;
+
+  const SyncResultInfo({
+    required this.success,
+    required this.message,
+    this.projectId,
+  });
+
+  factory SyncResultInfo.fromJson(Map<String, dynamic> json) => SyncResultInfo(
+        success: json['success'] as bool? ?? false,
+        message: json['message'] as String? ?? '',
+        projectId: json['project_id'] as String?,
+      );
+}
+
+class SyncStatusInfo {
+  final String projectId;
+  final String status;
+  final String statusDisplayName;
+  final bool isActionable;
+  final int? lastSyncedAt;
+  final String? errorMessage;
+
+  const SyncStatusInfo({
+    required this.projectId,
+    required this.status,
+    required this.statusDisplayName,
+    required this.isActionable,
+    this.lastSyncedAt,
+    this.errorMessage,
+  });
+
+  factory SyncStatusInfo.fromJson(Map<String, dynamic> json) => SyncStatusInfo(
+        projectId: json['project_id'] as String,
+        status: json['status'] as String,
+        statusDisplayName: json['status_display_name'] as String? ?? '',
+        isActionable: json['is_actionable'] as bool? ?? false,
+        lastSyncedAt: json['last_synced_at'] as int?,
+        errorMessage: json['error_message'] as String?,
+      );
+}
+
+class CloudProjectInfo {
+  final String projectId;
+  final String name;
+  final int modifiedAt;
+  final int sizeBytes;
+  final String cloudFileId;
+  final String providerName;
+
+  const CloudProjectInfo({
+    required this.projectId,
+    required this.name,
+    required this.modifiedAt,
+    required this.sizeBytes,
+    required this.cloudFileId,
+    required this.providerName,
+  });
+
+  factory CloudProjectInfo.fromJson(Map<String, dynamic> json) =>
+      CloudProjectInfo(
+        projectId: json['project_id'] as String,
+        name: json['name'] as String,
+        modifiedAt: json['modified_at'] as int? ?? 0,
+        sizeBytes: json['size_bytes'] as int? ?? 0,
+        cloudFileId: json['cloud_file_id'] as String? ?? '',
+        providerName: json['provider_name'] as String? ?? 'Unknown',
+      );
+}
+
 /// GPU adapter information for hardware acceleration
 class GpuInfo {
   final bool available;
@@ -1657,14 +1766,6 @@ class EditorsProEngineApi {
         .toList();
   }
 
-  /// Get the speed curve for a clip.
-  Future<SpeedCurveInfo> getClipSpeedCurve({required String clipId}) async {
-    final result = await _call<dynamic>('get_clip_speed_curve', {
-      'clip_id': clipId,
-    });
-    return SpeedCurveInfo.fromJson(result as Map<String, dynamic>);
-  }
-
   /// Get current system metrics for memory monitoring.
   ///
   /// Returns RSS, peak memory, available system memory, pressure level,
@@ -1729,6 +1830,146 @@ class EditorsProEngineApi {
   }
 
   // ─── Template Operations (Phase 10) ──────────────────────────────
+
+  Future<SyncResultInfo> syncProject({required String projectId}) async {
+    final result = await _call<dynamic>('sync_project', {
+      'project_id': projectId,
+    });
+    return SyncResultInfo.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<SyncStatusInfo> getSyncStatus({required String projectId}) async {
+    final result = await _call<dynamic>('get_sync_status', {
+      'project_id': projectId,
+    });
+    return SyncStatusInfo.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<List<CloudProjectInfo>> getCloudProjects() async {
+    final result = await _call<dynamic>('get_cloud_projects', {});
+    return (result as List)
+        .map((e) => CloudProjectInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> resolveSyncConflict({
+    required String projectId,
+    required String strategy,
+  }) async {
+    return await _call<void>('resolve_sync_conflict', {
+      'project_id': projectId,
+      'strategy': strategy,
+    });
+  }
+
+  Future<EffectInfo> addChromaKeyEffect({
+    required String clipId,
+    required double targetHue,
+    required double hueTolerance,
+    required double saturationTolerance,
+    required double softness,
+    required double spillSuppression,
+  }) async {
+    final result = await _call<dynamic>('add_chroma_key_effect', {
+      'clip_id': clipId,
+      'target_hue': targetHue,
+      'hue_tolerance': hueTolerance,
+      'saturation_tolerance': saturationTolerance,
+      'softness': softness,
+      'spill_suppression': spillSuppression,
+    });
+    return EffectInfo.fromJson(result as Map<String, dynamic>);
+  }
+
+  Future<List<double>> pickColorFromFrame({
+    required int timeMs,
+    required int x,
+    required int y,
+  }) async {
+    final result = await _call<dynamic>('pick_color_from_frame', {
+      'time_ms': timeMs,
+      'x': x,
+      'y': y,
+    });
+    return (result as List).map((e) => (e as num).toDouble()).toList();
+  }
+
+  Future<void> setProxyQuality({required String quality}) async {
+    return await _call<void>('set_proxy_quality', {'quality': quality});
+  }
+
+  Future<String> getProxyQuality() async {
+    final result = await _call<dynamic>('get_proxy_quality', {});
+    return result as String;
+  }
+
+  Future<String> generateProxy({
+    required String assetId,
+    required String sourcePath,
+  }) async {
+    final result = await _call<dynamic>('generate_proxy', {
+      'asset_id': assetId,
+      'source_path': sourcePath,
+    });
+    return result as String;
+  }
+
+  Future<String?> getProxyPath({required String assetId}) async {
+    final result = await _call<dynamic>('get_proxy_path', {
+      'asset_id': assetId,
+    });
+    return result as String?;
+  }
+
+  Future<int> clearProxyCache() async {
+    final result = await _call<dynamic>('clear_proxy_cache', {});
+    return result as int;
+  }
+
+  Future<int> getProxyCacheSize() async {
+    final result = await _call<dynamic>('get_proxy_cache_size', {});
+    return result as int;
+  }
+
+  Future<int> getProxyCount() async {
+    final result = await _call<dynamic>('get_proxy_count', {});
+    return result as int;
+  }
+
+  Future<void> setAutoProxy({required bool enabled}) async {
+    return await _call<void>('set_auto_proxy', {'enabled': enabled});
+  }
+
+  Future<bool> isAutoProxyEnabled() async {
+    final result = await _call<dynamic>('is_auto_proxy_enabled', {});
+    return result as bool;
+  }
+
+  Future<String> regenerateProxy({required String assetId}) async {
+    final result = await _call<dynamic>('regenerate_proxy', {
+      'asset_id': assetId,
+    });
+    return result as String;
+  }
+
+  Future<bool> shouldGenerateProxy({
+    required int width,
+    required int height,
+  }) async {
+    final result = await _call<dynamic>('should_generate_proxy', {
+      'width': width,
+      'height': height,
+    });
+    return result as bool;
+  }
+
+  Future<ProxyInfo?> getProxyInfo({required String assetId}) async {
+    final result = await _call<dynamic>('get_proxy_info', {
+      'asset_id': assetId,
+    });
+    if (result == null) return null;
+    return ProxyInfo.fromJson(result as Map<String, dynamic>);
+  }
 
   /// Get the list of available built-in templates.
   ///

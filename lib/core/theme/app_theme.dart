@@ -176,7 +176,7 @@ class AppTheme {
       ),
     ),
 
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: cardColor,
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -279,7 +279,7 @@ class AppTheme {
       behavior: SnackBarBehavior.floating,
     ),
 
-    dialogTheme: DialogTheme(
+    dialogTheme: DialogThemeData(
       backgroundColor: surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radiusLarge),
@@ -303,7 +303,7 @@ class AppTheme {
       side: BorderSide.none,
     ),
 
-    tabBarTheme: TabBarTheme(
+    tabBarTheme: TabBarThemeData(
       labelColor: primary,
       unselectedLabelColor: textSecondary,
       indicatorColor: primary,
@@ -355,7 +355,7 @@ class AppTheme {
       ),
     ),
 
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: lightCardColor,
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -458,7 +458,7 @@ class AppTheme {
       behavior: SnackBarBehavior.floating,
     ),
 
-    dialogTheme: DialogTheme(
+    dialogTheme: DialogThemeData(
       backgroundColor: lightSurface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radiusLarge),
@@ -482,7 +482,7 @@ class AppTheme {
       side: BorderSide.none,
     ),
 
-    tabBarTheme: TabBarTheme(
+    tabBarTheme: TabBarThemeData(
       labelColor: primary,
       unselectedLabelColor: lightTextSecondary,
       indicatorColor: primary,

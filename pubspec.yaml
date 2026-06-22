@@ -4,8 +4,6 @@ publish_to: 'none'
 version: 0.1.0+1
 
 # Phase E.7: enable Flutter's codegen for localization (.arb → AppLocalizations).
-generate: true
-
 environment:
   sdk: '>=3.0.0 <4.0.0'
 
@@ -92,6 +90,8 @@ dev_dependencies:
   drift_dev: ^2.22.1
 
 flutter:
+  # Phase E.7: enable Flutter's codegen for localization (.arb -> AppLocalizations).
+  generate: true
   uses-material-design: true
 
   assets:

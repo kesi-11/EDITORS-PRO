@@ -25,20 +25,20 @@ import 'package:ffi/ffi.dart';
 import 'api/bridge_api.dart';
 
 /// Signature of the native `editors_pro_dispatch` function.
-typedef _DispatchNative = ffi.Pointer<ffi.Utf8> Function(
-  ffi.Pointer<ffi.Utf8>,
-  ffi.Pointer<ffi.Utf8>,
+typedef _DispatchNative = ffi.Pointer<Utf8> Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
 );
 
 /// Dart-side wrapper around the dispatch function.
-typedef _DispatchDart = ffi.Pointer<ffi.Utf8> Function(
-  ffi.Pointer<ffi.Utf8>,
-  ffi.Pointer<ffi.Utf8>,
+typedef _DispatchDart = ffi.Pointer<Utf8> Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
 );
 
 /// Signature of the native `editors_pro_free_string` function.
-typedef _FreeStringNative = ffi.Void Function(ffi.Pointer<ffi.Utf8>);
-typedef _FreeStringDart = void Function(ffi.Pointer<ffi.Utf8>);
+typedef _FreeStringNative = ffi.Void Function(ffi.Pointer<Utf8>);
+typedef _FreeStringDart = void Function(ffi.Pointer<Utf8>);
 
 /// The flutter_rust_bridge runtime singleton.
 ///

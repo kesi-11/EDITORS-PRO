@@ -4,15 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/theme/app_theme.dart';
-import 'features/projects/presentation/project_home_screen.dart';
+import 'l10n/app_localizations.dart';
+import 'features/cloud/presentation/cloud_screen.dart';
 import 'features/editor/presentation/editor_screen.dart';
 import 'features/editor/providers/editor_provider.dart';
 import 'features/export/presentation/export_screen.dart';
+import 'features/onboarding/presentation/onboarding_screen.dart';
+import 'features/projects/presentation/project_home_screen.dart';
 import 'features/settings/providers/settings_provider.dart';
 import 'features/settings/settings_screen.dart';
-import 'features/onboarding/presentation/onboarding_screen.dart';
 import 'features/splash/splash_screen.dart';
-import 'features/cloud/presentation/cloud_screen.dart';
 import 'features/templates/presentation/template_browser.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -148,6 +149,7 @@ class _EditorsProAppState extends ConsumerState<EditorsProApp> {
       // The AppLocalizations class is generated from lib/l10n/*.arb
       // by `flutter gen-l10n` (configured in l10n.yaml).
       localizationsDelegates: const [
+        AppLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
