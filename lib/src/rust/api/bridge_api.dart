@@ -2265,3 +2265,298 @@ Future<bool> shouldReduceQuality() async {
   final result = await RustLib.instance.api._call<dynamic>('should_reduce_quality', {});
   return result as bool;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase F: Pro Tools FFI wrappers
+//
+// Wrappers for the new pro tools dispatch arms in
+// engine/src/api/ffi_dispatch.rs (lines 883–1117). These methods are
+// called by the new Flutter UI widgets in lib/features/editor/widgets/.
+// Each wrapper documents the engine method it calls and the types it
+// returns. See docs/PRO_TOOLS.md and persona/skills/*/SKILL.md.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─── LUT management (engine/src/effects/lut.rs) ────────────────────────
+
+/// Parse a `.cube` LUT file from its string content. Returns the parsed
+/// LUT as a JSON-compatible map (`{kind: "Lut1D" | "Lut3D", ...}`).
+///
+/// Engine method: `lut_load_cube_content`.
+/// See persona/skills/lut-management/SKILL.md.
+Future<Map<String, dynamic>> lutLoadCubeContent({required String content}) async {
+  final result = await RustLib.instance.api
+      ._call<dynamic>('lut_load_cube_content', {'content': content});
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Load a `.cube` LUT file from disk. Returns the parsed LUT.
+///
+/// Engine method: `lut_load_cube`.
+Future<Map<String, dynamic>> lutLoadCube({required String path}) async {
+  final result = await RustLib.instance.api
+      ._call<dynamic>('lut_load_cube', {'path': path});
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Color scopes (engine/src/analysis/scopes.rs) ──────────────────────
+
+/// Compute waveform, vectorscope, RGB parade, and histogram from a frame.
+///
+/// `frameBase64` is the RGBA8 pixel data, base64-encoded.
+/// Returns a `Scopes` JSON map.
+///
+/// Engine method: `compute_scopes`.
+/// See persona/skills/color-scopes/SKILL.md.
+Future<Map<String, dynamic>> computeScopes({
+  required String frameBase64,
+  required int width,
+  required int height,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('compute_scopes', {
+    'frame': frameBase64,
+    'width': width,
+    'height': height,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Count out-of-range pixels in a frame for broadcast QC.
+///
+/// Engine method: `count_out_of_range_pixels`.
+/// See persona/skills/broadcast-legal/SKILL.md.
+Future<Map<String, dynamic>> countOutOfRangePixels({
+  required String frameBase64,
+}) async {
+  final result = await RustLib.instance.api
+      ._call<dynamic>('count_out_of_range_pixels', {'frame': frameBase64});
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Color legalizer (engine/src/effects/legalizer.rs) ─────────────────
+
+/// Apply Rec.709 broadcast-legal clamping (with optional soft-clip) to a
+/// frame. Returns the legalized frame as base64.
+///
+/// Engine method: `legalize_frame`.
+/// See persona/skills/broadcast-legal/SKILL.md.
+Future<String> legalizeFrame({
+  required String frameBase64,
+  bool softClip = true,
+  double knee = 0.9,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('legalize_frame', {
+    'frame': frameBase64,
+    'soft_clip': softClip,
+    'knee': knee,
+  });
+  return result as String;
+}
+
+// ─── Video stabilization (engine/src/effects/stabilization.rs) ─────────
+
+/// Estimate per-frame motion between two consecutive frames.
+///
+/// Returns `{dx: f32, dy: f32}` in pixels.
+///
+/// Engine method: `estimate_motion`.
+/// See persona/skills/video-stabilization/SKILL.md.
+Future<Map<String, dynamic>> estimateMotion({
+  required String prevFrameBase64,
+  required String currFrameBase64,
+  required int width,
+  required int height,
+  int blockSize = 32,
+  int searchRange = 16,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('estimate_motion', {
+    'prev': prevFrameBase64,
+    'curr': currFrameBase64,
+    'width': width,
+    'height': height,
+    'block_size': blockSize,
+    'search_range': searchRange,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Color match (engine/src/effects/color_match.rs) ───────────────────
+
+/// Compute a per-channel LUT (256 entries per channel) that maps the
+/// source frame's histogram to match the reference frame.
+///
+/// Engine method: `compute_color_match_lut`.
+/// See persona/skills/color-match-shots/SKILL.md.
+Future<Map<String, dynamic>> computeColorMatchLut({
+  required String sourceFrameBase64,
+  required String referenceFrameBase64,
+  required int width,
+  required int height,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>(
+    'compute_color_match_lut',
+    {
+      'source': sourceFrameBase64,
+      'reference': referenceFrameBase64,
+      'width': width,
+      'height': height,
+    },
+  );
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Sky replacement (engine/src/effects/sky_replace.rs) ───────────────
+
+/// Replace the sky in a frame using a luminance key. Returns the
+/// composited frame as base64.
+///
+/// Engine method: `replace_sky`.
+/// See persona/skills/sky-replacement/SKILL.md.
+Future<String> replaceSky({
+  required String frameBase64,
+  required String newSkyBase64,
+  required int width,
+  required int height,
+  int lumaThreshold = 180,
+  double topPortion = 0.6,
+  int feather = 4,
+  double intensity = 1.0,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('replace_sky', {
+    'frame': frameBase64,
+    'new_sky': newSkyBase64,
+    'width': width,
+    'height': height,
+    'luma_threshold': lumaThreshold,
+    'top_portion': topPortion,
+    'feather': feather,
+    'intensity': intensity,
+  });
+  return result as String;
+}
+
+// ─── Beat detection (engine/src/analysis/beat_detect.rs) ───────────────
+
+/// Detect beats in audio samples (f32 PCM, base64-encoded as little-endian bytes).
+///
+/// Returns `{beats: [{time_ms, strength}], estimated_bpm: f32 | null, duration_ms: u64}`.
+///
+/// Engine method: `detect_beats`.
+/// See persona/skills/beat-sync-cut/SKILL.md.
+Future<Map<String, dynamic>> detectBeats({
+  required String samplesBase64,
+  int sampleRate = 44100,
+  int windowSize = 1024,
+  int hopSize = 512,
+  double minStrength = 0.3,
+  int minIntervalMs = 200,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('detect_beats', {
+    'samples': samplesBase64,
+    'sample_rate': sampleRate,
+    'window_size': windowSize,
+    'hop_size': hopSize,
+    'min_strength': minStrength,
+    'min_interval_ms': minIntervalMs,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Batch export queue (engine/src/export_engine/batch.rs) ────────────
+
+/// Enqueue a new batch export job. Returns the assigned job ID.
+///
+/// Engine method: `batch_enqueue`.
+/// See persona/skills/batch-export/SKILL.md.
+Future<String> batchEnqueue({
+  required String name,
+  required String projectPath,
+  required String outputPath,
+  required String preset,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('batch_enqueue', {
+    'name': name,
+    'project_path': projectPath,
+    'output_path': outputPath,
+    'preset': preset,
+  });
+  return result as String;
+}
+
+/// Get all jobs in the batch queue.
+///
+/// Engine method: `batch_jobs`.
+Future<List<Map<String, dynamic>>> batchJobs() async {
+  final result = await RustLib.instance.api._call<dynamic>('batch_jobs', {});
+  return (result as List)
+      .map((e) => (e as Map).cast<String, dynamic>())
+      .toList();
+}
+
+/// Cancel a queued or running batch export job.
+///
+/// Engine method: `batch_cancel`.
+Future<void> batchCancel({required String jobId}) async {
+  await RustLib.instance.api._call<dynamic>('batch_cancel', {
+    'job_id': jobId,
+  });
+}
+
+/// Clear completed/failed/cancelled jobs from the queue.
+///
+/// Engine method: `batch_clear_finished`.
+Future<void> batchClearFinished() async {
+  await RustLib.instance.api._call<dynamic>('batch_clear_finished', {});
+}
+
+// ─── Format interop (engine/src/project/interop.rs) ────────────────────
+
+/// Export a timeline to EDL, FCPXML, or OpenTimelineIO format.
+///
+/// `format` must be one of: `"edl"`, `"fcpxml"`, `"otio"`.
+/// Returns the exported file content as a string.
+///
+/// Engine method: `export_interop`.
+/// See persona/skills/format-interop/SKILL.md.
+Future<String> exportInterop({
+  required Map<String, dynamic> timeline,
+  required String format,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('export_interop', {
+    'timeline': timeline,
+    'format': format,
+  });
+  return result as String;
+}
+
+// ─── Advanced trim (engine/src/timeline/advanced_trim.rs) ──────────────
+
+/// Validate an advanced trim operation (ripple/roll/slip/slide).
+/// Returns `true` if legal, throws with an error message otherwise.
+///
+/// Engine method: `validate_advanced_trim`.
+/// See persona/skills/ripple-roll-trim/SKILL.md.
+Future<bool> validateAdvancedTrim({
+  required Map<String, dynamic> params,
+  int clipDurationMs = 0,
+  int clipInMs = 0,
+  int clipOutMs = 0,
+  int clipStartMs = 0,
+  int? adjDurationMs,
+  int? adjInMs,
+  int? adjOutMs,
+  int? adjStartMs,
+}) async {
+  final args = <String, dynamic>{
+    'params': params,
+    'clip_duration_ms': clipDurationMs,
+    'clip_in_ms': clipInMs,
+    'clip_out_ms': clipOutMs,
+    'clip_start_ms': clipStartMs,
+  };
+  if (adjDurationMs != null) args['adj_duration_ms'] = adjDurationMs;
+  if (adjInMs != null) args['adj_in_ms'] = adjInMs;
+  if (adjOutMs != null) args['adj_out_ms'] = adjOutMs;
+  if (adjStartMs != null) args['adj_start_ms'] = adjStartMs;
+  final result = await RustLib.instance.api._call<dynamic>('validate_advanced_trim', args);
+  return result as bool;
+}

@@ -234,7 +234,7 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen>
                   context.go('/editor/${project.id}');
                 }
               },
-              onMore: () => _showDeleteConfirmation(context, project),
+              onMore: () => _showProjectActions(context, project),
             )
                 .animate(delay: (index * 80).ms)
                 .fadeIn(duration: 400.ms)
@@ -493,6 +493,115 @@ class _ProjectHomeScreenState extends ConsumerState<ProjectHomeScreen>
             child: const Text('Delete'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Phase F.2: Show a bottom sheet with project actions (Open, Duplicate,
+  /// Delete). Replaces the old "more" button that only offered delete.
+  /// This is the pro workflow pattern — duplicate to fork a delivery
+  /// variant, delete to remove, open to edit.
+  void _showProjectActions(BuildContext context, ProjectModel project) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppTheme.radiusXLarge),
+        ),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.textDisabled,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppTheme.spacing16, vertical: AppTheme.spacing4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  project.name,
+                  style: Theme.of(context).textTheme.titleMedium,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.play_arrow),
+              title: const Text('Open project'),
+              subtitle: const Text('Continue editing in the timeline'),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(
+                  ref.read(projectProvider.notifier).openProject(project).then((_) {
+                    if (context.mounted) {
+                      context.go('/editor/${project.id}');
+                    }
+                  }),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.content_copy),
+              title: const Text('Duplicate project'),
+              subtitle: const Text(
+                'Create a copy with the same media for a delivery variant',
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(
+                  ref.read(projectProvider.notifier).duplicateProject(project.id).then((_) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('"${project.name}" duplicated.'),
+                          action: SnackBarAction(
+                            label: 'Open copy',
+                            onPressed: () {
+                              // The duplicated project is at the top of recentProjects
+                              final dup = ref.read(projectProvider).recentProjects.first;
+                              context.go('/editor/${dup.id}');
+                            },
+                          ),
+                        ),
+                      );
+                    }
+                  }).catchError((e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Duplicate failed: $e')),
+                      );
+                    }
+                  }),
+                );
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: AppTheme.error),
+              title: Text('Delete project',
+                  style: TextStyle(color: AppTheme.error)),
+              subtitle: const Text(
+                'Permanently remove the project and its media references',
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showDeleteConfirmation(context, project);
+              },
+            ),
+            const SizedBox(height: AppTheme.spacing8),
+          ],
+        ),
       ),
     );
   }
