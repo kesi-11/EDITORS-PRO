@@ -92,6 +92,9 @@ class TrackInfo {
   final bool locked;
   final bool visible;
   final double volume;
+  /// Phase F.5: clips on this track. The engine's TrackStateDto includes
+  /// a clips list; this field parses it so Flutter can look up asset_ids.
+  final List<ClipStateInfo> clips;
 
   const TrackInfo({
     required this.id,
@@ -100,6 +103,7 @@ class TrackInfo {
     this.locked = false,
     this.visible = true,
     this.volume = 1.0,
+    this.clips = const [],
   });
 
   factory TrackInfo.fromJson(Map<String, dynamic> json) => TrackInfo(
@@ -109,6 +113,45 @@ class TrackInfo {
         locked: json['locked'] as bool? ?? false,
         visible: json['visible'] as bool? ?? true,
         volume: (json['volume'] as num?)?.toDouble() ?? 1.0,
+        clips: (json['clips'] as List?)
+                ?.map((e) => ClipStateInfo.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
+      );
+}
+
+/// Phase F.5: Clip state info parsed from the engine's TrackStateDto.clips.
+/// Includes asset_id, which the EQ immediate-apply workflow needs.
+class ClipStateInfo {
+  final String id;
+  final String assetId;
+  final int startMs;
+  final int durationMs;
+  final int trimStartMs;
+  final int trimEndMs;
+  final double speed;
+  final double opacity;
+
+  const ClipStateInfo({
+    required this.id,
+    required this.assetId,
+    required this.startMs,
+    required this.durationMs,
+    this.trimStartMs = 0,
+    this.trimEndMs = 0,
+    this.speed = 1.0,
+    this.opacity = 1.0,
+  });
+
+  factory ClipStateInfo.fromJson(Map<String, dynamic> json) => ClipStateInfo(
+        id: json['id'] as String,
+        assetId: json['asset_id'] as String,
+        startMs: (json['start_ms'] as num).toInt(),
+        durationMs: (json['duration_ms'] as num).toInt(),
+        trimStartMs: (json['trim_start_ms'] as num?)?.toInt() ?? 0,
+        trimEndMs: (json['trim_end_ms'] as num?)?.toInt() ?? 0,
+        speed: (json['speed'] as num?)?.toDouble() ?? 1.0,
+        opacity: (json['opacity'] as num?)?.toDouble() ?? 1.0,
       );
 }
 
@@ -2302,15 +2345,14 @@ Future<Map<String, dynamic>> lutLoadCube({required String path}) async {
 
 /// Compute waveform, vectorscope, RGB parade, and histogram from a frame.
 ///
-/// `frameBase64` is the RGBA8 pixel data, base64-encoded.
-/// Returns a `Scopes` JSON map.
+/// Phase F.5: `frameBase64` can be PNG (from getFrame, omit width/height)
+/// or raw RGBA8 (pass width/height).
 ///
 /// Engine method: `compute_scopes`.
-/// See persona/skills/color-scopes/SKILL.md.
 Future<Map<String, dynamic>> computeScopes({
   required String frameBase64,
-  required int width,
-  required int height,
+  int width = 0,
+  int height = 0,
 }) async {
   final result = await RustLib.instance.api._call<dynamic>('compute_scopes', {
     'frame': frameBase64,
@@ -2783,4 +2825,23 @@ Future<Map<String, dynamic>?> getCurrentLoudness() async {
   final result = await RustLib.instance.api._call<dynamic>('get_current_loudness', {});
   if (result == null) return null;
   return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Phase F.5: Active LUT (applied in get_frame) ──────────────────────
+
+/// Set the active LUT. Every frame returned by getFrame will have the LUT
+/// applied at the given intensity. The LUT is baked into the render pipeline.
+Future<void> setActiveLut({
+  required Map<String, dynamic> lutJson,
+  double intensity = 1.0,
+}) async {
+  await RustLib.instance.api._call<dynamic>('set_active_lut', {
+    'lut_json': lutJson,
+    'intensity': intensity,
+  });
+}
+
+/// Clear the active LUT. Frames will be returned without LUT processing.
+Future<void> clearActiveLut() async {
+  await RustLib.instance.api._call<dynamic>('clear_active_lut', {});
 }

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert' show base64Decode, base64Encode;
 import 'dart:developer' as developer;
 import 'dart:io';
-import 'dart:typed_data' show Uint8List;
+import 'dart:typed_data' show ByteData, Endian, Uint8List;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,17 +15,15 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/extensions/context_extensions.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/services/engine_service.dart';
-// Phase F.3 + F.4: top-level FFI wrappers
+// Phase F.3 + F.4 + F.5: top-level FFI wrappers
 import 'package:editors_pro/src/rust/api/bridge_api.dart'
     show
         computeScopes,
-        applyLutToFrame,
         applyEqToSamples,
         markersAdd,
         markersGet,
         markersRemove,
         analyzeLoudness,
-        // Phase F.4
         setTrackPan,
         getTrackPan,
         setTrackSolo,
@@ -33,7 +31,9 @@ import 'package:editors_pro/src/rust/api/bridge_api.dart'
         setTrackEqSettings,
         getTrackEqSettings,
         setAudioSamples,
-        getCurrentLoudness;
+        getCurrentLoudness,
+        setActiveLut,
+        clearActiveLut;
 import '../../../data/models/project_model.dart';
 import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
@@ -74,12 +74,11 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   /// For now, scoped to the screen lifetime.
   List<Marker> _markers = const [];
 
-  /// Phase F.3: the currently-loaded LUT (parsed JSON from lutLoadCubeContent).
-  /// When non-null and `_lutIntensity > 0`, frames are passed through
-  /// `applyLutToFrame` before display.
+  /// Phase F.5: the currently-loaded LUT (parsed JSON from lutLoadCubeContent).
+  /// When non-null, the LUT is applied in the engine's get_frame via setActiveLut.
   Map<String, dynamic>? _loadedLutJson;
 
-  /// Phase F.3: LUT application intensity (0.0 = no LUT, 1.0 = full LUT).
+  /// Phase F.5: LUT application intensity (0.0 = no LUT, 1.0 = full LUT).
   double _lutIntensity = 1.0;
 
   /// Phase F.3: current EQ settings JSON (stored when the user changes the
@@ -698,30 +697,11 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         return;
       }
 
-      // We need width/height. The engine doesn't expose them on getFrame,
-      // so we infer from the byte count assuming RGBA8 (4 bytes/pixel)
-      // and the project's frame size.
-      // video: getFrame doesn't return dimensions; upgrade to return a
-      // struct with width/height when the API is next revised.
-      final project = ref.read(currentProjectProvider);
-      final width = project?.width ?? 1920;
-      final height = project?.height ?? 1080;
-      final expectedBytes = width * height * 4;
-      if (frameBytes.length != expectedBytes) {
-        // Fall back: the frame is at the engine's internal resolution.
-        // Try common resolutions until one matches.
-        developer.log(
-          'Frame byte count ${frameBytes.length} != expected $expectedBytes '
-          '(${width}x${height}x4). Trying common resolutions.',
-          name: 'ScopesPanel',
-        );
-      }
-
+      // Phase F.5: pass PNG bytes directly. compute_scopes decodes PNG
+      // internally when width/height are 0 (the default).
       final frameB64 = base64Encode(frameBytes);
       final result = await computeScopes(
         frameBase64: frameB64,
-        width: width,
-        height: height,
       );
 
       // Parse into the ScopesData DTO
@@ -951,60 +931,43 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   /// LUT browser — import .cube, apply with intensity slider.
   ///
   /// Phase F.3: when a LUT is loaded, store its JSON in the editor state
-  /// (via a simple field — full state management would add a `lutJson`
-  /// field to EditorState). When the user changes intensity, re-apply the
-  /// LUT to the current frame via `applyLutToFrame`.
+  /// Phase F.5: LUT browser — applies LUT via setActiveLut FFI.
+  /// The engine applies the LUT in get_frame itself, so every preview
+  /// frame is LUT-processed. This retires the 'LUT applied lazily' debt.
   Widget _buildLutPanel(BuildContext context, EditorState state) {
     return LutBrowser(
       onLutSelected: (lutJson) {
-        // Store the loaded LUT for later application.
         _loadedLutJson = lutJson;
+        _applyActiveLut();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('LUT loaded. Use the intensity slider to apply.'),
+            content: Text('LUT applied to preview. Adjust intensity live.'),
             duration: Duration(seconds: 2),
           ),
         );
       },
       onIntensityChanged: (intensity) {
         _lutIntensity = intensity;
-        // The actual apply happens lazily on the next frame render.
-        // For immediate feedback, we could trigger a frame fetch + apply
-        // here, but that would block the UI thread on every slider tick.
-        // video: apply LUT lazily on next frame fetch, upgrade to real-time
-        // preview when the rendering pipeline supports LUT in the shader chain.
+        _applyActiveLut();
       },
     );
   }
 
-  /// Phase F.3: apply the currently-loaded LUT (if any) to a frame buffer.
-  /// Called by the preview viewport after fetching a frame, before display.
-  ///
-  /// Returns the (possibly LUT-applied) frame bytes. If no LUT is loaded
-  /// or intensity is 0, returns the input unchanged.
-  Future<Uint8List> _maybeApplyLut(
-    Uint8List frameBytes,
-    int width,
-    int height,
-  ) async {
-    if (_loadedLutJson == null || _lutIntensity <= 0.001) {
-      return frameBytes;
-    }
-    if (!EngineService.instance.isInitialized) return frameBytes;
+  /// Phase F.5: apply (or clear) the active LUT via the engine FFI.
+  Future<void> _applyActiveLut() async {
+    if (!EngineService.instance.isInitialized) return;
     try {
-      final frameB64 = base64Encode(frameBytes);
-      final resultB64 = await applyLutToFrame(
-        lutJson: _loadedLutJson!,
-        frameBase64: frameB64,
-        width: width,
-        height: height,
-        intensity: _lutIntensity,
-      );
-      return Uint8List.fromList(base64Decode(resultB64));
+      if (_loadedLutJson == null || _lutIntensity <= 0.001) {
+        await clearActiveLut();
+      } else {
+        await setActiveLut(
+          lutJson: _loadedLutJson!,
+          intensity: _lutIntensity,
+        );
+      }
     } catch (e) {
-      developer.log('_maybeApplyLut failed: $e', name: 'LutPanel');
-      return frameBytes;
+      developer.log('_applyActiveLut failed: $e', name: 'LutPanel');
     }
   }
 
@@ -1092,33 +1055,78 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   /// Phase F.4: best-effort immediate EQ application to the selected clip.
   ///
   /// Fetches the timeline state, finds the selected clip, fetches its
-  /// audio samples, applies the EQ chain, and writes the result back to
-  /// the engine's audio cache.
+  /// Phase F.5: immediate EQ application to the selected clip's audio.
+  /// Uses TrackInfo.clips (now parsed) to find the asset_id, fetches
+  /// samples, applies EQ, writes back via setAudioSamples.
   Future<void> _applyEqToSelectedClip(EqSettings settings, EditorState state) async {
     final timeline = await EngineService.instance.api.getTimelineState();
     if (timeline == null || state.selectedClipId == null) return;
 
-    // Find the selected clip across all tracks
+    // Phase F.5: find the selected clip via TrackInfo.clips
     String? assetId;
+    int? clipStartMs;
+    int? clipDurationMs;
     for (final track in timeline.tracks) {
-      // ClipInfo doesn't expose assetId directly in the bridge DTO,
-      // so we can't currently look up the asset. This is a known gap.
-      // video: ClipInfo doesn't expose asset_id; add it to the bridge DTO
-      // when the codegen is next run.
-      break;
+      for (final clip in track.clips) {
+        if (clip.id == state.selectedClipId) {
+          assetId = clip.assetId;
+          clipStartMs = clip.startMs;
+          clipDurationMs = clip.durationMs;
+          break;
+        }
+      }
+      if (assetId != null) break;
     }
-    if (assetId == null) return;
+    if (assetId == null || clipStartMs == null || clipDurationMs == null) return;
 
-    // The full flow would be:
-    //   1. final samples = await EngineService.instance.api.getAudioSamples(
-    //        assetId: assetId, startMs: ..., durationMs: ...);
-    //   2. final samplesB64 = base64Encode(_f32ToBytes(samples));
-    //   3. final resultB64 = await applyEqToSamples(
-    //        settings: settingsJson, samplesBase64: samplesB64, sampleRate: 44100);
-    //   4. await setAudioSamples(assetId: assetId, samplesBase64: resultB64);
-    //
-    // Until ClipInfo exposes asset_id, this remains a stub. The per-track
-    // settings (stored above) are the source of truth.
+    try {
+      final samples = await EngineService.instance.api.getAudioSamples(
+        assetId: assetId,
+        startMs: BigInt.from(clipStartMs),
+        durationMs: BigInt.from(clipDurationMs),
+      );
+      if (samples.isEmpty) return;
+
+      final sampleBytes = Uint8List(samples.length * 4);
+      for (int i = 0; i < samples.length; i++) {
+        final byteData = ByteData.view(sampleBytes.buffer, i * 4, 4);
+        byteData.setFloat32(0, samples[i], Endian.little);
+      }
+      final samplesB64 = base64Encode(sampleBytes);
+
+      final settingsJson = <String, dynamic>{
+        'enabled': settings.enabled,
+        'high_pass_hz': settings.highPassHz,
+        'low_pass_hz': settings.lowPassHz,
+        'bands': settings.bands
+            .map((b) => {
+                  'frequency': b.frequency,
+                  'gain_db': b.gain,
+                  'q': b.q,
+                  'enabled': b.enabled,
+                })
+            .toList(),
+      };
+
+      final resultB64 = await applyEqToSamples(
+        settings: settingsJson,
+        samplesBase64: samplesB64,
+        sampleRate: 44100,
+      );
+
+      await setAudioSamples(
+        assetId: assetId,
+        samplesBase64: resultB64,
+        sampleRate: 44100,
+        channels: 2,
+      );
+
+      developer.log('EQ immediate-apply succeeded for asset $assetId',
+          name: 'EqPanel');
+    } catch (e) {
+      developer.log('_applyEqToSelectedClip failed: $e', name: 'EqPanel');
+      rethrow;
+    }
   }
 
   /// Phase F.2: show the loudness meter in a floating dialog (called from

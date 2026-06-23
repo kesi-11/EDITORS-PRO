@@ -103,6 +103,10 @@ pub struct EditorsProEngine {
     /// short-term + momentary LUFS when the loudness analyzer supports
     /// windowed measurement.
     last_loudness: std::sync::Mutex<Option<LoudnessResult>>,
+    /// Phase F.5: active LUT applied to every frame in get_frame.
+    active_lut: Option<crate::effects::lut::Lut>,
+    /// Phase F.5: LUT application intensity (0.0 = no LUT, 1.0 = full).
+    active_lut_intensity: f32,
 }
 
 /// Phase F.4: per-track mixer state not yet on TrackInfo.
@@ -138,6 +142,8 @@ impl EditorsProEngine {
             track_mixer_state: std::collections::HashMap::new(),
             track_eq_settings: std::collections::HashMap::new(),
             last_loudness: std::sync::Mutex::new(None),
+            active_lut: None,
+            active_lut_intensity: 1.0,
         }
     }
 
@@ -478,9 +484,19 @@ impl EditorsProEngine {
             .project
             .as_ref()
             .ok_or_else(|| EngineError::InvalidState("No project open".to_string()))?;
-        let composed = self
+        let mut composed = self
             .renderer
             .compose_frame(project.timeline(), time_ms, video_frame);
+
+        // Phase F.5: apply the active LUT if one is set.
+        if let Some(lut) = &self.active_lut {
+            lut.apply_rgba8(
+                &mut composed.data,
+                composed.width as usize,
+                composed.height as usize,
+                self.active_lut_intensity,
+            );
+        }
 
         Ok(composed)
     }
@@ -2069,11 +2085,11 @@ impl EditorsProEngine {
                 .map(|frame| frame.iter().sum::<f32>() / buffer.channels as f32)
                 .collect()
         };
-        let stats = crate::analysis::loudness::analyze_loudness(&mono, sample_rate);
+        let stats = crate::analysis::loudness::analyze_loudness_extended(&mono, sample_rate);
         Some(LoudnessResult {
-            integrated_lufs: stats.lufs,
-            short_term_lufs: stats.lufs, // video: short-term = integrated until windowed analysis is added
-            momentary_lufs: stats.lufs,  // video: momentary = integrated until windowed analysis is added
+            integrated_lufs: stats.integrated_lufs,
+            short_term_lufs: stats.short_term_lufs,
+            momentary_lufs: stats.momentary_lufs,
             rms_db: stats.rms_db,
             peak_db: stats.peak_db,
             true_peak_dbtp: stats.true_peak,
@@ -2091,11 +2107,11 @@ impl EditorsProEngine {
                 .map(|frame| frame.iter().sum::<f32>() / channels as f32)
                 .collect()
         };
-        let stats = crate::analysis::loudness::analyze_loudness(&mono, sample_rate);
+        let stats = crate::analysis::loudness::analyze_loudness_extended(&mono, sample_rate);
         let result = LoudnessResult {
-            integrated_lufs: stats.lufs,
-            short_term_lufs: stats.lufs,
-            momentary_lufs: stats.lufs,
+            integrated_lufs: stats.integrated_lufs,
+            short_term_lufs: stats.short_term_lufs,
+            momentary_lufs: stats.momentary_lufs,
             rms_db: stats.rms_db,
             peak_db: stats.peak_db,
             true_peak_dbtp: stats.true_peak,
@@ -2173,6 +2189,24 @@ impl EditorsProEngine {
     /// has been analyzed yet. Polled by the Flutter Audio Meter Bridge.
     pub fn get_current_loudness(&self) -> Option<LoudnessResult> {
         self.last_loudness.lock().ok().and_then(|g| g.clone())
+    }
+
+    // ─── Phase F.5: Active LUT (applied in get_frame) ──────────────────
+
+    pub fn set_active_lut(&mut self, lut: crate::effects::lut::Lut, intensity: f32) {
+        self.active_lut = Some(lut);
+        self.active_lut_intensity = intensity.clamp(0.0, 1.0);
+        self.invalidate_frame_cache();
+    }
+
+    pub fn clear_active_lut(&mut self) {
+        self.active_lut = None;
+        self.active_lut_intensity = 1.0;
+        self.invalidate_frame_cache();
+    }
+
+    pub fn get_active_lut(&self) -> Option<(&crate::effects::lut::Lut, f32)> {
+        self.active_lut.as_ref().map(|lut| (lut, self.active_lut_intensity))
     }
 }
 

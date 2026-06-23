@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 /// Loudness analysis utilities (EBU R128 style).
 
 /// Compute RMS (root mean square) level of audio samples in dB.
@@ -37,8 +39,28 @@ pub fn compute_lufs(samples: &[f32], sample_rate: u32) -> f64 {
     rms - 0.691
 }
 
+/// Phase F.5: Compute short-term LUFS (3-second window, per EBU R128).
+pub fn compute_short_term_lufs(samples: &[f32], sample_rate: u32) -> f64 {
+    let window_samples = (sample_rate as usize) * 3;
+    if samples.len() < window_samples {
+        return compute_lufs(samples, sample_rate);
+    }
+    let window = &samples[samples.len() - window_samples..];
+    compute_lufs(window, sample_rate)
+}
+
+/// Phase F.5: Compute momentary LUFS (400ms window, per EBU R128).
+pub fn compute_momentary_lufs(samples: &[f32], sample_rate: u32) -> f64 {
+    let window_samples = (sample_rate as usize * 400) / 1000;
+    if samples.len() < window_samples || window_samples == 0 {
+        return compute_lufs(samples, sample_rate);
+    }
+    let window = &samples[samples.len() - window_samples..];
+    compute_lufs(window, sample_rate)
+}
+
 /// Audio loudness stats.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoudnessStats {
     pub rms_db: f64,
     pub peak_db: f64,
@@ -52,6 +74,29 @@ pub fn analyze_loudness(samples: &[f32], sample_rate: u32) -> LoudnessStats {
         rms_db: compute_rms_db(samples),
         peak_db: compute_peak_db(samples),
         lufs: compute_lufs(samples, sample_rate),
+        true_peak: samples.iter().fold(0.0f32, |a, &b| a.max(b.abs())),
+    }
+}
+
+/// Phase F.5: Extended loudness stats with windowed measurements.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtendedLoudnessStats {
+    pub rms_db: f64,
+    pub peak_db: f64,
+    pub integrated_lufs: f64,
+    pub short_term_lufs: f64,
+    pub momentary_lufs: f64,
+    pub true_peak: f32,
+}
+
+/// Phase F.5: Analyze audio loudness with windowed short-term + momentary.
+pub fn analyze_loudness_extended(samples: &[f32], sample_rate: u32) -> ExtendedLoudnessStats {
+    ExtendedLoudnessStats {
+        rms_db: compute_rms_db(samples),
+        peak_db: compute_peak_db(samples),
+        integrated_lufs: compute_lufs(samples, sample_rate),
+        short_term_lufs: compute_short_term_lufs(samples, sample_rate),
+        momentary_lufs: compute_momentary_lufs(samples, sample_rate),
         true_peak: samples.iter().fold(0.0f32, |a, &b| a.max(b.abs())),
     }
 }

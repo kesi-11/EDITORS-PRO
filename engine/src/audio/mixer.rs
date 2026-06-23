@@ -230,28 +230,36 @@ impl AudioMixer {
             // Phase F.4: apply pan (constant-power panning law).
             // For stereo output: left = cos(theta), right = sin(theta)
             // where theta = (pan + 1) * pi/4 (maps -1..+1 to 0..pi/2)
-            // video: constant-power pan, upgrade to true stereo panner for surround
+            // At pan=0 (center): left_gain = right_gain = cos(pi/4) ≈ 0.707
+            // At pan=-1 (full left): left_gain = 1.0, right_gain = 0.0
+            // At pan=+1 (full right): left_gain = 0.0, right_gain = 1.0
             let pan = source.pan.clamp(-1.0, 1.0);
             let theta = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
             let left_gain = theta.cos();
             let right_gain = theta.sin();
 
-            // Mix the processed buffer into the output at the correct offset
             if self.channels == 2 && processed.channels == 2 {
-                // Stereo-to-stereo: apply pan per channel
+                // Stereo-to-stereo: preserve width at center, collapse at extremes
                 for i in (0..processed.samples.len()).step_by(2) {
                     let out_idx = offset_samples + i;
                     if out_idx + 1 < output.len() {
-                        // Apply pan: attenuate opposite channel
                         let l = processed.samples[i] * source.volume;
                         let r = processed.samples[i + 1] * source.volume;
-                        // Pan law: pan left = boost left, attenuate right
-                        output[out_idx] += l * left_gain + r * (1.0 - right_gain) * 0.0;
-                        output[out_idx + 1] += r * right_gain + l * (1.0 - left_gain) * 0.0;
+                        output[out_idx] += l * left_gain + r * (1.0 - left_gain);
+                        output[out_idx + 1] += r * right_gain + l * (1.0 - right_gain);
+                    }
+                }
+            } else if self.channels == 2 && processed.channels == 1 {
+                // Mono-to-stereo: apply pan directly
+                for (i, &sample) in processed.samples.iter().enumerate() {
+                    let out_idx = offset_samples + i * 2;
+                    if out_idx + 1 < output.len() {
+                        let s = sample * source.volume;
+                        output[out_idx] += s * left_gain;
+                        output[out_idx + 1] += s * right_gain;
                     }
                 }
             } else {
-                // Mono or other: apply pan as a simple volume scale per channel
                 for (i, &sample) in processed.samples.iter().enumerate() {
                     let out_idx = offset_samples + i;
                     if out_idx < output.len() {

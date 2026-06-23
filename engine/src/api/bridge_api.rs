@@ -1640,6 +1640,26 @@ impl EditorsProEngineApi {
     pub fn get_current_loudness(&self) -> Result<Option<crate::api::LoudnessResult>, String> {
         self.with_engine_recovery(|engine| Ok(engine.get_current_loudness()))
     }
+
+    // ─── Phase F.5: Active LUT (applied in get_frame) ──────────────────
+
+    pub fn set_active_lut(
+        &self,
+        lut: crate::effects::lut::Lut,
+        intensity: f32,
+    ) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.set_active_lut(lut, intensity);
+            Ok(())
+        })
+    }
+
+    pub fn clear_active_lut(&self) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.clear_active_lut();
+            Ok(())
+        })
+    }
 }
 
 impl From<ExportSettings> for BridgeExportSettings {
@@ -1695,6 +1715,16 @@ fn encode_rgba_to_png(rgba_data: &[u8], width: u32, height: u32) -> Result<Vec<u
         .map_err(|e| format!("PNG encoding failed: {}", e))?;
 
     Ok(png_buf.into_inner())
+}
+
+/// Phase F.5: Decode PNG bytes to RGBA8 + dimensions.
+pub fn decode_png_to_rgba(png_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    use image::GenericImageView;
+    let img = image::load_from_memory(png_data)
+        .map_err(|e| format!("PNG decode failed: {}", e))?;
+    let (width, height) = img.dimensions();
+    let rgba = img.to_rgba8().into_raw();
+    Ok((rgba, width, height))
 }
 
 /// Bridge-compatible ducking configuration

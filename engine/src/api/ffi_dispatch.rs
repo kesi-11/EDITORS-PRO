@@ -903,10 +903,18 @@ fn dispatch_method(
             let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             match base64_decode_bytes(frame_b64) {
-                Some(pixels) if pixels.len() == width * height * 4 => {
-                    to_json_ok(&crate::analysis::scopes::compute_scopes(&pixels, width, height))
+                Some(pixels) => {
+                    if width > 0 && height > 0 && pixels.len() == width * height * 4 {
+                        to_json_ok(&crate::analysis::scopes::compute_scopes(&pixels, width, height))
+                    } else {
+                        match crate::api::bridge_api::decode_png_to_rgba(&pixels) {
+                            Ok((rgba, w, h)) => {
+                                to_json_ok(&crate::analysis::scopes::compute_scopes(&rgba, w as usize, h as usize))
+                            }
+                            Err(e) => to_json_err(format!("PNG decode failed: {}", e)),
+                        }
+                    }
                 }
-                Some(_) => to_json_err("frame size mismatch".into()),
                 None => to_json_err("invalid base64 frame".into()),
             }
         }
@@ -1285,6 +1293,24 @@ fn dispatch_method(
                 }
                 None => to_json_err("invalid base64 samples".into()),
             }
+        }
+
+        // ─── Phase F.5: Active LUT (applied in get_frame) ──────────────────
+
+        "set_active_lut" => {
+            let lut_json = match args.get("lut_json") {
+                Some(v) => v,
+                None => return to_json_err("missing 'lut_json' arg".into()),
+            };
+            let lut: crate::effects::lut::Lut = match serde_json::from_value(lut_json.clone()) {
+                Ok(l) => l,
+                Err(e) => return to_json_err(format!("lut parse error: {}", e)),
+            };
+            let intensity = args.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            to_json_string::<()>(api.set_active_lut(lut, intensity))
+        }
+        "clear_active_lut" => {
+            to_json_string::<()>(api.clear_active_lut())
         }
 
         // ─── Stream-based methods (Phase C.14) ─────────────────────────────
