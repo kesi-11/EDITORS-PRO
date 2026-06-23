@@ -85,6 +85,13 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   /// EQ panel; applied to audio samples on playback).
   Map<String, dynamic>? _eqSettings;
 
+  /// Phase F.6: cached Future for mixer tracks. Avoids re-fetching on every
+  /// widget rebuild. Set to null to invalidate (e.g., when tracks change).
+  Future<List<MixerTrack>>? _mixerTracksFuture;
+
+  /// Phase F.6: cached Future for markers. Invalidated on add/delete.
+  Future<List<Marker>>? _markersFuture;
+
   @override
   void initState() {
     super.initState();
@@ -548,12 +555,13 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   /// Per-track audio mixer with volume, pan, mute, solo, master fader.
   ///
   /// Phase F.3: pulls the real audio track list from the engine via
-  /// `getTimelineState()`. The list refreshes whenever the user opens the
-  /// Mixer tab (via _refreshMixerTracks called on tab build) and on every
-  /// state change (so adding/removing tracks surfaces here automatically).
+  /// `getTimelineState()`. The Future is cached in _mixerTracksFuture to
+  /// avoid re-fetching on every widget rebuild. Call _invalidateMixerCache()
+  /// when tracks are added/removed to force a refresh.
   Widget _buildMixerPanel(BuildContext context, EditorState state) {
+    _mixerTracksFuture ??= _loadMixerTracks();
     return FutureBuilder<List<MixerTrack>>(
-      future: _loadMixerTracks(),
+      future: _mixerTracksFuture,
       builder: (context, snapshot) {
         final tracks = snapshot.data ?? const <MixerTrack>[];
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -785,11 +793,12 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   /// Timeline markers — chapter, note, sync, QC, edit, audio, VFX.
   ///
   /// Phase F.3: persists via the engine's `markers_add` / `markers_remove`
-  /// FFI arms (engine/src/effects/markers.rs MarkerManager). On panel
-  /// open, loads the existing markers from the engine via `markers_get`.
+  /// FFI arms. The Future is cached in _markersFuture to avoid re-fetching
+  /// on every rebuild. Invalidated when markers are added/removed.
   Widget _buildMarkersPanel(BuildContext context, EditorState state) {
+    _markersFuture ??= _loadMarkers();
     return FutureBuilder<List<Marker>>(
-      future: _loadMarkers(),
+      future: _markersFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -842,7 +851,8 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         markerType: _markerTypeToString(type),
         comment: note,
       );
-      // Trigger a rebuild so the FutureBuilder re-fetches.
+      // Invalidate cache + rebuild so the FutureBuilder re-fetches.
+      _markersFuture = null;
       setState(() {});
     } catch (e) {
       developer.log('_addMarker failed: $e', name: 'MarkersPanel');
@@ -854,6 +864,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     if (!EngineService.instance.isInitialized) return;
     try {
       await markersRemove(id: markerId);
+      _markersFuture = null;
       setState(() {});
     } catch (e) {
       developer.log('_deleteMarker failed: $e', name: 'MarkersPanel');
