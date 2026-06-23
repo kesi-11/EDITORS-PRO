@@ -2607,39 +2607,14 @@ Future<bool> validateAdvancedTrim({
 //
 // These wrappers finish the F.2 stubbed integrations. Each calls the
 // matching engine dispatch arm added in Phase F.3:
-//   - applyLutToFrame  → apply_lut_to_frame  (effects/lut.rs)
 //   - applyEqToSamples → apply_eq_to_samples (audio/effects.rs)
 //   - markersAdd       → markers_add         (effects/markers.rs)
 //   - markersGet       → markers_get         (effects/markers.rs)
 //   - markersRemove    → markers_remove      (effects/markers.rs)
 //   - analyzeLoudness  → analyze_loudness    (analysis/loudness.rs)
-
-/// Apply a previously-loaded LUT to a frame.
-///
-/// `lutJson` is the parsed LUT returned by [lutLoadCubeContent].
-/// `frameBase64` is the RGBA8 pixel data, base64-encoded.
-/// `intensity` is 0.0 (no LUT) to 1.0 (full LUT).
-///
-/// Returns the LUT-applied frame as base64.
-///
-/// Engine method: `apply_lut_to_frame`.
-/// See persona/skills/lut-management/SKILL.md.
-Future<String> applyLutToFrame({
-  required Map<String, dynamic> lutJson,
-  required String frameBase64,
-  required int width,
-  required int height,
-  double intensity = 1.0,
-}) async {
-  final result = await RustLib.instance.api._call<dynamic>('apply_lut_to_frame', {
-    'lut_json': lutJson,
-    'frame': frameBase64,
-    'width': width,
-    'height': height,
-    'intensity': intensity,
-  });
-  return result as String;
-}
+//
+// Note: apply_lut_to_frame is kept in the engine FFI for testing but is
+// not exposed in Dart — LUTs are applied via setActiveLut in get_frame.
 
 /// Apply an EQ chain (HPF + 8 peaking bands + LPF) to f32 PCM samples.
 ///

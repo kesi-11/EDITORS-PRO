@@ -984,6 +984,24 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     );
   }
 
+  /// Phase F.5: Convert EqSettings (Flutter DTO) to JSON for FFI calls.
+  /// Single source of truth — used by both _applyEqSettings and _applyEqToSelectedClip.
+  static Map<String, dynamic> _eqSettingsToJson(EqSettings settings) {
+    return {
+      'enabled': settings.enabled,
+      'high_pass_hz': settings.highPassHz,
+      'low_pass_hz': settings.lowPassHz,
+      'bands': settings.bands
+          .map((b) => {
+                'frequency': b.frequency,
+                'gain_db': b.gain,
+                'q': b.q,
+                'enabled': b.enabled,
+              })
+          .toList(),
+    };
+  }
+
   /// Phase F.3 + F.4: apply EQ settings to the current audio clip's samples.
   ///
   /// Persists the EQ settings per-track via `setTrackEqSettings` (so the
@@ -1001,20 +1019,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     if (!EngineService.instance.isInitialized) return;
 
     try {
-      // Convert EqSettings (Flutter) → JSON for the FFI call
-      final settingsJson = <String, dynamic>{
-        'enabled': settings.enabled,
-        'high_pass_hz': settings.highPassHz,
-        'low_pass_hz': settings.lowPassHz,
-        'bands': settings.bands
-            .map((b) => {
-                  'frequency': b.frequency,
-                  'gain_db': b.gain,
-                  'q': b.q,
-                  'enabled': b.enabled,
-                })
-            .toList(),
-      };
+      final settingsJson = _eqSettingsToJson(settings);
 
       // Phase F.4: persist the EQ settings per-track so the mixer can
       // apply them during playback. Use the selected track (or fall back
@@ -1093,20 +1098,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         byteData.setFloat32(0, samples[i], Endian.little);
       }
       final samplesB64 = base64Encode(sampleBytes);
-
-      final settingsJson = <String, dynamic>{
-        'enabled': settings.enabled,
-        'high_pass_hz': settings.highPassHz,
-        'low_pass_hz': settings.lowPassHz,
-        'bands': settings.bands
-            .map((b) => {
-                  'frequency': b.frequency,
-                  'gain_db': b.gain,
-                  'q': b.q,
-                  'enabled': b.enabled,
-                })
-            .toList(),
-      };
+      final settingsJson = _eqSettingsToJson(settings);
 
       final resultB64 = await applyEqToSamples(
         settings: settingsJson,
@@ -1145,14 +1137,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   /// Seek the playhead to a specific time in milliseconds.
   /// Used by the markers panel to jump to a marker.
   void _seekToMs(int timeMs) {
-    // The editor notifier has a play() method that uses _playbackTimer; for
-    // seeking we update the currentTimeMs directly and invalidate the frame cache.
-    // A full implementation would call into the engine's seek method.
-    final clamped = timeMs.clamp(0, ref.read(editorProvider).durationMs);
-    // Trigger a frame fetch at the new position by toggling play state.
-    // This is a pragmatic seek — the real implementation would call
-    // EngineService.instance.api.seek(timeMs) when that method is wired.
-    developer.log('Seek to $clamped ms (stubbed)', name: 'EditorScreen');
+    ref.read(editorProvider.notifier).seekTo(timeMs);
   }
 
   Widget _buildMediaLibrary(BuildContext context) {

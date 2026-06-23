@@ -115,7 +115,7 @@ impl From<crate::audio::decoder::DecodedAudio> for AudioBuffer {
 }
 
 /// Volume envelope for fade in/out effects
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VolumeEnvelope {
     pub volume: f32,
     pub fade_in_ms: u64,
@@ -212,7 +212,25 @@ impl AudioMixer {
                 (source.offset_ms as f64 * self.sample_rate as f64 * self.channels as f64 / 1000.0)
                     as usize;
 
-            // Apply volume envelope first
+            // Phase F.5: Only clone the buffer if we need to modify it
+            // (envelope, EQ, or pan). If none of those apply, mix directly
+            // from the source — avoids a full buffer allocation per source.
+            let needs_processing = source.envelope != VolumeEnvelope::default()
+                || source.eq_settings.as_ref().map_or(false, |eq| eq.enabled)
+                || source.pan.abs() > 0.001;
+
+            if !needs_processing {
+                // Fast path: mix directly from source, no clone
+                for (i, &sample) in source.buffer.samples.iter().enumerate() {
+                    let out_idx = offset_samples + i;
+                    if out_idx < output.len() {
+                        output[out_idx] += sample * source.volume;
+                    }
+                }
+                continue;
+            }
+
+            // Slow path: clone, apply envelope + EQ, then mix with pan
             let mut processed = source.buffer.clone();
             self.apply_envelope(&mut processed, &source.envelope);
 
@@ -228,8 +246,6 @@ impl AudioMixer {
             }
 
             // Phase F.4: apply pan (constant-power panning law).
-            // For stereo output: left = cos(theta), right = sin(theta)
-            // where theta = (pan + 1) * pi/4 (maps -1..+1 to 0..pi/2)
             // At pan=0 (center): left_gain = right_gain = cos(pi/4) ≈ 0.707
             // At pan=-1 (full left): left_gain = 1.0, right_gain = 0.0
             // At pan=+1 (full right): left_gain = 0.0, right_gain = 1.0

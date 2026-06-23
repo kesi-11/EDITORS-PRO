@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
@@ -50,29 +52,28 @@ class _LutBrowserState extends State<LutBrowser> {
   }
 
   Future<void> _importLut() async {
-    // In a real integration, this uses file_picker to get a .cube file,
-    // reads its contents as a string, then calls the bridge to parse it.
-    //
-    // For now we show a placeholder dialog demonstrating the workflow.
     setState(() => _isLoading = true);
     try {
-      // final result = await FilePicker.platform.pickFiles(
-      //   type: FileType.custom,
-      //   allowedExtensions: ['cube', '3dl'],
-      // );
-      // if (result == null) return;
-      // final content = await File(result.files.single.path!).readAsString();
-      // final lutJson = await EditorsProEngineApi.lutLoadCubeContent(content);
-      // widget.onLutSelected(lutJson);
-      // setState(() => _loadedLutName = result.files.single.name);
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['cube', '3dl'],
+      );
+      if (result == null || result.files.isEmpty) return;
 
-      await Future.delayed(const Duration(milliseconds: 100));
+      final filePath = result.files.single.path;
+      if (filePath == null) return;
+
+      final content = await File(filePath).readAsString();
+      final lutJson = await lutLoadCubeContent(content: content);
+
+      widget.onLutSelected(lutJson);
+      setState(() => _loadedLutName = result.files.single.name);
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'LUT import: wire to file_picker + lut_load_cube_content bridge method.',
-            ),
+          SnackBar(
+            content: Text('LUT import failed: $e'),
+            duration: const Duration(seconds: 3),
           ),
         );
       }

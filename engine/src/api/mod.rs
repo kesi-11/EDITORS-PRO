@@ -107,6 +107,10 @@ pub struct EditorsProEngine {
     active_lut: Option<crate::effects::lut::Lut>,
     /// Phase F.5: LUT application intensity (0.0 = no LUT, 1.0 = full).
     active_lut_intensity: f32,
+    /// Phase F.5: throttle loudness analysis to avoid computing it on
+    /// every mix call during real-time playback. Stores the timestamp
+    /// (in ms) of the last analysis.
+    last_loudness_analysis_ms: std::sync::atomic::AtomicU64,
 }
 
 /// Phase F.4: per-track mixer state not yet on TrackInfo.
@@ -144,6 +148,7 @@ impl EditorsProEngine {
             last_loudness: std::sync::Mutex::new(None),
             active_lut: None,
             active_lut_intensity: 1.0,
+            last_loudness_analysis_ms: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -1531,17 +1536,23 @@ impl EditorsProEngine {
         // Mix all sources
         let mixed = self.audio_mixer.mix_sources(&sources, duration_ms);
 
-        // Phase F.4: update the cached loudness reading so the Audio Meter
-        // Bridge can poll it. This runs on every audio mix (preview + export),
-        // giving the bridge a continuously-updated reading. The
-        // analyze_samples_loudness method internally updates last_loudness.
-        // video: loudness computed on every mix call, upgrade to windowed
-        // short-term + momentary LUFS when the analyzer supports it.
-        let _ = self.analyze_samples_loudness(
-            &mixed.samples,
-            mixed.sample_rate,
-            mixed.channels,
-        );
+        // Phase F.5: update the cached loudness reading, but throttle to
+        // once per 500ms to avoid CPU overhead during real-time playback.
+        // The Flutter Audio Meter Bridge polls at 500ms–1s intervals, so
+        // computing loudness more frequently is wasted work.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let last_ms = self.last_loudness_analysis_ms.load(std::sync::atomic::Ordering::Relaxed);
+        if now_ms.saturating_sub(last_ms) >= 500 {
+            self.last_loudness_analysis_ms.store(now_ms, std::sync::atomic::Ordering::Relaxed);
+            let _ = self.analyze_samples_loudness(
+                &mixed.samples,
+                mixed.sample_rate,
+                mixed.channels,
+            );
+        }
 
         // Apply ducking if configured
         for (track_id, config) in &self.ducking_configs {

@@ -302,6 +302,10 @@ class LoudnessReading {
     momentaryLufs: -70.0,
     truePeakDbtp: -70.0,
   );
+
+  /// Returns true if this reading represents silence (no audio analyzed).
+  /// Used by the UI to show "—" instead of misleading -70 LUFS values.
+  bool get isSilent => integratedLufs <= -69.0 && truePeakDbtp <= -69.0;
 }
 
 /// Delivery spec target.
