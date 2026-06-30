@@ -117,7 +117,7 @@ class EditorState {
   }
 }
 
-enum LeftPanelTab { media, effects, text, audio, speed, keyframes }
+enum LeftPanelTab { media, effects, text, audio, speed, keyframes, mixer, scopes, markers, luts, eq }
 
 /// Editor state notifier — mediates between the UI and the Rust engine.
 ///

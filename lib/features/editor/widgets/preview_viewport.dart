@@ -14,6 +14,7 @@ import '../../projects/providers/project_provider.dart';
 import '../providers/editor_provider.dart';
 import 'text_overlay_handle.dart';
 import 'transform_handles.dart';
+import 'safe_zones_overlay.dart';
 
 /// Video preview viewport — displays the current frame rendered by the
 /// Rust engine and provides playback controls.
@@ -33,6 +34,21 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
   /// PNG-encoded bytes for the current frame, or null when no frame
   /// is available.
   Uint8List? _currentFrameBytes;
+
+  /// Whether the safe zones overlay is visible.
+  bool _showSafeZones = false;
+
+  /// Currently enabled safe zone types.
+  Set<SafeZoneType> _enabledSafeZones = const {
+    SafeZoneType.actionSafe,
+    SafeZoneType.titleSafe,
+  };
+
+  /// Whether the zebra (overexposure) overlay is visible.
+  bool _showZebra = false;
+
+  /// Frame duration in milliseconds at 30fps (≈33.33ms).
+  static const int _frameDurationMs = 33;
 
   /// LRU cache of the last 10 rendered frames keyed by time position.
   final _frameCache = _LruCache<int, Uint8List>(maxSize: 10);
@@ -153,9 +169,12 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
     final editorState = ref.watch(editorProvider);
 
     return Container(
-      color: AppTheme.background,
+      color: Colors.black,
       child: Column(
         children: [
+          // Overlay toggle toolbar (above preview)
+          _buildOverlayToolbar(context, editorState),
+
           // Preview area
           Expanded(
             child: Center(
@@ -165,7 +184,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                   decoration: BoxDecoration(
                     color: Colors.black,
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: const Color(0xFF2A2A3E), width: 1),
+                    border: Border.all(color: AppTheme.border, width: 1),
                   ),
                   child: Stack(
                     children: [
@@ -173,6 +192,17 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                       Center(
                         child: _buildPreviewContent(context, editorState),
                       ),
+
+                      // Safe zones overlay
+                      if (_showSafeZones)
+                        SafeZonesOverlay(enabledZones: _enabledSafeZones),
+
+                      // Zebra (overexposure) overlay
+                      if (_showZebra)
+                        CustomPaint(
+                          painter: _ZebraOverlayPainter(),
+                          size: Size.infinite,
+                        ),
 
                       // Text overlay handles for selected text clips
                       _buildTextOverlayHandles(context, editorState),
@@ -189,7 +219,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                               width: 64,
                               height: 64,
                               decoration: BoxDecoration(
-                                color: AppTheme.primary.withOpacity(0.8),
+                                color: AppTheme.primary,
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
@@ -209,13 +239,13 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
-                              color: Colors.black54,
+                              color: AppTheme.surfaceVariant,
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
                               '${editorState.playbackSpeed}x',
                               style: const TextStyle(
-                                color: AppTheme.primaryLight,
+                                color: AppTheme.textPrimary,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -233,7 +263,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
                             height: 14,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: AppTheme.primary.withOpacity(0.6),
+                              color: AppTheme.primary,
                             ),
                           ),
                         ),
@@ -249,6 +279,179 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
         ],
       ),
     );
+  }
+
+  /// Build the overlay toggle toolbar above the preview viewport.
+  ///
+  /// Contains toggle buttons for:
+  /// - Safe zones overlay
+  /// - Zebra (overexposure warning) overlay
+  /// - Frame step backward/forward buttons
+  Widget _buildOverlayToolbar(BuildContext context, EditorState editorState) {
+    return Container(
+      height: 32,
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        border: Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          // Frame step backward
+          IconButton(
+            icon: const Icon(Icons.skip_previous, size: 16),
+            tooltip: 'Previous frame',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            color: AppTheme.textSecondary,
+            onPressed: () {
+              final newTime = (editorState.currentTimeMs - _frameDurationMs).clamp(0, editorState.durationMs);
+              ref.read(editorProvider.notifier).seekTo(newTime);
+            },
+          ),
+
+          // Frame step forward
+          IconButton(
+            icon: const Icon(Icons.skip_next, size: 16),
+            tooltip: 'Next frame',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            color: AppTheme.textSecondary,
+            onPressed: () {
+              final newTime = (editorState.currentTimeMs + _frameDurationMs).clamp(0, editorState.durationMs);
+              ref.read(editorProvider.notifier).seekTo(newTime);
+            },
+          ),
+
+          Container(width: 1, height: 16, color: AppTheme.border),
+
+          // Safe zones toggle
+          _OverlayToggleButton(
+            icon: Icons.crop_free,
+            label: 'Safe',
+            isActive: _showSafeZones,
+            onTap: () {
+              setState(() => _showSafeZones = !_showSafeZones);
+            },
+            onLongPress: () {
+              // Long press opens safe zone type selector
+              _showSafeZonePicker();
+            },
+          ),
+
+          // Zebra toggle
+          _OverlayToggleButton(
+            icon: Icons.warning_amber,
+            label: 'Zebra',
+            isActive: _showZebra,
+            onTap: () {
+              setState(() => _showZebra = !_showZebra);
+            },
+          ),
+
+          const Spacer(),
+
+          // Active overlay indicators
+          if (_showSafeZones || _showZebra)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(AppTheme.radiusFull),
+              ),
+              child: Text(
+                [
+                  if (_showSafeZones) 'SAFE',
+                  if (_showZebra) 'ZEBRA',
+                ].join(' + '),
+                style: const TextStyle(
+                  color: AppTheme.primaryLight,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Show a dialog to pick which safe zone types to display.
+  void _showSafeZonePicker() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.surface,
+              title: const Text(
+                'Safe Zone Types',
+                style: TextStyle(color: AppTheme.textPrimary, fontSize: 16),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: SafeZoneType.values.map((type) {
+                  final isEnabled = _enabledSafeZones.contains(type);
+                  return CheckboxListTile(
+                    value: isEnabled,
+                    title: Text(
+                      _safeZoneTypeName(type),
+                      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+                    ),
+                    subtitle: Text(
+                      _safeZoneTypeDescription(type),
+                      style: const TextStyle(color: AppTheme.textDisabled, fontSize: 10),
+                    ),
+                    activeColor: AppTheme.primary,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    onChanged: (checked) {
+                      setDialogState(() {
+                        final newZones = Set<SafeZoneType>.from(_enabledSafeZones);
+                        if (checked == true) {
+                          newZones.add(type);
+                        } else {
+                          newZones.remove(type);
+                        }
+                        _enabledSafeZones = newZones;
+                      });
+                      setState(() {});
+                    },
+                  );
+                }).toList(),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Done'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _safeZoneTypeName(SafeZoneType type) {
+    switch (type) {
+      case SafeZoneType.actionSafe: return 'Action Safe';
+      case SafeZoneType.titleSafe: return 'Title Safe';
+      case SafeZoneType.centerCross: return 'Center Cross';
+      case SafeZoneType.thirds: return 'Rule of Thirds';
+      case SafeZoneType.centerMarker: return 'Center Marker';
+    }
+  }
+
+  String _safeZoneTypeDescription(SafeZoneType type) {
+    switch (type) {
+      case SafeZoneType.actionSafe: return '90% frame boundary';
+      case SafeZoneType.titleSafe: return '80% frame boundary';
+      case SafeZoneType.centerCross: return 'Thin crosshair at center';
+      case SafeZoneType.thirds: return 'Composition grid lines';
+      case SafeZoneType.centerMarker: return 'Circle + crosshair at center';
+    }
   }
 
   Widget _buildPreviewContent(BuildContext context, EditorState state) {
@@ -292,6 +495,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
               Duration(milliseconds: state.currentTimeMs).formatted,
               style: context.textTheme.bodySmall?.copyWith(
                 fontFamily: 'monospace',
+                color: AppTheme.textSecondary,
               ),
             ),
           ],
@@ -437,7 +641,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
       height: 32,
       decoration: const BoxDecoration(
         color: AppTheme.surface,
-        border: Border(top: BorderSide(color: Color(0xFF2A2A3E))),
+        border: Border(top: BorderSide(color: AppTheme.border)),
       ),
       child: Row(
         children: [
@@ -448,6 +652,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
               Duration(milliseconds: state.currentTimeMs).formatted,
               style: context.textTheme.labelSmall?.copyWith(
                 fontFamily: 'monospace',
+                color: AppTheme.textSecondary,
               ),
             ),
           ),
@@ -457,8 +662,8 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
             child: SliderTheme(
               data: SliderThemeData(
                 activeTrackColor: AppTheme.primary,
-                thumbColor: AppTheme.primaryLight,
-                inactiveTrackColor: const Color(0xFF2A2A3E),
+                thumbColor: Colors.white,
+                inactiveTrackColor: AppTheme.borderLight,
                 trackHeight: 2,
                 thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
               ),
@@ -481,6 +686,7 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
               Duration(milliseconds: state.durationMs).formatted,
               style: context.textTheme.labelSmall?.copyWith(
                 fontFamily: 'monospace',
+                color: AppTheme.textSecondary,
               ),
             ),
           ),
@@ -488,6 +694,108 @@ class _PreviewViewportState extends ConsumerState<PreviewViewport> {
       ),
     );
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Overlay Toggle Button
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A compact toggle button for the overlay toolbar.
+class _OverlayToggleButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  const _OverlayToggleButton({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+    this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          color: isActive
+              ? AppTheme.surfaceVariant
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+          border: Border.all(
+            color: isActive ? AppTheme.primary : Colors.transparent,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isActive ? AppTheme.primaryLight : AppTheme.textSecondary,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? AppTheme.primaryLight : AppTheme.textSecondary,
+                fontSize: 10,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Zebra Overlay Painter
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A zebra-stripe overlay that indicates overexposed areas.
+///
+/// In a real implementation, the engine would provide a luminance map
+/// identifying overexposed pixels. Here we render a diagonal stripe
+/// pattern as a visual placeholder that demonstrates the overlay UI.
+class _ZebraOverlayPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+
+    final paint = Paint()
+      ..color = const Color(0x55FF3333) // Semi-transparent red
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+
+    // Draw diagonal zebra stripes at 45 degrees
+    const stripeSpacing = 12.0;
+    final diagonalLength = size.width + size.height;
+
+    for (double offset = 0; offset < diagonalLength; offset += stripeSpacing) {
+      final startX = offset.clamp(0.0, size.width);
+      final startY = (offset - startX).clamp(0.0, size.height);
+      final endX = (offset - size.height).clamp(0.0, size.width);
+      final endY = (offset - endX).clamp(0.0, size.height);
+
+      canvas.drawLine(
+        Offset(startX, startY),
+        Offset(endX, endY),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ZebraOverlayPainter oldDelegate) => false;
 }
 
 /// Simple LRU cache backed by a [LinkedHashMap].

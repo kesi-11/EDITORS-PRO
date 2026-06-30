@@ -1,121 +1,111 @@
 import 'package:flutter/material.dart';
 
-/// EDITORS-PRO Design System v2
+/// EDITORS-PRO Design System v3 — CapCut-inspired clean dark
 ///
-/// Professional dark theme inspired by:
-/// - DaVinci Resolve (color grading workflow)
-/// - CapCut Pro (mobile-first dark mode)
-/// - Adobe Premiere Pro (timeline + panel layout)
+/// Redesigned following taste-skill audit principles:
+/// - Single accent color (no rainbow gradients)
+/// - Pure tinted-black surfaces (not purple-tinted)
+/// - Generous spacing, flat surfaces with subtle borders
+/// - Tabular figures for timecodes/data
 class AppTheme {
   AppTheme._();
 
-  // ─── Brand Colors ──────────────────────────────────────────────
-  /// Primary brand purple — used for CTAs, active states, gradients
-  static const Color primary = Color(0xFF6C5CE7);
+  // ─── Brand Color (single accent) ───────────────────────────────
+  /// Primary accent — a clean, confident blue used for ALL interactive
+  /// highlights. One accent, consistently applied.
+  static const Color primary = Color(0xFF3B82F6);
 
-  /// Lighter purple — for hovers, secondary accents, gradients
-  static const Color primaryLight = Color(0xFFA29BFE);
+  /// Lighter shade for hovers and fills
+  static const Color primaryLight = Color(0xFF60A5FA);
 
-  /// Deep purple — for pressed states, borders
-  static const Color primaryDark = Color(0xFF4834D4);
+  /// Deep shade for pressed states
+  static const Color primaryDark = Color(0xFF2563EB);
 
-  /// Teal — secondary accent for timeline/audio elements
-  static const Color secondary = Color(0xFF00CEC9);
+  // ─── Semantic Colors (desaturated, used sparingly) ─────────────
+  static const Color success = Color(0xFF22C55E);
+  static const Color warning = Color(0xFFF59E0B);
+  static const Color error = Color(0xFFEF4444);
+  static const Color info = Color(0xFF3B82F6);
 
-  /// Pink — used for export button, accent highlights
-  static const Color accent = Color(0xFFFD79A8);
+  // ─── Surface Tones (neutral tinted-black) ──────────────────────
+  /// App background — true near-black, no purple tint
+  static const Color background = Color(0xFF000000);
 
-  // ─── Surface Tones (Layered Dark) ──────────────────────────────
-  /// App background — deepest layer
-  static const Color background = Color(0xFF08080D);
-
-  /// Primary surface — main panels, toolbars
-  static const Color surface = Color(0xFF12121B);
+  /// Primary surface — toolbars, panels
+  static const Color surface = Color(0xFF0F0F0F);
 
   /// Elevated surface — cards, popovers
-  static const Color surfaceVariant = Color(0xFF1A1A26);
+  static const Color surfaceVariant = Color(0xFF1A1A1A);
 
-  /// Card background — slightly elevated
-  static const Color cardColor = Color(0xFF1E1E2E);
+  /// Card background
+  static const Color cardColor = Color(0xFF1F1F1F);
 
-  /// Border / divider color
-  static const Color border = Color(0xFF2A2A3E);
-  static const Color borderLight = Color(0xFF353550);
+  /// Border / divider — subtle
+  static const Color border = Color(0xFF2A2A2A);
+  static const Color borderLight = Color(0xFF333333);
 
   // ─── Text Tones ────────────────────────────────────────────────
-  static const Color textPrimary = Color(0xFFF0F0F8);
-  static const Color textSecondary = Color(0xFF9E9EB8);
-  static const Color textDisabled = Color(0xFF4A4A62);
+  static const Color textPrimary = Color(0xFFFFFFFF);
+  static const Color textSecondary = Color(0xFFA0A0A0);
+  static const Color textDisabled = Color(0xFF555555);
 
-  // ─── Status Colors ─────────────────────────────────────────────
-  static const Color success = Color(0xFF00D9A0);
-  static const Color warning = Color(0xFFFFB84D);
-  static const Color error = Color(0xFFFF5C5C);
-  static const Color info = Color(0xFF4DA6FF);
+  // ─── Track Colors (timeline) — desaturated, professional ───────
+  static const Color videoTrackColor = Color(0xFF4B9CD3);
+  static const Color videoTrackColorLight = Color(0xFF6FB5E0);
+  static const Color audioTrackColor = Color(0xFF4CAF50);
+  static const Color audioTrackColorLight = Color(0xFF6FBF73);
+  static const Color textTrackColor = Color(0xFFE0A040);
+  static const Color effectTrackColor = Color(0xFFE05080);
+  static const Color playheadColor = Color(0xFFFF3B30);
 
-  // ─── Track Colors (Timeline) ───────────────────────────────────
-  static const Color videoTrackColor = Color(0xFF8B7FE8);  // Soft purple
-  static const Color videoTrackColorLight = Color(0xFFB5AAFF);
-  static const Color audioTrackColor = Color(0xFF00D9A0);  // Bright green
-  static const Color audioTrackColorLight = Color(0xFF5FE5C7);
-  static const Color textTrackColor = Color(0xFFFFB84D);   // Amber
-  static const Color effectTrackColor = Color(0xFFFF79C6); // Hot pink
-  static const Color playheadColor = Color(0xFFFF3B5C);    // Crimson
+  // Legacy aliases for backward compatibility
+  static const Color secondary = primary;
+  static const Color accent = primary;
 
-  // ─── Gradients ─────────────────────────────────────────────────
+  // ─── Gradients (minimal — only for splash) ─────────────────────
   static const LinearGradient primaryGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [Color(0xFF6C5CE7), Color(0xFFA29BFE)],
+    colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
   );
 
-  static const LinearGradient secondaryGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [Color(0xFF00CEC9), Color(0xFF55EFC4)],
-  );
-
-  static const LinearGradient accentGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [Color(0xFFFD79A8), Color(0xFFFF9FAB)],
-  );
+  static const LinearGradient secondaryGradient = primaryGradient;
+  static const LinearGradient accentGradient = primaryGradient;
 
   static const LinearGradient sunsetGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [Color(0xFF6C5CE7), Color(0xFF00CEC9), Color(0xFFFD79A8)],
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFF0F0F0F), Color(0xFF000000)],
   );
 
-  /// Background gradient for splash/onboarding
   static const LinearGradient backgroundGradient = LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
-    colors: [Color(0xFF08080D), Color(0xFF12121B), Color(0xFF08080D)],
+    colors: [Color(0xFF0F0F0F), Color(0xFF000000)],
   );
 
-  // ─── Shadows & Glows ───────────────────────────────────────────
-  static List<BoxShadow> primaryGlow({double opacity = 0.4}) => [
+  // ─── Shadows & Glows (subtle, tinted) ──────────────────────────
+  static List<BoxShadow> primaryGlow({double opacity = 0.3}) => [
     BoxShadow(
       color: primary.withOpacity(opacity),
-      blurRadius: 24,
-      offset: const Offset(0, 4),
-    ),
-  ];
-
-  static List<BoxShadow> accentGlow({double opacity = 0.3}) => [
-    BoxShadow(
-      color: accent.withOpacity(opacity),
       blurRadius: 16,
       offset: const Offset(0, 2),
     ),
   ];
 
+  static List<BoxShadow> accentGlow({double opacity = 0.2}) => [
+    BoxShadow(
+      color: primary.withOpacity(opacity),
+      blurRadius: 12,
+      offset: const Offset(0, 1),
+    ),
+  ];
+
   static List<BoxShadow> softShadow = [
     BoxShadow(
-      color: Colors.black.withOpacity(0.3),
-      blurRadius: 12,
-      offset: const Offset(0, 4),
+      color: Colors.black.withOpacity(0.4),
+      blurRadius: 8,
+      offset: const Offset(0, 2),
     ),
   ];
 
@@ -131,9 +121,9 @@ class AppTheme {
 
   // ─── Border Radius ─────────────────────────────────────────────
   static const double radiusSmall = 6.0;
-  static const double radiusMedium = 10.0;
-  static const double radiusLarge = 16.0;
-  static const double radiusXLarge = 24.0;
+  static const double radiusMedium = 8.0;
+  static const double radiusLarge = 12.0;
+  static const double radiusXLarge = 16.0;
   static const double radiusFull = 999.0;
 
   // ─── Layout constants ──────────────────────────────────────────
@@ -142,19 +132,16 @@ class AppTheme {
   static const double clipMinWidth = 24.0;
   static const double playheadWidth = 2.0;
 
-  // ─── Light Theme Tones (Phase E.5) ──────────────────────────────
-  // A light variant for outdoor / bright-environment editing. Brand
-  // colors (primary, secondary, accent) are shared with the dark theme
-  // for consistency; only the surface tones and text colors change.
-  static const Color lightBackground = Color(0xFFF6F6FA);
+  // ─── Light Theme Tones ─────────────────────────────────────────
+  static const Color lightBackground = Color(0xFFFAFAFA);
   static const Color lightSurface = Color(0xFFFFFFFF);
-  static const Color lightSurfaceVariant = Color(0xFFEEEEF4);
+  static const Color lightSurfaceVariant = Color(0xFFF0F0F0);
   static const Color lightCardColor = Color(0xFFFFFFFF);
-  static const Color lightBorder = Color(0xFFD8D8E2);
-  static const Color lightBorderLight = Color(0xFFC0C0CE);
-  static const Color lightTextPrimary = Color(0xFF1A1A26);
-  static const Color lightTextSecondary = Color(0xFF5A5A72);
-  static const Color lightTextDisabled = Color(0xFFB0B0BE);
+  static const Color lightBorder = Color(0xFFE5E5E5);
+  static const Color lightBorderLight = Color(0xFFD0D0D0);
+  static const Color lightTextPrimary = Color(0xFF1A1A1A);
+  static const Color lightTextSecondary = Color(0xFF666666);
+  static const Color lightTextDisabled = Color(0xFFB0B0B0);
 
   static final ThemeData darkTheme = ThemeData(
     useMaterial3: true,
@@ -170,8 +157,8 @@ class AppTheme {
       centerTitle: false,
       titleTextStyle: TextStyle(
         fontFamily: 'Inter',
-        fontSize: 20,
-        fontWeight: FontWeight.w700,
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
         color: textPrimary,
       ),
     ),
@@ -180,7 +167,7 @@ class AppTheme {
       color: cardColor,
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(radiusLarge),
+        borderRadius: BorderRadius.circular(radiusMedium),
       ),
       margin: const EdgeInsets.symmetric(horizontal: spacing16, vertical: spacing8),
     ),
@@ -190,7 +177,7 @@ class AppTheme {
         backgroundColor: primary,
         foregroundColor: Colors.white,
         elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: spacing24, vertical: spacing12),
+        padding: const EdgeInsets.symmetric(horizontal: spacing20, vertical: spacing12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusMedium),
         ),
@@ -204,16 +191,16 @@ class AppTheme {
 
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: primary,
-        side: const BorderSide(color: primary, width: 1.5),
-        padding: const EdgeInsets.symmetric(horizontal: spacing24, vertical: spacing12),
+        foregroundColor: textPrimary,
+        side: const BorderSide(color: borderLight, width: 1),
+        padding: const EdgeInsets.symmetric(horizontal: spacing20, vertical: spacing12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusMedium),
         ),
         textStyle: const TextStyle(
           fontFamily: 'Inter',
           fontSize: 14,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
         ),
       ),
     ),
@@ -239,12 +226,13 @@ class AppTheme {
       selectedItemColor: primary,
       unselectedItemColor: textDisabled,
       type: BottomNavigationBarType.fixed,
-      elevation: 8,
+      elevation: 0,
     ),
 
     dividerTheme: const DividerThemeData(
       color: border,
       thickness: 1,
+      space: 1,
     ),
 
     inputDecorationTheme: InputDecorationTheme(
@@ -264,10 +252,11 @@ class AppTheme {
 
     sliderTheme: SliderThemeData(
       activeTrackColor: primary,
-      thumbColor: primaryLight,
-      inactiveTrackColor: border,
+      thumbColor: Colors.white,
+      inactiveTrackColor: borderLight,
       trackHeight: 3,
       thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+      overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
     ),
 
     snackBarTheme: SnackBarThemeData(
@@ -289,13 +278,13 @@ class AppTheme {
     bottomSheetTheme: const BottomSheetThemeData(
       backgroundColor: surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(radiusXLarge)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(radiusLarge)),
       ),
     ),
 
     chipTheme: ChipThemeData(
       backgroundColor: surfaceVariant,
-      selectedColor: primary.withOpacity(0.2),
+      selectedColor: primary.withOpacity(0.15),
       labelStyle: const TextStyle(color: textPrimary, fontSize: 12),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radiusSmall),
@@ -314,7 +303,7 @@ class AppTheme {
 
     textTheme: const TextTheme(
       headlineLarge: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, color: textPrimary, letterSpacing: -0.5),
-      headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: textPrimary),
+      headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: textPrimary, letterSpacing: -0.3),
       headlineSmall: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: textPrimary),
       titleLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: textPrimary),
       titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: textPrimary),
@@ -328,13 +317,7 @@ class AppTheme {
     ),
   );
 
-  /// Phase E.5: Light theme variant.
-  ///
-  /// Shares brand colors (primary, secondary, accent) with [darkTheme]
-  /// for consistency. Only surface tones, borders, and text colors are
-  /// swapped to light equivalents. Use this when the user has selected
-  /// "Light" in Settings > Appearance, or when the system is in light
-  /// mode and the user has chosen "Follow system".
+  /// Light theme variant
   static final ThemeData lightTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
@@ -349,8 +332,8 @@ class AppTheme {
       centerTitle: false,
       titleTextStyle: TextStyle(
         fontFamily: 'Inter',
-        fontSize: 20,
-        fontWeight: FontWeight.w700,
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
         color: lightTextPrimary,
       ),
     ),
@@ -359,7 +342,7 @@ class AppTheme {
       color: lightCardColor,
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(radiusLarge),
+        borderRadius: BorderRadius.circular(radiusMedium),
       ),
       margin: const EdgeInsets.symmetric(horizontal: spacing16, vertical: spacing8),
     ),
@@ -369,7 +352,7 @@ class AppTheme {
         backgroundColor: primary,
         foregroundColor: Colors.white,
         elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: spacing24, vertical: spacing12),
+        padding: const EdgeInsets.symmetric(horizontal: spacing20, vertical: spacing12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusMedium),
         ),
@@ -383,16 +366,16 @@ class AppTheme {
 
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: primary,
-        side: const BorderSide(color: primary, width: 1.5),
-        padding: const EdgeInsets.symmetric(horizontal: spacing24, vertical: spacing12),
+        foregroundColor: lightTextPrimary,
+        side: const BorderSide(color: lightBorderLight, width: 1),
+        padding: const EdgeInsets.symmetric(horizontal: spacing20, vertical: spacing12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusMedium),
         ),
         textStyle: const TextStyle(
           fontFamily: 'Inter',
           fontSize: 14,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
         ),
       ),
     ),
@@ -418,12 +401,13 @@ class AppTheme {
       selectedItemColor: primary,
       unselectedItemColor: lightTextDisabled,
       type: BottomNavigationBarType.fixed,
-      elevation: 8,
+      elevation: 0,
     ),
 
     dividerTheme: const DividerThemeData(
       color: lightBorder,
       thickness: 1,
+      space: 1,
     ),
 
     inputDecorationTheme: InputDecorationTheme(
@@ -443,10 +427,11 @@ class AppTheme {
 
     sliderTheme: SliderThemeData(
       activeTrackColor: primary,
-      thumbColor: primaryLight,
+      thumbColor: lightSurface,
       inactiveTrackColor: lightBorder,
       trackHeight: 3,
       thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+      overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
     ),
 
     snackBarTheme: SnackBarThemeData(
@@ -468,13 +453,13 @@ class AppTheme {
     bottomSheetTheme: const BottomSheetThemeData(
       backgroundColor: lightSurface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(radiusXLarge)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(radiusLarge)),
       ),
     ),
 
     chipTheme: ChipThemeData(
       backgroundColor: lightSurfaceVariant,
-      selectedColor: primary.withOpacity(0.2),
+      selectedColor: primary.withOpacity(0.15),
       labelStyle: const TextStyle(color: lightTextPrimary, fontSize: 12),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radiusSmall),
@@ -493,7 +478,7 @@ class AppTheme {
 
     textTheme: const TextTheme(
       headlineLarge: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, color: lightTextPrimary, letterSpacing: -0.5),
-      headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: lightTextPrimary),
+      headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: lightTextPrimary, letterSpacing: -0.3),
       headlineSmall: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: lightTextPrimary),
       titleLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: lightTextPrimary),
       titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: lightTextPrimary),

@@ -26,6 +26,11 @@ import '../widgets/speed_curve_editor.dart';
 import '../widgets/keyframe_graph_editor.dart';
 import '../widgets/gpu_status_badge.dart';
 import '../widgets/proxy_status_badge.dart';
+import '../widgets/audio_mixer_panel.dart';
+import '../widgets/video_scopes.dart';
+import '../widgets/markers_panel.dart';
+import '../widgets/lut_browser.dart';
+import '../widgets/audio_eq_panel.dart';
 
 /// Main editor screen - the core editing experience
 class EditorScreen extends ConsumerStatefulWidget {
@@ -159,6 +164,11 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             ),
           ),
 
+          // Bottom: Audio Meter Bridge
+          const SizedBox(
+            height: 28,
+            child: AudioMeterBridge(),
+          ),
           // Bottom: Timeline
           const TimelinePanel(),
         ],
@@ -292,6 +302,36 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                   selected: state.leftPanelTab == LeftPanelTab.keyframes,
                   onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.keyframes),
                 ),
+                _TabButton(
+                  label: 'Mixer',
+                  icon: Icons.sliders,
+                  selected: state.leftPanelTab == LeftPanelTab.mixer,
+                  onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.mixer),
+                ),
+                _TabButton(
+                  label: 'Scopes',
+                  icon: Icons.waveform,
+                  selected: state.leftPanelTab == LeftPanelTab.scopes,
+                  onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.scopes),
+                ),
+                _TabButton(
+                  label: 'Markers',
+                  icon: Icons.bookmark,
+                  selected: state.leftPanelTab == LeftPanelTab.markers,
+                  onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.markers),
+                ),
+                _TabButton(
+                  label: 'LUTs',
+                  icon: Icons.palette,
+                  selected: state.leftPanelTab == LeftPanelTab.luts,
+                  onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.luts),
+                ),
+                _TabButton(
+                  label: 'EQ',
+                  icon: Icons.graphic_eq,
+                  selected: state.leftPanelTab == LeftPanelTab.eq,
+                  onTap: () => ref.read(editorProvider.notifier).setLeftPanelTab(LeftPanelTab.eq),
+                ),
               ],
             ),
           ),
@@ -319,6 +359,16 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         return _buildSpeedPanel(context, state);
       case LeftPanelTab.keyframes:
         return _buildKeyframesPanel(context, state);
+      case LeftPanelTab.mixer:
+        return const AudioMixerPanel();
+      case LeftPanelTab.scopes:
+        return const VideoScopesPanel();
+      case LeftPanelTab.markers:
+        return const MarkersPanel();
+      case LeftPanelTab.luts:
+        return _buildLutPanel(context, state);
+      case LeftPanelTab.eq:
+        return _buildEqPanel(context, state);
     }
   }
 
@@ -861,6 +911,84 @@ class _TabButton extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildLutPanel(BuildContext context, EditorState state) {
+    if (state.selectedClipId == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.palette, size: 48, color: AppTheme.textDisabled),
+              const SizedBox(height: 16),
+              Text(
+                'Select a Clip',
+                style: context.textTheme.titleSmall?.copyWith(
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Select a clip on the timeline\nto apply a LUT',
+                style: context.textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return LutBrowser(clipId: state.selectedClipId!);
+  }
+
+  Widget _buildEqPanel(BuildContext context, EditorState state) {
+    // Find the selected track
+    final project = ref.read(currentProjectProvider);
+    String? trackId;
+
+    if (state.selectedTrackId != null) {
+      trackId = state.selectedTrackId;
+    } else if (state.selectedClipId != null && project != null) {
+      for (final track in project.tracks) {
+        for (final clip in track.clips) {
+          if (clip.id == state.selectedClipId) {
+            trackId = track.id;
+            break;
+          }
+        }
+        if (trackId != null) break;
+      }
+    }
+
+    if (trackId == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.graphic_eq, size: 48, color: AppTheme.textDisabled),
+              const SizedBox(height: 16),
+              Text(
+                'Select a Track',
+                style: context.textTheme.titleSmall?.copyWith(
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Select a clip or track\nto adjust audio EQ',
+                style: context.textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return AudioEqPanel(trackId: trackId);
   }
 }
 
