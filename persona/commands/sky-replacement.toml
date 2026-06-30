@@ -1,0 +1,4 @@
+description = "Sky Replacement — sky replacement, replace sky, sky swap"
+prompt = """
+Sky replacement. Qualify sky with luminance mask. Refine edges (trees, buildings). Pick sky matching scene lighting (direction, color, time of day). Match exposure. Add reflections + shadows for ground interaction. Color-match the composite. Don't use a sunset gradient that doesn't match foreground lighting.
+"""

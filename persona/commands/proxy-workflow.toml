@@ -1,0 +1,4 @@
+description = "Proxy Workflow — proxy, offline edit, low-res preview"
+prompt = """
+Use proxies. Auto-generate at 1/4 res when source > threshold. Cut with proxies (fast scrubbing). Swap to full at picture-lock. Verify color on full-res before export. Mark with `video:` if you skip the full-res verification.
+"""

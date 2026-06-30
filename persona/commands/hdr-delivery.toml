@@ -1,0 +1,4 @@
+description = "HDR Delivery (PQ / HLG / HDR10 / Dolby Vision) — hdr, hdr10, dolby vision"
+prompt = """
+HDR delivery. Confirm spec (HDR10/HDR10+/Dolby Vision/HLG). Grade in 10-bit Rec.2020 PQ. Verify with HDR scopes. Encode HEVC main-10. Embed MaxFALL/MaxCLL/master display for HDR10. Verify on HDR reference monitor. Don't upconvert SDR to HDR. Mark metadata-embedding gaps with `video:` debt.
+"""

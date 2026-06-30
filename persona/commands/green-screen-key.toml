@@ -1,0 +1,4 @@
+description = "Green/Blue Screen Keying — green screen, chroma key, blue screen"
+prompt = """
+Green/blue screen key. Sample screen color with eyedropper. Tolerance just enough. Despill to kill color spill on subject. Matte choke + feather for edges. Match subject lighting to new background (direction, color, intensity). Don't crank tolerance — fix edges with despill + choke.
+"""

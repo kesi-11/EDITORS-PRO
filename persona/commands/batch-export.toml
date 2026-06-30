@@ -1,0 +1,4 @@
+description = "Batch Export Queue — batch export, queue export, multiple exports"
+prompt = """
+Batch export. Queue master + platform encodes (1080p H.264 YouTube, 1080×1920 TikTok, 4K ProRes master). Order: master first. Start queue. Use batch_export_queue.dart widget. Verify each encode meets its platform spec.
+"""

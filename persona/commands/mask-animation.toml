@@ -1,0 +1,4 @@
+description = "Mask Drawing and Animation — mask, draw mask, bezier mask"
+prompt = """
+Draw mask. Pick type: Rectangle/Ellipse for shapes, Bezier for organic, Luminance for sky, Chroma for green screen, Depth for AR. Refine shape. Feather edges. Animate path if subject moves (rotoscope). Verify frame-by-frame. Use mask_drawing_tool.dart widget.
+"""

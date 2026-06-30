@@ -1526,6 +1526,140 @@ impl EditorsProEngineApi {
         })
         .unwrap_or(false)
     }
+
+    // ─── Phase F.3: Marker CRUD + Loudness analysis ─────────────────────
+    //
+    // These wrappers expose the engine's marker_manager and loudness
+    // analyzer to the FFI dispatcher. The dispatcher arms (markers_add,
+    // markers_get, markers_remove, analyze_loudness) in ffi_dispatch.rs
+    // call these wrappers.
+
+    /// Add a marker at the given position.
+    pub fn add_marker(
+        &self,
+        name: String,
+        position_ms: f64,
+        color: crate::effects::markers::MarkerColor,
+        marker_type: crate::effects::markers::MarkerType,
+        comment: String,
+    ) -> Result<crate::effects::markers::Marker, String> {
+        self.with_engine_recovery(|engine| {
+            Ok(engine.add_marker(name, position_ms, color, marker_type, comment))
+        })
+    }
+
+    /// Get all markers, sorted by position.
+    pub fn get_markers(&self) -> Result<Vec<crate::effects::markers::Marker>, String> {
+        self.with_engine_recovery(|engine| Ok(engine.get_markers()))
+    }
+
+    /// Remove a marker by ID. Returns the removed marker, or None if not found.
+    pub fn remove_marker(&self, id: String) -> Result<Option<crate::effects::markers::Marker>, String> {
+        self.with_engine_recovery(|engine| Ok(engine.remove_marker(&id)))
+    }
+
+    /// Analyze loudness of arbitrary f32 PCM samples.
+    /// Returns integrated LUFS, RMS dB, peak dB, and true-peak.
+    pub fn analyze_loudness(
+        &self,
+        samples: Vec<f32>,
+        sample_rate: u32,
+        channels: u32,
+    ) -> Result<crate::api::LoudnessResult, String> {
+        self.with_engine_recovery(|engine| {
+            Ok(engine.analyze_samples_loudness(&samples, sample_rate, channels))
+        })
+    }
+
+    // ─── Phase F.4: Per-track mixer state (pan, solo) + EQ + write-back ─
+
+    /// Set the pan for a track. -1.0 = full left, 0.0 = center, +1.0 = full right.
+    pub fn set_track_pan(&self, track_id: String, pan: f32) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.set_track_pan(&track_id, pan);
+            Ok(())
+        })
+    }
+
+    /// Get the pan for a track. Returns 0.0 (center) if not set.
+    pub fn get_track_pan(&self, track_id: String) -> Result<f32, String> {
+        self.with_engine_recovery(|engine| Ok(engine.get_track_pan(&track_id)))
+    }
+
+    /// Set the solo flag for a track.
+    pub fn set_track_solo(&self, track_id: String, solo: bool) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.set_track_solo(&track_id, solo);
+            Ok(())
+        })
+    }
+
+    /// Get the solo flag for a track.
+    pub fn get_track_solo(&self, track_id: String) -> Result<bool, String> {
+        self.with_engine_recovery(|engine| Ok(engine.get_track_solo(&track_id)))
+    }
+
+    /// Set the EQ settings for a track. Stored per-track; applied during mixing.
+    pub fn set_track_eq_settings(
+        &self,
+        track_id: String,
+        settings: crate::audio::effects::EqSettings,
+    ) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.set_track_eq_settings(&track_id, settings);
+            Ok(())
+        })
+    }
+
+    /// Get the EQ settings for a track as JSON. Returns null if no EQ is set.
+    pub fn get_track_eq_settings(
+        &self,
+        track_id: String,
+    ) -> Result<Option<crate::audio::effects::EqSettings>, String> {
+        self.with_engine_recovery(|engine| {
+            Ok(engine.get_track_eq_settings(&track_id).cloned())
+        })
+    }
+
+    /// Write processed audio samples back to the engine's audio cache.
+    pub fn set_audio_samples(
+        &self,
+        asset_id: String,
+        samples: Vec<f32>,
+        sample_rate: u32,
+        channels: u32,
+    ) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.set_audio_samples(&asset_id, samples, sample_rate, channels);
+            Ok(())
+        })
+    }
+
+    /// Get the last computed loudness reading. Returns null if no audio
+    /// has been analyzed yet.
+    pub fn get_current_loudness(&self) -> Result<Option<crate::api::LoudnessResult>, String> {
+        self.with_engine_recovery(|engine| Ok(engine.get_current_loudness()))
+    }
+
+    // ─── Phase F.5: Active LUT (applied in get_frame) ──────────────────
+
+    pub fn set_active_lut(
+        &self,
+        lut: crate::effects::lut::Lut,
+        intensity: f32,
+    ) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.set_active_lut(lut, intensity);
+            Ok(())
+        })
+    }
+
+    pub fn clear_active_lut(&self) -> Result<(), String> {
+        self.with_engine_recovery(|engine| {
+            engine.clear_active_lut();
+            Ok(())
+        })
+    }
 }
 
 impl From<ExportSettings> for BridgeExportSettings {
@@ -1581,6 +1715,16 @@ fn encode_rgba_to_png(rgba_data: &[u8], width: u32, height: u32) -> Result<Vec<u
         .map_err(|e| format!("PNG encoding failed: {}", e))?;
 
     Ok(png_buf.into_inner())
+}
+
+/// Phase F.5: Decode PNG bytes to RGBA8 + dimensions.
+pub fn decode_png_to_rgba(png_data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    use image::GenericImageView;
+    let img = image::load_from_memory(png_data)
+        .map_err(|e| format!("PNG decode failed: {}", e))?;
+    let (width, height) = img.dimensions();
+    let rgba = img.to_rgba8().into_raw();
+    Ok((rgba, width, height))
 }
 
 /// Bridge-compatible ducking configuration

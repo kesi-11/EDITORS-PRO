@@ -14,21 +14,27 @@
 //! respecting each effect's `enabled` flag and `order` field.
 
 pub mod chroma_key;
+pub mod color_match;
 pub mod compositing;
 pub mod color_space;
 pub mod filters;
 pub mod grain;
 pub mod gpu_filters;
+pub mod legalizer;
 pub mod lens_correction;
+pub mod lut;
 pub mod macro_system;
 pub mod masking;
 pub mod markers;
 pub mod mixer_pro;
+pub mod motion_tracking;
 pub mod multicam;
 pub mod nested_sequence;
 pub mod noise_reduction;
 pub mod preset;
 pub mod retiming;
+pub mod sky_replace;
+pub mod stabilization;
 pub mod text_render;
 pub mod text_rasterizer;
 pub mod transitions;

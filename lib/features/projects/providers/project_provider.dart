@@ -130,6 +130,46 @@ class ProjectNotifier extends StateNotifier<ProjectState> {
     }
   }
 
+  /// Phase F.2: Duplicate a project — creates a new project with the same
+  /// name + " (copy)" suffix, same dimensions/fps, and copies the media
+  /// asset references (file paths point to the same source files; no
+  /// media duplication on disk). The new project opens empty (no timeline
+  /// clips copied) — the user can then re-link or copy clip ranges as needed.
+  ///
+  /// This is the workflow pattern: duplicate to fork a delivery variant
+  /// (e.g., "Reel v3 (copy)" → edit down for a 9:16 social cut) without
+  /// losing the original.
+  Future<String> duplicateProject(String projectId) async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final original = await _repo.getProject(projectId);
+      if (original == null) {
+        throw Exception('Project not found: $projectId');
+      }
+      final newName = '${original.name} (copy)';
+      final duplicate = await _repo.createProject(
+        newName,
+        width: original.width,
+        height: original.height,
+        fps: original.fps,
+      );
+      // Copy media asset references (files stay where they are on disk)
+      for (final asset in original.mediaAssets) {
+        await _repo.addMediaAsset(duplicate.id, asset);
+      }
+      final updatedRecent = [duplicate, ...state.recentProjects];
+      state = state.copyWith(
+        recentProjects: updatedRecent,
+        isLoading: false,
+      );
+      return duplicate.id;
+    } catch (e) {
+      developer.log('duplicateProject failed: $e', name: 'ProjectNotifier');
+      state = state.copyWith(isLoading: false, error: 'Duplicate failed: $e');
+      rethrow;
+    }
+  }
+
   /// Import media into the current project — persists to DB + engine.
   Future<void> importMedia(String filePath, String fileName, MediaType mediaType, {
     int? durationMs, int? width, int? height, int fileSizeBytes = 0,

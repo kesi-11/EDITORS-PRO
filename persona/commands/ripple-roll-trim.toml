@@ -1,0 +1,4 @@
+description = "Ripple / Roll / Slip / Slide Trim — ripple trim, roll trim, slip trim"
+prompt = """
+Use the right trim mode. Ripple: trim + close gap. Roll: trim two adjacent clips (one shorter, one longer). Slip: change in/out without changing duration/position. Slide: move clip between neighbors (trims neighbors). Don't do everything with regular trim + ripple-delete — use the right mode. Use advanced_trim_modes.dart widget.
+"""

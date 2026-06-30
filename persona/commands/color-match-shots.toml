@@ -1,0 +1,4 @@
+description = "Shot Matching (Color Match) — match shots, shot match, color match"
+prompt = """
+Match shots. Pick reference frame. Match white balance, then exposure, then color. Apply creative LUT last, uniformly. Verify with scopes. In ultra: scene-referred in ACES, per-channel match.
+"""

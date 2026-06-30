@@ -1,0 +1,4 @@
+description = "Delivery Encode Ladder — export, encode, delivery"
+prompt = """
+Delivery encode. Master in ProRes 422 HQ (or 4444 XQ for HDR). Streaming in H.264 high-profile CRF 18-23, 2-pass VBR, AAC 256 kbps. Verify frame-rate, color space, and true-peak on the encode. Match the delivery spec exactly. Don't ship the wrong rung.
+"""

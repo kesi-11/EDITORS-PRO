@@ -880,6 +880,439 @@ fn dispatch_method(
             to_json_ok(&crate::api::bridge_api::get_memory_usage_bytes())
         }
 
+        // ─── Pro Tools (Phase F: persona-driven pro videographer toolkit) ──
+        // LUT management (engine/src/effects/lut.rs)
+        "lut_load_cube" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            match crate::effects::lut::Lut::from_cube_file(std::path::Path::new(path)) {
+                Ok(lut) => to_json_ok(&lut),
+                Err(e) => to_json_err(format!("LUT load failed: {}", e)),
+            }
+        }
+        "lut_load_cube_content" => {
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            match crate::effects::lut::Lut::from_cube(content) {
+                Ok(lut) => to_json_ok(&lut),
+                Err(e) => to_json_err(format!("LUT parse failed: {}", e)),
+            }
+        }
+
+        // Color scopes (engine/src/analysis/scopes.rs)
+        "compute_scopes" => {
+            let frame_b64 = args.get("frame").and_then(|v| v.as_str()).unwrap_or("");
+            let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            match base64_decode_bytes(frame_b64) {
+                Some(pixels) => {
+                    if width > 0 && height > 0 && pixels.len() == width * height * 4 {
+                        to_json_ok(&crate::analysis::scopes::compute_scopes(&pixels, width, height))
+                    } else {
+                        match crate::api::bridge_api::decode_png_to_rgba(&pixels) {
+                            Ok((rgba, w, h)) => {
+                                to_json_ok(&crate::analysis::scopes::compute_scopes(&rgba, w as usize, h as usize))
+                            }
+                            Err(e) => to_json_err(format!("PNG decode failed: {}", e)),
+                        }
+                    }
+                }
+                None => to_json_err("invalid base64 frame".into()),
+            }
+        }
+        "count_out_of_range_pixels" => {
+            let frame_b64 = args.get("frame").and_then(|v| v.as_str()).unwrap_or("");
+            match base64_decode_bytes(frame_b64) {
+                Some(pixels) => {
+                    to_json_ok(&crate::analysis::scopes::count_out_of_range_pixels(&pixels))
+                }
+                None => to_json_err("invalid base64 frame".into()),
+            }
+        }
+
+        // Color legalizer (engine/src/effects/legalizer.rs)
+        "legalize_frame" => {
+            let frame_b64 = args.get("frame").and_then(|v| v.as_str()).unwrap_or("");
+            let soft_clip = args.get("soft_clip").and_then(|v| v.as_bool()).unwrap_or(true);
+            let knee = args.get("knee").and_then(|v| v.as_f64()).unwrap_or(0.9) as f32;
+            match base64_decode_bytes(frame_b64) {
+                Some(mut pixels) => {
+                    let params = crate::effects::legalizer::LegalizerParams { soft_clip, knee };
+                    crate::effects::legalizer::legalize_rgba8(&mut pixels, &params);
+                    to_json_ok(&base64_encode_bytes(&pixels))
+                }
+                None => to_json_err("invalid base64 frame".into()),
+            }
+        }
+
+        // Video stabilization (engine/src/effects/stabilization.rs)
+        "estimate_motion" => {
+            let prev_b64 = args.get("prev").and_then(|v| v.as_str()).unwrap_or("");
+            let curr_b64 = args.get("curr").and_then(|v| v.as_str()).unwrap_or("");
+            let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let block_size = args.get("block_size").and_then(|v| v.as_u64()).unwrap_or(32) as usize;
+            let search_range = args.get("search_range").and_then(|v| v.as_u64()).unwrap_or(16) as usize;
+            match (base64_decode_bytes(prev_b64), base64_decode_bytes(curr_b64)) {
+                (Some(prev), Some(curr))
+                    if prev.len() == width * height * 4 && curr.len() == width * height * 4 =>
+                {
+                    to_json_ok(&crate::effects::stabilization::estimate_motion(
+                        &prev, &curr, width, height, block_size, search_range,
+                    ))
+                }
+                _ => to_json_err("invalid frames".into()),
+            }
+        }
+
+        // Motion tracking (engine/src/effects/motion_tracking.rs)
+        "track_point" => {
+            // Stub: returns the start point as a single-point track.
+            // Full implementation requires multi-frame input via stream.
+            to_json_err("track_point requires stream input — use track_point_single instead".into())
+        }
+
+        // Color match (engine/src/effects/color_match.rs)
+        "compute_color_match_lut" => {
+            let source_b64 = args.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            let reference_b64 = args.get("reference").and_then(|v| v.as_str()).unwrap_or("");
+            let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            match (base64_decode_bytes(source_b64), base64_decode_bytes(reference_b64)) {
+                (Some(source), Some(reference))
+                    if source.len() == width * height * 4 && reference.len() == width * height * 4 =>
+                {
+                    to_json_ok(&crate::effects::color_match::compute_match_lut(
+                        &source, &reference, width, height,
+                    ))
+                }
+                _ => to_json_err("invalid frames".into()),
+            }
+        }
+
+        // Sky replacement (engine/src/effects/sky_replace.rs)
+        "replace_sky" => {
+            let frame_b64 = args.get("frame").and_then(|v| v.as_str()).unwrap_or("");
+            let new_sky_b64 = args.get("new_sky").and_then(|v| v.as_str()).unwrap_or("");
+            let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let luma_threshold = args.get("luma_threshold").and_then(|v| v.as_u64()).unwrap_or(180) as u8;
+            let top_portion = args.get("top_portion").and_then(|v| v.as_f64()).unwrap_or(0.6) as f32;
+            let feather = args.get("feather").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+            let intensity = args.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            match (base64_decode_bytes(frame_b64), base64_decode_bytes(new_sky_b64)) {
+                (Some(mut frame), Some(new_sky))
+                    if frame.len() == width * height * 4 && new_sky.len() == width * height * 4 =>
+                {
+                    let params = crate::effects::sky_replace::SkyReplaceParams {
+                        luma_threshold, top_portion, feather, intensity,
+                    };
+                    crate::effects::sky_replace::replace_sky(&mut frame, &new_sky, width, height, &params);
+                    to_json_ok(&base64_encode_bytes(&frame))
+                }
+                _ => to_json_err("invalid frames".into()),
+            }
+        }
+
+        // Beat detection (engine/src/analysis/beat_detect.rs)
+        "detect_beats" => {
+            let samples_b64 = args.get("samples").and_then(|v| v.as_str()).unwrap_or("");
+            let sample_rate = args.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(44100) as u32;
+            let window_size = args.get("window_size").and_then(|v| v.as_u64()).unwrap_or(1024) as usize;
+            let hop_size = args.get("hop_size").and_then(|v| v.as_u64()).unwrap_or(512) as usize;
+            let min_strength = args.get("min_strength").and_then(|v| v.as_f64()).unwrap_or(0.3) as f32;
+            let min_interval_ms = args.get("min_interval_ms").and_then(|v| v.as_u64()).unwrap_or(200) as u32;
+            match base64_decode_f32_samples(samples_b64) {
+                Some(samples) => {
+                    let params = crate::analysis::beat_detect::BeatDetectParams {
+                        window_size, hop_size, sample_rate, min_strength, min_interval_ms,
+                    };
+                    to_json_ok(&crate::analysis::beat_detect::detect_beats(&samples, &params))
+                }
+                None => to_json_err("invalid base64 samples".into()),
+            }
+        }
+
+        // Batch export queue (engine/src/export_engine/batch.rs)
+        "batch_enqueue" => {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let project_path = args.get("project_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let output_path = args.get("output_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let preset = args.get("preset").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            BATCH_QUEUE.with(|q| {
+                let mut q = q.borrow_mut();
+                let job = crate::export_engine::batch::ExportJob {
+                    id: String::new(), name, project_path, output_path, preset,
+                    status: crate::export_engine::batch::JobStatus::Queued,
+                    progress: 0.0, error: None,
+                    submitted_at_ms: 0, started_at_ms: None, completed_at_ms: None,
+                };
+                to_json_ok(&q.enqueue(job))
+            })
+        }
+        "batch_jobs" => {
+            BATCH_QUEUE.with(|q| {
+                let q = q.borrow();
+                to_json_ok(&q.jobs())
+            })
+        }
+        "batch_cancel" => {
+            let job_id = args.get("job_id").and_then(|v| v.as_str()).unwrap_or("");
+            BATCH_QUEUE.with(|q| {
+                let mut q = q.borrow_mut();
+                q.cancel(job_id);
+                to_json_ok(&true)
+            })
+        }
+        "batch_clear_finished" => {
+            BATCH_QUEUE.with(|q| {
+                let mut q = q.borrow_mut();
+                q.clear_finished();
+                to_json_ok(&true)
+            })
+        }
+
+        // Format interop (engine/src/project/interop.rs)
+        "export_interop" => {
+            // Args: { "timeline": <InteropTimeline JSON>, "format": "edl"|"fcpxml"|"otio" }
+            let timeline_json = match args.get("timeline") {
+                Some(t) => t,
+                None => return to_json_err("missing 'timeline' arg".into()),
+            };
+            let timeline: crate::project::interop::InteropTimeline =
+                match serde_json::from_value(timeline_json.clone()) {
+                    Ok(t) => t,
+                    Err(e) => return to_json_err(format!("timeline parse error: {}", e)),
+                };
+            let format_str = args.get("format").and_then(|v| v.as_str()).unwrap_or("edl");
+            let format = match format_str {
+                "edl" => crate::project::interop::InteropFormat::Edl,
+                "fcpxml" => crate::project::interop::InteropFormat::Fcpxml,
+                "otio" => crate::project::interop::InteropFormat::OpenTimelineIO,
+                _ => return to_json_err(format!("unknown format: {}", format_str)),
+            };
+            to_json_ok(&crate::project::interop::export(&timeline, format))
+        }
+
+        // Advanced trim (engine/src/timeline/advanced_trim.rs)
+        // Validation only — actual trim is performed by existing timeline methods
+        // (split_clip, trim_clip, move_clip) composed per the trim mode.
+        "validate_advanced_trim" => {
+            let params_json = match args.get("params") {
+                Some(p) => p,
+                None => return to_json_err("missing 'params' arg".into()),
+            };
+            let params: crate::timeline::advanced_trim::AdvancedTrimParams =
+                match serde_json::from_value(params_json.clone()) {
+                    Ok(p) => p,
+                    Err(e) => return to_json_err(format!("params parse error: {}", e)),
+                };
+            // For validation we need clip state from the caller — pass as separate args
+            let clip_duration_ms = args.get("clip_duration_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+            let clip_in = args.get("clip_in_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+            let clip_out = args.get("clip_out_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+            let clip_start = args.get("clip_start_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+            let adj_duration = args.get("adj_duration_ms").and_then(|v| v.as_u64());
+            let adj_in = args.get("adj_in_ms").and_then(|v| v.as_i64());
+            let adj_out = args.get("adj_out_ms").and_then(|v| v.as_i64());
+            let adj_start = args.get("adj_start_ms").and_then(|v| v.as_i64());
+
+            match crate::timeline::advanced_trim::validate_trim(
+                &params, clip_duration_ms, clip_in, clip_out, clip_start,
+                adj_duration, adj_in, adj_out, adj_start,
+            ) {
+                Ok(()) => to_json_ok(&true),
+                Err(e) => to_json_err(e),
+            }
+        }
+
+        // ─── Phase F.3: Engine-wired pro tools (apply LUT, EQ, markers,
+        //                 loudness) — finishes the F.2 stubbed integrations ──
+
+        // Apply a previously-loaded LUT to a frame.
+        // Args: { "lut_json": <Lut JSON>, "frame_b64": "...", "width": N, "height": N, "intensity": 0.0..1.0 }
+        // Returns: base64-encoded RGBA8 frame with LUT applied.
+        "apply_lut_to_frame" => {
+            let lut_json = match args.get("lut_json") {
+                Some(v) => v,
+                None => return to_json_err("missing 'lut_json' arg".into()),
+            };
+            let lut: crate::effects::lut::Lut = match serde_json::from_value(lut_json.clone()) {
+                Ok(l) => l,
+                Err(e) => return to_json_err(format!("lut parse error: {}", e)),
+            };
+            let frame_b64 = args.get("frame").and_then(|v| v.as_str()).unwrap_or("");
+            let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let intensity = args.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            match base64_decode_bytes(frame_b64) {
+                Some(mut pixels) if pixels.len() == width * height * 4 => {
+                    lut.apply_rgba8(&mut pixels, width, height, intensity);
+                    to_json_ok(&base64_encode_bytes(&pixels))
+                }
+                Some(_) => to_json_err("frame size mismatch".into()),
+                None => to_json_err("invalid base64 frame".into()),
+            }
+        }
+
+        // Apply an EQ chain (HPF + 8 peaking bands + LPF) to f32 PCM samples.
+        // Args: { "settings": <EqSettings JSON>, "samples_b64": "...", "sample_rate": 44100 }
+        // Returns: base64-encoded f32 PCM samples (LE bytes).
+        "apply_eq_to_samples" => {
+            let settings_json = match args.get("settings") {
+                Some(v) => v,
+                None => return to_json_err("missing 'settings' arg".into()),
+            };
+            let settings: crate::audio::effects::EqSettings = match serde_json::from_value(settings_json.clone()) {
+                Ok(s) => s,
+                Err(e) => return to_json_err(format!("settings parse error: {}", e)),
+            };
+            let samples_b64 = args.get("samples").and_then(|v| v.as_str()).unwrap_or("");
+            let sample_rate = args.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(44100) as u32;
+            match base64_decode_f32_samples(samples_b64) {
+                Some(samples) => {
+                    let result = crate::audio::effects::apply_eq_chain(&samples, sample_rate, &settings);
+                    to_json_ok(&base64_encode_f32_samples(&result))
+                }
+                None => to_json_err("invalid base64 samples".into()),
+            }
+        }
+
+        // ─── Markers CRUD (engine/src/effects/markers.rs via EditorsProEngine) ──
+
+        "markers_add" => {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let position_ms = args.get("position_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let color_str = args.get("color").and_then(|v| v.as_str()).unwrap_or("blue");
+            let type_str = args.get("marker_type").and_then(|v| v.as_str()).unwrap_or("standard");
+            let comment = args.get("comment").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let color = parse_marker_color(color_str);
+            let marker_type = parse_marker_type(type_str);
+            match api.add_marker(name, position_ms, color, marker_type, comment) {
+                Ok(m) => to_json_ok(&serde_json::to_value(&m).unwrap_or_default()),
+                Err(e) => to_json_err(e),
+            }
+        }
+        "markers_get" => {
+            match api.get_markers() {
+                Ok(markers) => to_json_ok(&serde_json::to_value(&markers).unwrap_or_default()),
+                Err(e) => to_json_err(e),
+            }
+        }
+        "markers_remove" => {
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            match api.remove_marker(id) {
+                Ok(Some(m)) => to_json_ok(&serde_json::to_value(&m).unwrap_or_default()),
+                Ok(None) => to_json_err("marker not found".into()),
+                Err(e) => to_json_err(e),
+            }
+        }
+
+        // ─── Loudness analysis (engine/src/analysis/loudness.rs) ──────────
+
+        // Analyze loudness of arbitrary f32 PCM samples.
+        // Args: { "samples_b64": "...", "sample_rate": 44100, "channels": 2 }
+        // Returns: { integrated_lufs, short_term_lufs, momentary_lufs, rms_db, peak_db, true_peak_dbtp }
+        "analyze_loudness" => {
+            let samples_b64 = args.get("samples").and_then(|v| v.as_str()).unwrap_or("");
+            let sample_rate = args.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(44100) as u32;
+            let channels = args.get("channels").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+            match base64_decode_f32_samples(samples_b64) {
+                Some(samples) => {
+                    match api.analyze_loudness(samples, sample_rate, channels) {
+                        Ok(result) => to_json_ok(&serde_json::to_value(&result).unwrap_or_default()),
+                        Err(e) => to_json_err(e),
+                    }
+                }
+                None => to_json_err("invalid base64 samples".into()),
+            }
+        }
+
+        // Get the last computed loudness reading (null if no audio analyzed).
+        // Polled by the Flutter Audio Meter Bridge.
+        "get_current_loudness" => {
+            match api.get_current_loudness() {
+                Ok(Some(result)) => to_json_ok(&serde_json::to_value(&result).unwrap_or_default()),
+                Ok(None) => to_json_ok(&serde_json::Value::Null),
+                Err(e) => to_json_err(e),
+            }
+        }
+
+        // ─── Phase F.4: Per-track mixer state (pan, solo) ────────────────
+
+        "set_track_pan" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let pan = args.get("pan").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            to_json_string::<()>(api.set_track_pan(track_id, pan))
+        }
+        "get_track_pan" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            to_json_string(api.get_track_pan(track_id))
+        }
+        "set_track_solo" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let solo = args.get("solo").and_then(|v| v.as_bool()).unwrap_or(false);
+            to_json_string::<()>(api.set_track_solo(track_id, solo))
+        }
+        "get_track_solo" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            to_json_string(api.get_track_solo(track_id))
+        }
+
+        // ─── Phase F.4: Per-track EQ settings ────────────────────────────
+
+        "set_track_eq_settings" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let settings_json = match args.get("settings") {
+                Some(v) => v,
+                None => return to_json_err("missing 'settings' arg".into()),
+            };
+            let settings: crate::audio::effects::EqSettings = match serde_json::from_value(settings_json.clone()) {
+                Ok(s) => s,
+                Err(e) => return to_json_err(format!("settings parse error: {}", e)),
+            };
+            to_json_string::<()>(api.set_track_eq_settings(track_id, settings))
+        }
+        "get_track_eq_settings" => {
+            let track_id = args.get("track_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            match api.get_track_eq_settings(track_id) {
+                Ok(Some(s)) => to_json_ok(&serde_json::to_value(&s).unwrap_or_default()),
+                Ok(None) => to_json_ok(&serde_json::Value::Null),
+                Err(e) => to_json_err(e),
+            }
+        }
+
+        // ─── Phase F.4: Audio cache write-back ───────────────────────────
+
+        "set_audio_samples" => {
+            let asset_id = args.get("asset_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let samples_b64 = args.get("samples").and_then(|v| v.as_str()).unwrap_or("");
+            let sample_rate = args.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(44100) as u32;
+            let channels = args.get("channels").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+            match base64_decode_f32_samples(samples_b64) {
+                Some(samples) => {
+                    to_json_string::<()>(api.set_audio_samples(asset_id, samples, sample_rate, channels))
+                }
+                None => to_json_err("invalid base64 samples".into()),
+            }
+        }
+
+        // ─── Phase F.5: Active LUT (applied in get_frame) ──────────────────
+
+        "set_active_lut" => {
+            let lut_json = match args.get("lut_json") {
+                Some(v) => v,
+                None => return to_json_err("missing 'lut_json' arg".into()),
+            };
+            let lut: crate::effects::lut::Lut = match serde_json::from_value(lut_json.clone()) {
+                Ok(l) => l,
+                Err(e) => return to_json_err(format!("lut parse error: {}", e)),
+            };
+            let intensity = args.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            to_json_string::<()>(api.set_active_lut(lut, intensity))
+        }
+        "clear_active_lut" => {
+            to_json_string::<()>(api.clear_active_lut())
+        }
+
         // ─── Stream-based methods (Phase C.14) ─────────────────────────────
         // `stream_frames` and `export_video_streaming` are NOT exposed via
         // the FFI dispatcher because they require StreamSink which cannot
@@ -911,6 +1344,80 @@ fn parse_f32(args: &serde_json::Value, key: &str) -> f32 {
                 .or_else(|| v.as_str().and_then(|s| s.parse::<f32>().ok()))
         })
         .unwrap_or(0.0)
+}
+
+// ─── Pro Tools helpers (Phase F) ───────────────────────────────────────────
+
+/// Thread-local batch export queue. One queue per dispatch thread; the
+/// typical case is a single thread, so this is functionally a global queue.
+///
+/// video: thread-local queue, upgrade to global queue with cross-thread sync if export is driven from a worker thread
+thread_local! {
+    static BATCH_QUEUE: std::cell::RefCell<crate::export_engine::batch::BatchExportQueue> =
+        std::cell::RefCell::new(crate::export_engine::batch::BatchExportQueue::new());
+}
+
+/// Decode a base64 string to bytes. Returns None on failure.
+fn base64_decode_bytes(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
+}
+
+/// Encode bytes to a base64 string.
+fn base64_encode_bytes(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Decode a base64 string to f32 samples (little-endian f32 bytes).
+fn base64_decode_f32_samples(s: &str) -> Option<Vec<f32>> {
+    let bytes = base64_decode_bytes(s)?;
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+    Some(
+        bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+    )
+}
+
+/// Encode f32 samples to a base64 string (little-endian bytes).
+fn base64_encode_f32_samples(samples: &[f32]) -> String {
+    let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+    base64_encode_bytes(&bytes)
+}
+
+/// Parse a marker color string into the engine enum. Falls back to Blue.
+fn parse_marker_color(s: &str) -> crate::effects::markers::MarkerColor {
+    use crate::effects::markers::MarkerColor;
+    match s.to_lowercase().as_str() {
+        "red" => MarkerColor::Red,
+        "orange" => MarkerColor::Orange,
+        "yellow" => MarkerColor::Yellow,
+        "green" => MarkerColor::Green,
+        "blue" => MarkerColor::Blue,
+        "purple" => MarkerColor::Purple,
+        "pink" => MarkerColor::Pink,
+        "gray" | "grey" => MarkerColor::Gray,
+        _ => MarkerColor::Blue,
+    }
+}
+
+/// Parse a marker type string into the engine enum. Falls back to Standard.
+fn parse_marker_type(s: &str) -> crate::effects::markers::MarkerType {
+    use crate::effects::markers::MarkerType;
+    match s.to_lowercase().as_str() {
+        "standard" => MarkerType::Standard,
+        "chapter" => MarkerType::Chapter,
+        "comment" => MarkerType::Comment,
+        "todo" => MarkerType::Todo,
+        "error" => MarkerType::Error,
+        "musicbeat" | "music_beat" | "beat" => MarkerType::MusicBeat,
+        "custom" => MarkerType::Custom,
+        _ => MarkerType::Standard,
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

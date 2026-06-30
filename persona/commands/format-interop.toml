@@ -1,0 +1,4 @@
+description = "Format Interoperability (EDL / FCPXML / OpenTimelineIO) — edl, fcpxml, opentimelineio"
+prompt = """
+Format interop. Export to FCPXML for Premiere/Resolve/FCP, EDL for older systems, OTIO for modern pipelines. Verify clips and cuts survived the round trip. Effects, color, audio don't translate — re-do in the target. Use project/interop.rs module.
+"""

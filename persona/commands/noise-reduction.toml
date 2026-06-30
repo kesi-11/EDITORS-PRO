@@ -1,0 +1,4 @@
+description = "Noise Reduction — noise reduction, denoise video, temporal nr"
+prompt = """
+Noise reduction. Method by shot: Temporal for static, Bilateral for motion, NLM for worst case. Strength 30-50%. Don't crank to 100% — wax figure. Add a tiny bit of grain back to break up plasticity. Verify on skin close-up. Use noise_reduction_panel.dart widget.
+"""

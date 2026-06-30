@@ -44,6 +44,12 @@ class EditorState {
   final bool hardwareEncoderAvailable;
   /// Whether GPU acceleration is currently enabled by the user
   final bool gpuAccelerationEnabled;
+  /// Phase F.2: whether the safe-zones overlay is visible on the preview.
+  final bool showSafeZones;
+  /// Phase F.2: which safe-zone config to show (broadcast / social / composition).
+  final SafeZoneMode safeZoneMode;
+  /// Phase F.2: whether the audio meter bridge is visible at the bottom.
+  final bool showAudioMeterBridge;
 
   const EditorState({
     this.isPlaying = false,
@@ -66,6 +72,9 @@ class EditorState {
     this.gpuInfo,
     this.hardwareEncoderAvailable = false,
     this.gpuAccelerationEnabled = true,
+    this.showSafeZones = false,
+    this.safeZoneMode = SafeZoneMode.broadcast,
+    this.showAudioMeterBridge = false,
   });
 
   EditorState copyWith({
@@ -91,6 +100,9 @@ class EditorState {
     bool clearGpuInfo = false,
     bool? hardwareEncoderAvailable,
     bool? gpuAccelerationEnabled,
+    bool? showSafeZones,
+    SafeZoneMode? safeZoneMode,
+    bool? showAudioMeterBridge,
   }) {
     return EditorState(
       isPlaying: isPlaying ?? this.isPlaying,
@@ -113,11 +125,40 @@ class EditorState {
       gpuInfo: clearGpuInfo ? null : (gpuInfo ?? this.gpuInfo),
       hardwareEncoderAvailable: hardwareEncoderAvailable ?? this.hardwareEncoderAvailable,
       gpuAccelerationEnabled: gpuAccelerationEnabled ?? this.gpuAccelerationEnabled,
+      showSafeZones: showSafeZones ?? this.showSafeZones,
+      safeZoneMode: safeZoneMode ?? this.safeZoneMode,
+      showAudioMeterBridge: showAudioMeterBridge ?? this.showAudioMeterBridge,
     );
   }
 }
 
-enum LeftPanelTab { media, effects, text, audio, speed, keyframes, mixer, scopes, markers, luts, eq }
+/// Phase F.2: which set of safe-zone overlays to show.
+/// Drives the SafeZoneConfig passed to SafeZonesOverlay.
+enum SafeZoneMode {
+  /// Title-safe (90%) + action-safe (80%) + center crosshair.
+  broadcast,
+  /// Title-safe (80% for captions) + center crosshair.
+  social,
+  /// Rule-of-thirds + center crosshair.
+  composition,
+  /// No overlays.
+  off,
+}
+
+/// Phase F.2: extended with pro videographer tabs.
+enum LeftPanelTab {
+  media,
+  effects,
+  text,
+  audio,
+  speed,
+  keyframes,
+  mixer,
+  scopes,
+  markers,
+  luts,
+  eq,
+}
 
 /// Editor state notifier — mediates between the UI and the Rust engine.
 ///
@@ -298,6 +339,40 @@ class EditorNotifier extends StateNotifier<EditorState> {
   /// Toggle inspector visibility
   void toggleInspector() {
     state = state.copyWith(showInspector: !state.showInspector);
+  }
+
+  /// Phase F.2: toggle the safe-zones overlay on/off.
+  void toggleSafeZones() {
+    if (state.safeZoneMode == SafeZoneMode.off) {
+      state = state.copyWith(
+        showSafeZones: true,
+        safeZoneMode: SafeZoneMode.broadcast,
+      );
+    } else {
+      state = state.copyWith(
+        showSafeZones: false,
+        safeZoneMode: SafeZoneMode.off,
+      );
+    }
+  }
+
+  /// Phase F.2: cycle through safe-zone modes (broadcast → social → composition → off).
+  void cycleSafeZoneMode() {
+    final next = switch (state.safeZoneMode) {
+      SafeZoneMode.broadcast => SafeZoneMode.social,
+      SafeZoneMode.social => SafeZoneMode.composition,
+      SafeZoneMode.composition => SafeZoneMode.off,
+      SafeZoneMode.off => SafeZoneMode.broadcast,
+    };
+    state = state.copyWith(
+      showSafeZones: next != SafeZoneMode.off,
+      safeZoneMode: next,
+    );
+  }
+
+  /// Phase F.2: toggle the audio meter bridge at the bottom of the editor.
+  void toggleAudioMeterBridge() {
+    state = state.copyWith(showAudioMeterBridge: !state.showAudioMeterBridge);
   }
 
   /// Set master volume for audio playback

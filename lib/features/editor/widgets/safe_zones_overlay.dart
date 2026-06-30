@@ -1,320 +1,268 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import '../../../core/theme/app_theme.dart';
 
-/// Types of safe zone overlays that can be displayed on the preview viewport.
+/// Phase F.2: Safe Zones overlay.
 ///
-/// Broadcast standards define safe areas to ensure important content is
-/// visible on all displays. The action safe area (90%) guarantees that
-/// action within it is visible on most CRT/overscan displays. The title
-/// safe area (80%) guarantees text is readable without distortion.
-enum SafeZoneType {
-  /// 90% of frame — content within this area is visible on virtually all displays.
-  actionSafe,
-
-  /// 80% of frame — text/titles within this area are readable on all displays.
-  titleSafe,
-
-  /// Thin crosshair through the exact center of the frame.
-  centerCross,
-
-  /// Rule of thirds grid — 2 vertical + 2 horizontal lines dividing the frame
-  /// into 9 equal regions for composition guidance.
-  thirds,
-
-  /// Small circle + crosshair at the exact center of the frame.
-  centerMarker,
-}
-
-/// A semi-transparent overlay widget that renders safe-zone guides on top
-/// of the video preview viewport.
+/// Renders the title-safe (90% / 80% broadcast) and action-safe (80%)
+/// overlays on the preview viewport. Plus a 4:3 and 9:16 reframing guide
+/// for multi-platform delivery.
 ///
-/// Used by video editors to ensure titles and key action fall within
-/// broadcast-safe areas. Multiple zone types can be enabled simultaneously.
+/// Toggleable from the editor toolbar. The overlay does NOT affect the
+/// rendered output — it's a view-only guide.
 ///
-/// Usage:
-/// ```dart
-/// Stack(
-///   children: [
-///     VideoPreview(),
-///     SafeZonesOverlay(
-///       enabledZones: {SafeZoneType.actionSafe, SafeZoneType.titleSafe},
-///     ),
-///   ],
-/// )
-/// ```
+/// See persona/skills/broadcast-legal/SKILL.md.
 class SafeZonesOverlay extends StatelessWidget {
-  /// Which safe zone types to display. Defaults to action + title safe.
-  final Set<SafeZoneType> enabledZones;
+  /// Which overlays to show.
+  final SafeZoneConfig config;
+
+  /// Aspect ratio of the underlying preview (width / height).
+  /// Used to compute the 9:16 and 4:3 reframing guides correctly.
+  final double previewAspectRatio;
 
   const SafeZonesOverlay({
     super.key,
-    this.enabledZones = const {
-      SafeZoneType.actionSafe,
-      SafeZoneType.titleSafe,
-    },
+    required this.config,
+    this.previewAspectRatio = 16 / 9,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (enabledZones.isEmpty) return const SizedBox.shrink();
-
-    return CustomPaint(
-      painter: SafeZonesPainter(enabledZones: enabledZones),
-      size: Size.infinite,
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: _SafeZonesPainter(
+          config: config,
+          previewAspectRatio: previewAspectRatio,
+        ),
+        child: const SizedBox.expand(),
+      ),
     );
   }
 }
 
-/// Custom painter that renders all enabled safe zone types.
-///
-/// Uses dashed lines for the safe rectangles and solid thin lines for
-/// grid/crosshair overlays. Labels are drawn at the top-left corner of
-/// each safe rectangle.
-class SafeZonesPainter extends CustomPainter {
-  final Set<SafeZoneType> enabledZones;
+class SafeZoneConfig {
+  /// Title-safe area (90% for broadcast, 80% for social captions).
+  final bool showTitleSafe;
+  /// Action-safe area (80% for broadcast).
+  final bool showActionSafe;
+  /// Center crosshair.
+  final bool showCenter;
+  /// Rule-of-thirds grid.
+  final bool showRuleOfThirds;
+  /// 9:16 reframing guide (for vertical delivery).
+  final bool showVertical9x16;
+  /// 4:3 reframing guide (for legacy delivery).
+  final bool showLegacy4x3;
 
-  SafeZonesPainter({required this.enabledZones});
+  const SafeZoneConfig({
+    this.showTitleSafe = false,
+    this.showActionSafe = false,
+    this.showCenter = false,
+    this.showRuleOfThirds = false,
+    this.showVertical9x16 = false,
+    this.showLegacy4x3 = false,
+  });
 
-  // ─── Color constants ──────────────────────────────────────────
-  static const Color _lineColor = Color(0xCCFFFFFF); // 80% white
-  static const Color _labelColor = Color(0xBBFFFFFF); // 73% white
-  static const Color _centerColor = Color(0xAAFFFFFF); // 67% white
-  static const double _dashLength = 8.0;
-  static const double _dashGap = 5.0;
-  static const double _lineWidth = 1.0;
-  static const double _labelFontSize = 9.0;
+  SafeZoneConfig copyWith({
+    bool? showTitleSafe,
+    bool? showActionSafe,
+    bool? showCenter,
+    bool? showRuleOfThirds,
+    bool? showVertical9x16,
+    bool? showLegacy4x3,
+  }) {
+    return SafeZoneConfig(
+      showTitleSafe: showTitleSafe ?? this.showTitleSafe,
+      showActionSafe: showActionSafe ?? this.showActionSafe,
+      showCenter: showCenter ?? this.showCenter,
+      showRuleOfThirds: showRuleOfThirds ?? this.showRuleOfThirds,
+      showVertical9x16: showVertical9x16 ?? this.showVertical9x16,
+      showLegacy4x3: showLegacy4x3 ?? this.showLegacy4x3,
+    );
+  }
+
+  /// Broadcast default — title-safe + action-safe + center.
+  static const broadcast = SafeZoneConfig(
+    showTitleSafe: true,
+    showActionSafe: true,
+    showCenter: true,
+  );
+
+  /// Social default — title-safe only (80% for captions).
+  static const social = SafeZoneConfig(
+    showTitleSafe: true,
+    showCenter: true,
+  );
+
+  /// Composition default — rule-of-thirds + center.
+  static const composition = SafeZoneConfig(
+    showRuleOfThirds: true,
+    showCenter: true,
+  );
+
+  /// All overlays on.
+  static const all = SafeZoneConfig(
+    showTitleSafe: true,
+    showActionSafe: true,
+    showCenter: true,
+    showRuleOfThirds: true,
+    showVertical9x16: true,
+    showLegacy4x3: true,
+  );
+
+  /// None.
+  static const none = SafeZoneConfig();
+}
+
+class _SafeZonesPainter extends CustomPainter {
+  final SafeZoneConfig config;
+  final double previewAspectRatio;
+
+  _SafeZonesPainter({required this.config, required this.previewAspectRatio});
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-
-    // Center crosshair (drawn first so it's behind everything else)
-    if (enabledZones.contains(SafeZoneType.centerCross)) {
+    // Title-safe: 90% of frame (broadcast) — drawn at 90% if showTitleSafe.
+    // For social, the title-safe is 80% (since phones clip edges).
+    if (config.showTitleSafe) {
+      _drawSafeRect(canvas, size, 0.90, Colors.white.withOpacity(0.7), dashed: true);
+      _drawSafeRect(canvas, size, 0.80, Colors.yellow.withOpacity(0.5), dashed: true);
+    }
+    // Action-safe: 80%
+    if (config.showActionSafe) {
+      _drawSafeRect(canvas, size, 0.80, Colors.blue.withOpacity(0.5), dashed: true);
+    }
+    // Center crosshair
+    if (config.showCenter) {
       _drawCenterCross(canvas, size);
     }
-
-    // Rule of thirds grid
-    if (enabledZones.contains(SafeZoneType.thirds)) {
-      _drawThirdsGrid(canvas, size);
+    // Rule of thirds
+    if (config.showRuleOfThirds) {
+      _drawRuleOfThirds(canvas, size);
     }
-
-    // Action safe rectangle (90%)
-    if (enabledZones.contains(SafeZoneType.actionSafe)) {
-      _drawSafeRect(
-        canvas,
-        size,
-        fraction: 0.90,
-        label: 'ACTION SAFE',
-        color: _lineColor.withOpacity(0.6),
-      );
+    // 9:16 reframing guide
+    if (config.showVertical9x16) {
+      _drawAspectGuide(canvas, size, 9 / 16, Colors.purple.withOpacity(0.5));
     }
-
-    // Title safe rectangle (80%)
-    if (enabledZones.contains(SafeZoneType.titleSafe)) {
-      _drawSafeRect(
-        canvas,
-        size,
-        fraction: 0.80,
-        label: 'TITLE SAFE',
-        color: _lineColor.withOpacity(0.8),
-      );
-    }
-
-    // Center marker (drawn last so it's on top)
-    if (enabledZones.contains(SafeZoneType.centerMarker)) {
-      _drawCenterMarker(canvas, size);
+    // 4:3 reframing guide
+    if (config.showLegacy4x3) {
+      _drawAspectGuide(canvas, size, 4 / 3, Colors.orange.withOpacity(0.5));
     }
   }
 
-  /// Draw a dashed safe-zone rectangle at the given [fraction] of the
-  /// frame size, with a [label] in the top-left corner.
-  void _drawSafeRect(
-    Canvas canvas,
-    Size size, {
-    required double fraction,
-    required String label,
-    required Color color,
-  }) {
-    final insetX = size.width * (1 - fraction) / 2;
-    final insetY = size.height * (1 - fraction) / 2;
-    final rect = Rect.fromLTWH(
-      insetX,
-      insetY,
-      size.width * fraction,
-      size.height * fraction,
-    );
+  void _drawSafeRect(Canvas canvas, Size size, double ratio, Color color, {bool dashed = false}) {
+    final w = size.width * ratio;
+    final h = size.height * ratio;
+    final left = (size.width - w) / 2;
+    final top = (size.height - h) / 2;
+    final rect = Rect.fromLTWH(left, top, w, h);
 
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = _lineWidth;
+      ..strokeWidth = 1.5;
 
-    _drawDashedRect(canvas, rect, paint);
-
-    // Draw label at top-left corner of the safe rect
-    _drawLabel(canvas, label, Offset(rect.left + 4, rect.top + 2));
-  }
-
-  /// Draw a dashed rectangle by breaking each edge into dash/gap segments.
-  void _drawDashedRect(Canvas canvas, Rect rect, Paint paint) {
-    // Top edge
-    _drawDashedLine(canvas, rect.topLeft, rect.topRight, paint);
-    // Right edge
-    _drawDashedLine(canvas, rect.topRight, rect.bottomRight, paint);
-    // Bottom edge
-    _drawDashedLine(canvas, rect.bottomRight, rect.bottomLeft, paint);
-    // Left edge
-    _drawDashedLine(canvas, rect.bottomLeft, rect.topLeft, paint);
-  }
-
-  /// Draw a dashed line from [start] to [end] using [_dashLength] dashes
-  /// separated by [_dashGap] gaps.
-  void _drawDashedLine(
-    Canvas canvas,
-    Offset start,
-    Offset end,
-    Paint paint,
-  ) {
-    final dx = end.dx - start.dx;
-    final dy = end.dy - start.dy;
-    final totalLength = math.sqrt(dx * dx + dy * dy);
-    if (totalLength == 0) return;
-
-    final unitX = dx / totalLength;
-    final unitY = dy / totalLength;
-
-    double drawn = 0;
-    bool drawing = true;
-
-    while (drawn < totalLength) {
-      final segmentLength = drawing ? _dashLength : _dashGap;
-      final remaining = totalLength - drawn;
-      final currentLength = segmentLength.clamp(0.0, remaining);
-
-      if (drawing) {
-        final segStart = Offset(
-          start.dx + unitX * drawn,
-          start.dy + unitY * drawn,
-        );
-        final segEnd = Offset(
-          start.dx + unitX * (drawn + currentLength),
-          start.dy + unitY * (drawn + currentLength),
-        );
-        canvas.drawLine(segStart, segEnd, paint);
-      }
-
-      drawn += currentLength;
-      drawing = !drawing;
+    if (dashed) {
+      _drawDashedRect(canvas, rect, paint);
+    } else {
+      canvas.drawRect(rect, paint);
     }
   }
 
-  /// Draw a small text label at [position].
-  void _drawLabel(Canvas canvas, String text, Offset position) {
-    final textSpan = TextSpan(
-      text: text,
-      style: const TextStyle(
-        color: _labelColor,
-        fontSize: _labelFontSize,
-        fontWeight: FontWeight.w600,
-        fontFamily: 'Inter',
-        letterSpacing: 0.5,
-      ),
-    );
-    final textPainter = TextPainter(
-      text: textSpan,
-      textDirection: TextDirection.ltr,
-    );
-    textPainter.layout();
-    textPainter.paint(canvas, position);
+  void _drawDashedRect(Canvas canvas, Rect rect, Paint paint) {
+    const dashLen = 8.0;
+    const gapLen = 4.0;
+    // Top
+    _drawDashedLine(canvas, rect.topLeft, rect.topRight, paint, dashLen, gapLen);
+    // Bottom
+    _drawDashedLine(canvas, rect.bottomLeft, rect.bottomRight, paint, dashLen, gapLen);
+    // Left
+    _drawDashedLine(canvas, rect.topLeft, rect.bottomLeft, paint, dashLen, gapLen);
+    // Right
+    _drawDashedLine(canvas, rect.topRight, rect.bottomRight, paint, dashLen, gapLen);
   }
 
-  /// Draw a thin crosshair through the center of the frame.
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint, double dashLen, double gapLen) {
+    final dx = end.dx - start.dx;
+    final dy = end.dy - start.dy;
+    final totalLen = (dx * dx + dy * dy).sqrt();
+    if (totalLen == 0) return;
+    final ux = dx / totalLen;
+    final uy = dy / totalLen;
+    var pos = 0.0;
+    while (pos < totalLen) {
+      final segEnd = (pos + dashLen).clamp(0.0, totalLen);
+      canvas.drawLine(
+        Offset(start.dx + ux * pos, start.dy + uy * pos),
+        Offset(start.dx + ux * segEnd, start.dy + uy * segEnd),
+        paint,
+      );
+      pos += dashLen + gapLen;
+    }
+  }
+
   void _drawCenterCross(Canvas canvas, Size size) {
     final cx = size.width / 2;
     final cy = size.height / 2;
     final paint = Paint()
-      ..color = _centerColor
+      ..color = Colors.white.withOpacity(0.6)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.5;
-
-    // Horizontal line
-    canvas.drawLine(Offset(0, cy), Offset(size.width, cy), paint);
-    // Vertical line
-    canvas.drawLine(Offset(cx, 0), Offset(cx, size.height), paint);
+      ..strokeWidth = 1.5;
+    canvas.drawLine(Offset(cx - 12, cy), Offset(cx + 12, cy), paint);
+    canvas.drawLine(Offset(cx, cy - 12), Offset(cx, cy + 12), paint);
   }
 
-  /// Draw the rule of thirds grid — 2 vertical + 2 horizontal lines
-  /// dividing the frame into 9 equal regions.
-  void _drawThirdsGrid(Canvas canvas, Size size) {
+  void _drawRuleOfThirds(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = _lineColor.withOpacity(0.35)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.5;
-
-    // Vertical third lines
-    for (int i = 1; i <= 2; i++) {
-      final x = size.width * i / 3;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-
-    // Horizontal third lines
-    for (int i = 1; i <= 2; i++) {
-      final y = size.height * i / 3;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  /// Draw a center marker — a small circle plus a short crosshair at the
-  /// exact center of the frame.
-  void _drawCenterMarker(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-    final center = Offset(cx, cy);
-
-    // Small circle
-    final circlePaint = Paint()
-      ..color = _centerColor
+      ..color = Colors.white.withOpacity(0.4)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
-    canvas.drawCircle(center, 6.0, circlePaint);
+    // Vertical lines at 1/3 and 2/3
+    canvas.drawLine(
+      Offset(size.width / 3, 0),
+      Offset(size.width / 3, size.height),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(2 * size.width / 3, 0),
+      Offset(2 * size.width / 3, size.height),
+      paint,
+    );
+    // Horizontal lines at 1/3 and 2/3
+    canvas.drawLine(
+      Offset(0, size.height / 3),
+      Offset(size.width, size.height / 3),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(0, 2 * size.height / 3),
+      Offset(size.width, 2 * size.height / 3),
+      paint,
+    );
+  }
 
-    // Short crosshair arms (each 14px from center, with a 6px gap for the circle)
-    final armPaint = Paint()
-      ..color = _centerColor
+  void _drawAspectGuide(Canvas canvas, Size size, double targetAspect, Color color) {
+    // Fit the target aspect ratio inside the preview, centered.
+    final previewAspect = size.width / size.height;
+    double w, h;
+    if (targetAspect > previewAspect) {
+      // Target is wider — fit by width
+      w = size.width;
+      h = w / targetAspect;
+    } else {
+      // Target is taller — fit by height
+      h = size.height;
+      w = h * targetAspect;
+    }
+    final left = (size.width - w) / 2;
+    final top = (size.height - h) / 2;
+    final rect = Rect.fromLTWH(left, top, w, h);
+    final paint = Paint()
+      ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8;
-
-    const armLength = 14.0;
-    const gap = 7.0; // just outside the circle radius
-
-    // Right arm
-    canvas.drawLine(
-      Offset(cx + gap, cy),
-      Offset(cx + armLength, cy),
-      armPaint,
-    );
-    // Left arm
-    canvas.drawLine(
-      Offset(cx - gap, cy),
-      Offset(cx - armLength, cy),
-      armPaint,
-    );
-    // Bottom arm
-    canvas.drawLine(
-      Offset(cx, cy + gap),
-      Offset(cx, cy + armLength),
-      armPaint,
-    );
-    // Top arm
-    canvas.drawLine(
-      Offset(cx, cy - gap),
-      Offset(cx, cy - armLength),
-      armPaint,
-    );
+      ..strokeWidth = 2.0;
+    _drawDashedRect(canvas, rect, paint);
   }
 
   @override
-  bool shouldRepaint(covariant SafeZonesPainter oldDelegate) =>
-      enabledZones != oldDelegate.enabledZones;
+  bool shouldRepaint(covariant _SafeZonesPainter oldDelegate) =>
+      config != oldDelegate.config || previewAspectRatio != oldDelegate.previewAspectRatio;
 }

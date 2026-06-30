@@ -1,0 +1,4 @@
+description = "Broadcast Legal (Loudness, Color Range, Title-Safe) — broadcast legal, legal range, legalize"
+prompt = """
+Broadcast legal. Legalizer pass (clamp to legal range). Loudness meter (−23 LUFS EBU R128 or −24 LKFS ATSC A/85, ≤ −2 dBTP broadcast). Title-safe 90% / action-safe 80%. Frame-rate matches spec. Color space tagged. Field-order preserved if interlaced. Full QC report. Never ship without QC in full/ultra mode.
+"""

@@ -92,6 +92,9 @@ class TrackInfo {
   final bool locked;
   final bool visible;
   final double volume;
+  /// Phase F.5: clips on this track. The engine's TrackStateDto includes
+  /// a clips list; this field parses it so Flutter can look up asset_ids.
+  final List<ClipStateInfo> clips;
 
   const TrackInfo({
     required this.id,
@@ -100,6 +103,7 @@ class TrackInfo {
     this.locked = false,
     this.visible = true,
     this.volume = 1.0,
+    this.clips = const [],
   });
 
   factory TrackInfo.fromJson(Map<String, dynamic> json) => TrackInfo(
@@ -109,6 +113,45 @@ class TrackInfo {
         locked: json['locked'] as bool? ?? false,
         visible: json['visible'] as bool? ?? true,
         volume: (json['volume'] as num?)?.toDouble() ?? 1.0,
+        clips: (json['clips'] as List?)
+                ?.map((e) => ClipStateInfo.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
+      );
+}
+
+/// Phase F.5: Clip state info parsed from the engine's TrackStateDto.clips.
+/// Includes asset_id, which the EQ immediate-apply workflow needs.
+class ClipStateInfo {
+  final String id;
+  final String assetId;
+  final int startMs;
+  final int durationMs;
+  final int trimStartMs;
+  final int trimEndMs;
+  final double speed;
+  final double opacity;
+
+  const ClipStateInfo({
+    required this.id,
+    required this.assetId,
+    required this.startMs,
+    required this.durationMs,
+    this.trimStartMs = 0,
+    this.trimEndMs = 0,
+    this.speed = 1.0,
+    this.opacity = 1.0,
+  });
+
+  factory ClipStateInfo.fromJson(Map<String, dynamic> json) => ClipStateInfo(
+        id: json['id'] as String,
+        assetId: json['asset_id'] as String,
+        startMs: (json['start_ms'] as num).toInt(),
+        durationMs: (json['duration_ms'] as num).toInt(),
+        trimStartMs: (json['trim_start_ms'] as num?)?.toInt() ?? 0,
+        trimEndMs: (json['trim_end_ms'] as num?)?.toInt() ?? 0,
+        speed: (json['speed'] as num?)?.toDouble() ?? 1.0,
+        opacity: (json['opacity'] as num?)?.toDouble() ?? 1.0,
       );
 }
 
@@ -2264,4 +2307,516 @@ Future<bool> shouldReleaseCaches() async {
 Future<bool> shouldReduceQuality() async {
   final result = await RustLib.instance.api._call<dynamic>('should_reduce_quality', {});
   return result as bool;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase F: Pro Tools FFI wrappers
+//
+// Wrappers for the new pro tools dispatch arms in
+// engine/src/api/ffi_dispatch.rs (lines 883–1117). These methods are
+// called by the new Flutter UI widgets in lib/features/editor/widgets/.
+// Each wrapper documents the engine method it calls and the types it
+// returns. See docs/PRO_TOOLS.md and persona/skills/*/SKILL.md.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─── LUT management (engine/src/effects/lut.rs) ────────────────────────
+
+/// Parse a `.cube` LUT file from its string content. Returns the parsed
+/// LUT as a JSON-compatible map (`{kind: "Lut1D" | "Lut3D", ...}`).
+///
+/// Engine method: `lut_load_cube_content`.
+/// See persona/skills/lut-management/SKILL.md.
+Future<Map<String, dynamic>> lutLoadCubeContent({required String content}) async {
+  final result = await RustLib.instance.api
+      ._call<dynamic>('lut_load_cube_content', {'content': content});
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Load a `.cube` LUT file from disk. Returns the parsed LUT.
+///
+/// Engine method: `lut_load_cube`.
+Future<Map<String, dynamic>> lutLoadCube({required String path}) async {
+  final result = await RustLib.instance.api
+      ._call<dynamic>('lut_load_cube', {'path': path});
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Color scopes (engine/src/analysis/scopes.rs) ──────────────────────
+
+/// Compute waveform, vectorscope, RGB parade, and histogram from a frame.
+///
+/// Phase F.5: `frameBase64` can be PNG (from getFrame, omit width/height)
+/// or raw RGBA8 (pass width/height).
+///
+/// Engine method: `compute_scopes`.
+Future<Map<String, dynamic>> computeScopes({
+  required String frameBase64,
+  int width = 0,
+  int height = 0,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('compute_scopes', {
+    'frame': frameBase64,
+    'width': width,
+    'height': height,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Count out-of-range pixels in a frame for broadcast QC.
+///
+/// Engine method: `count_out_of_range_pixels`.
+/// See persona/skills/broadcast-legal/SKILL.md.
+Future<Map<String, dynamic>> countOutOfRangePixels({
+  required String frameBase64,
+}) async {
+  final result = await RustLib.instance.api
+      ._call<dynamic>('count_out_of_range_pixels', {'frame': frameBase64});
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Color legalizer (engine/src/effects/legalizer.rs) ─────────────────
+
+/// Apply Rec.709 broadcast-legal clamping (with optional soft-clip) to a
+/// frame. Returns the legalized frame as base64.
+///
+/// Engine method: `legalize_frame`.
+/// See persona/skills/broadcast-legal/SKILL.md.
+Future<String> legalizeFrame({
+  required String frameBase64,
+  bool softClip = true,
+  double knee = 0.9,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('legalize_frame', {
+    'frame': frameBase64,
+    'soft_clip': softClip,
+    'knee': knee,
+  });
+  return result as String;
+}
+
+// ─── Video stabilization (engine/src/effects/stabilization.rs) ─────────
+
+/// Estimate per-frame motion between two consecutive frames.
+///
+/// Returns `{dx: f32, dy: f32}` in pixels.
+///
+/// Engine method: `estimate_motion`.
+/// See persona/skills/video-stabilization/SKILL.md.
+Future<Map<String, dynamic>> estimateMotion({
+  required String prevFrameBase64,
+  required String currFrameBase64,
+  required int width,
+  required int height,
+  int blockSize = 32,
+  int searchRange = 16,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('estimate_motion', {
+    'prev': prevFrameBase64,
+    'curr': currFrameBase64,
+    'width': width,
+    'height': height,
+    'block_size': blockSize,
+    'search_range': searchRange,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Color match (engine/src/effects/color_match.rs) ───────────────────
+
+/// Compute a per-channel LUT (256 entries per channel) that maps the
+/// source frame's histogram to match the reference frame.
+///
+/// Engine method: `compute_color_match_lut`.
+/// See persona/skills/color-match-shots/SKILL.md.
+Future<Map<String, dynamic>> computeColorMatchLut({
+  required String sourceFrameBase64,
+  required String referenceFrameBase64,
+  required int width,
+  required int height,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>(
+    'compute_color_match_lut',
+    {
+      'source': sourceFrameBase64,
+      'reference': referenceFrameBase64,
+      'width': width,
+      'height': height,
+    },
+  );
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Sky replacement (engine/src/effects/sky_replace.rs) ───────────────
+
+/// Replace the sky in a frame using a luminance key. Returns the
+/// composited frame as base64.
+///
+/// Engine method: `replace_sky`.
+/// See persona/skills/sky-replacement/SKILL.md.
+Future<String> replaceSky({
+  required String frameBase64,
+  required String newSkyBase64,
+  required int width,
+  required int height,
+  int lumaThreshold = 180,
+  double topPortion = 0.6,
+  int feather = 4,
+  double intensity = 1.0,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('replace_sky', {
+    'frame': frameBase64,
+    'new_sky': newSkyBase64,
+    'width': width,
+    'height': height,
+    'luma_threshold': lumaThreshold,
+    'top_portion': topPortion,
+    'feather': feather,
+    'intensity': intensity,
+  });
+  return result as String;
+}
+
+// ─── Beat detection (engine/src/analysis/beat_detect.rs) ───────────────
+
+/// Detect beats in audio samples (f32 PCM, base64-encoded as little-endian bytes).
+///
+/// Returns `{beats: [{time_ms, strength}], estimated_bpm: f32 | null, duration_ms: u64}`.
+///
+/// Engine method: `detect_beats`.
+/// See persona/skills/beat-sync-cut/SKILL.md.
+Future<Map<String, dynamic>> detectBeats({
+  required String samplesBase64,
+  int sampleRate = 44100,
+  int windowSize = 1024,
+  int hopSize = 512,
+  double minStrength = 0.3,
+  int minIntervalMs = 200,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('detect_beats', {
+    'samples': samplesBase64,
+    'sample_rate': sampleRate,
+    'window_size': windowSize,
+    'hop_size': hopSize,
+    'min_strength': minStrength,
+    'min_interval_ms': minIntervalMs,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Batch export queue (engine/src/export_engine/batch.rs) ────────────
+
+/// Enqueue a new batch export job. Returns the assigned job ID.
+///
+/// Engine method: `batch_enqueue`.
+/// See persona/skills/batch-export/SKILL.md.
+Future<String> batchEnqueue({
+  required String name,
+  required String projectPath,
+  required String outputPath,
+  required String preset,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('batch_enqueue', {
+    'name': name,
+    'project_path': projectPath,
+    'output_path': outputPath,
+    'preset': preset,
+  });
+  return result as String;
+}
+
+/// Get all jobs in the batch queue.
+///
+/// Engine method: `batch_jobs`.
+Future<List<Map<String, dynamic>>> batchJobs() async {
+  final result = await RustLib.instance.api._call<dynamic>('batch_jobs', {});
+  return (result as List)
+      .map((e) => (e as Map).cast<String, dynamic>())
+      .toList();
+}
+
+/// Cancel a queued or running batch export job.
+///
+/// Engine method: `batch_cancel`.
+Future<void> batchCancel({required String jobId}) async {
+  await RustLib.instance.api._call<dynamic>('batch_cancel', {
+    'job_id': jobId,
+  });
+}
+
+/// Clear completed/failed/cancelled jobs from the queue.
+///
+/// Engine method: `batch_clear_finished`.
+Future<void> batchClearFinished() async {
+  await RustLib.instance.api._call<dynamic>('batch_clear_finished', {});
+}
+
+// ─── Format interop (engine/src/project/interop.rs) ────────────────────
+
+/// Export a timeline to EDL, FCPXML, or OpenTimelineIO format.
+///
+/// `format` must be one of: `"edl"`, `"fcpxml"`, `"otio"`.
+/// Returns the exported file content as a string.
+///
+/// Engine method: `export_interop`.
+/// See persona/skills/format-interop/SKILL.md.
+Future<String> exportInterop({
+  required Map<String, dynamic> timeline,
+  required String format,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('export_interop', {
+    'timeline': timeline,
+    'format': format,
+  });
+  return result as String;
+}
+
+// ─── Advanced trim (engine/src/timeline/advanced_trim.rs) ──────────────
+
+/// Validate an advanced trim operation (ripple/roll/slip/slide).
+/// Returns `true` if legal, throws with an error message otherwise.
+///
+/// Engine method: `validate_advanced_trim`.
+/// See persona/skills/ripple-roll-trim/SKILL.md.
+Future<bool> validateAdvancedTrim({
+  required Map<String, dynamic> params,
+  int clipDurationMs = 0,
+  int clipInMs = 0,
+  int clipOutMs = 0,
+  int clipStartMs = 0,
+  int? adjDurationMs,
+  int? adjInMs,
+  int? adjOutMs,
+  int? adjStartMs,
+}) async {
+  final args = <String, dynamic>{
+    'params': params,
+    'clip_duration_ms': clipDurationMs,
+    'clip_in_ms': clipInMs,
+    'clip_out_ms': clipOutMs,
+    'clip_start_ms': clipStartMs,
+  };
+  if (adjDurationMs != null) args['adj_duration_ms'] = adjDurationMs;
+  if (adjInMs != null) args['adj_in_ms'] = adjInMs;
+  if (adjOutMs != null) args['adj_out_ms'] = adjOutMs;
+  if (adjStartMs != null) args['adj_start_ms'] = adjStartMs;
+  final result = await RustLib.instance.api._call<dynamic>('validate_advanced_trim', args);
+  return result as bool;
+}
+
+// ─── Phase F.3: Engine-wired pro tools FFI wrappers ────────────────────
+//
+// These wrappers finish the F.2 stubbed integrations. Each calls the
+// matching engine dispatch arm added in Phase F.3:
+//   - applyEqToSamples → apply_eq_to_samples (audio/effects.rs)
+//   - markersAdd       → markers_add         (effects/markers.rs)
+//   - markersGet       → markers_get         (effects/markers.rs)
+//   - markersRemove    → markers_remove      (effects/markers.rs)
+//   - analyzeLoudness  → analyze_loudness    (analysis/loudness.rs)
+//
+// Note: apply_lut_to_frame is kept in the engine FFI for testing but is
+// not exposed in Dart — LUTs are applied via setActiveLut in get_frame.
+
+/// Apply an EQ chain (HPF + 8 peaking bands + LPF) to f32 PCM samples.
+///
+/// `samplesBase64` is the f32 PCM, base64-encoded as little-endian bytes.
+/// Returns the EQ-processed samples as base64 (same encoding).
+///
+/// Engine method: `apply_eq_to_samples`.
+/// See persona/skills/dialogue-cleanup/SKILL.md.
+Future<String> applyEqToSamples({
+  required Map<String, dynamic> settings,
+  required String samplesBase64,
+  int sampleRate = 44100,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('apply_eq_to_samples', {
+    'settings': settings,
+    'samples': samplesBase64,
+    'sample_rate': sampleRate,
+  });
+  return result as String;
+}
+
+/// Add a marker to the timeline. Persisted in the engine's marker manager.
+///
+/// `color` must be one of: red, orange, yellow, green, blue, purple, pink, gray.
+/// `markerType` must be one of: standard, chapter, comment, todo, error, musicbeat, custom.
+///
+/// Returns the created marker (with assigned ID) as JSON.
+///
+/// Engine method: `markers_add`.
+/// See persona/skills/broadcast-legal/SKILL.md (markers tab).
+Future<Map<String, dynamic>> markersAdd({
+  required String name,
+  required double positionMs,
+  String color = 'blue',
+  String markerType = 'standard',
+  String comment = '',
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('markers_add', {
+    'name': name,
+    'position_ms': positionMs,
+    'color': color,
+    'marker_type': markerType,
+    'comment': comment,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Get all markers, sorted by position.
+///
+/// Engine method: `markers_get`.
+Future<List<Map<String, dynamic>>> markersGet() async {
+  final result = await RustLib.instance.api._call<dynamic>('markers_get', {});
+  return (result as List)
+      .map((e) => (e as Map).cast<String, dynamic>())
+      .toList();
+}
+
+/// Remove a marker by ID. Returns the removed marker as JSON, or throws
+/// if the marker was not found.
+///
+/// Engine method: `markers_remove`.
+Future<Map<String, dynamic>> markersRemove({required String id}) async {
+  final result = await RustLib.instance.api._call<dynamic>('markers_remove', {
+    'id': id,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Analyze loudness of arbitrary f32 PCM samples.
+///
+/// `samplesBase64` is the f32 PCM, base64-encoded as little-endian bytes.
+/// Returns `{integrated_lufs, short_term_lufs, momentary_lufs, rms_db, peak_db, true_peak_dbtp}`.
+///
+/// Engine method: `analyze_loudness`.
+/// See persona/skills/loudness-target/SKILL.md.
+Future<Map<String, dynamic>> analyzeLoudness({
+  required String samplesBase64,
+  int sampleRate = 44100,
+  int channels = 2,
+}) async {
+  final result = await RustLib.instance.api._call<dynamic>('analyze_loudness', {
+    'samples': samplesBase64,
+    'sample_rate': sampleRate,
+    'channels': channels,
+  });
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Phase F.4: Per-track mixer state + EQ + write-back + current loudness ─
+
+/// Set the pan for a track. -1.0 = full left, 0.0 = center, +1.0 = full right.
+///
+/// Engine method: `set_track_pan`.
+Future<void> setTrackPan({required String trackId, required double pan}) async {
+  await RustLib.instance.api._call<dynamic>('set_track_pan', {
+    'track_id': trackId,
+    'pan': pan,
+  });
+}
+
+/// Get the pan for a track. Returns 0.0 (center) if not set.
+///
+/// Engine method: `get_track_pan`.
+Future<double> getTrackPan({required String trackId}) async {
+  final result = await RustLib.instance.api._call<dynamic>('get_track_pan', {
+    'track_id': trackId,
+  });
+  return (result as num).toDouble();
+}
+
+/// Set the solo flag for a track. When any track is soloed, all non-soloed
+/// tracks are muted during mixing.
+///
+/// Engine method: `set_track_solo`.
+Future<void> setTrackSolo({required String trackId, required bool solo}) async {
+  await RustLib.instance.api._call<dynamic>('set_track_solo', {
+    'track_id': trackId,
+    'solo': solo,
+  });
+}
+
+/// Get the solo flag for a track.
+///
+/// Engine method: `get_track_solo`.
+Future<bool> getTrackSolo({required String trackId}) async {
+  final result = await RustLib.instance.api._call<dynamic>('get_track_solo', {
+    'track_id': trackId,
+  });
+  return result as bool;
+}
+
+/// Set the EQ settings for a track. Stored per-track; applied during mixing.
+///
+/// `settings` is the EqSettings JSON (enabled, high_pass_hz, low_pass_hz, bands).
+///
+/// Engine method: `set_track_eq_settings`.
+Future<void> setTrackEqSettings({
+  required String trackId,
+  required Map<String, dynamic> settings,
+}) async {
+  await RustLib.instance.api._call<dynamic>('set_track_eq_settings', {
+    'track_id': trackId,
+    'settings': settings,
+  });
+}
+
+/// Get the EQ settings for a track as JSON. Returns null if no EQ is set.
+///
+/// Engine method: `get_track_eq_settings`.
+Future<Map<String, dynamic>?> getTrackEqSettings({required String trackId}) async {
+  final result = await RustLib.instance.api._call<dynamic>('get_track_eq_settings', {
+    'track_id': trackId,
+  });
+  if (result == null) return null;
+  return (result as Map).cast<String, dynamic>();
+}
+
+/// Write processed audio samples back to the engine's audio cache.
+/// Used by the EQ panel after applying effects: fetch → EQ → write back.
+///
+/// `samplesBase64` is f32 PCM, base64-encoded as little-endian bytes.
+///
+/// Engine method: `set_audio_samples`.
+Future<void> setAudioSamples({
+  required String assetId,
+  required String samplesBase64,
+  int sampleRate = 44100,
+  int channels = 2,
+}) async {
+  await RustLib.instance.api._call<dynamic>('set_audio_samples', {
+    'asset_id': assetId,
+    'samples': samplesBase64,
+    'sample_rate': sampleRate,
+    'channels': channels,
+  });
+}
+
+/// Get the last computed loudness reading. Returns null if no audio has
+/// been analyzed yet. Polled by the Audio Meter Bridge.
+///
+/// Engine method: `get_current_loudness`.
+Future<Map<String, dynamic>?> getCurrentLoudness() async {
+  final result = await RustLib.instance.api._call<dynamic>('get_current_loudness', {});
+  if (result == null) return null;
+  return (result as Map).cast<String, dynamic>();
+}
+
+// ─── Phase F.5: Active LUT (applied in get_frame) ──────────────────────
+
+/// Set the active LUT. Every frame returned by getFrame will have the LUT
+/// applied at the given intensity. The LUT is baked into the render pipeline.
+Future<void> setActiveLut({
+  required Map<String, dynamic> lutJson,
+  double intensity = 1.0,
+}) async {
+  await RustLib.instance.api._call<dynamic>('set_active_lut', {
+    'lut_json': lutJson,
+    'intensity': intensity,
+  });
+}
+
+/// Clear the active LUT. Frames will be returned without LUT processing.
+Future<void> clearActiveLut() async {
+  await RustLib.instance.api._call<dynamic>('clear_active_lut', {});
 }
